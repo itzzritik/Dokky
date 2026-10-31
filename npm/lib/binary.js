@@ -1,0 +1,99 @@
+"use strict";
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ARCHES = { x64: "amd64", arm64: "arm64" };
+const OSES = { darwin: "darwin", linux: "linux", win32: "windows" };
+
+function platformKey(platform, arch) {
+  const os = OSES[platform];
+  const cpu = ARCHES[arch];
+  return os && cpu ? `${os}-${cpu}` : null;
+}
+
+function binaryPath(home, platform) {
+  const name = platform === "win32" ? "dokky.exe" : "dokky";
+  return path.join(home, ".local", "bin", name);
+}
+
+function stateDir({ env, home, platform }) {
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "dokky");
+  if (platform === "win32") return path.join(env.LocalAppData || path.join(home, "AppData", "Local"), "dokky");
+  return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "dokky");
+}
+
+function cmp(a, b) {
+  const x = String(a).split(/[.-]/).map(Number);
+  const y = String(b).split(/[.-]/).map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+function installedVersion(dir) {
+  try {
+    return fs.readFileSync(path.join(dir, "version"), "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
+async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch }) {
+  const bin = binaryPath(home, platform);
+  const dir = stateDir({ env, home, platform });
+  const have = installedVersion(dir);
+  if (have && fs.existsSync(bin) && cmp(have, pkg.version) >= 0) return bin;
+
+  const key = platformKey(platform, arch);
+  const entry = key && pkg.dokky && pkg.dokky.binaries && pkg.dokky.binaries[key];
+  if (!entry) throw new Error(`dokky ${pkg.version} has no binary for ${platform}/${arch}`);
+
+  const res = await fetchImpl(entry.url);
+  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+  const data = Buffer.from(await res.arrayBuffer());
+  const sum = crypto.createHash("sha256").update(data).digest("hex");
+  if (sum !== String(entry.sha256).toLowerCase()) throw new Error(`sha256 mismatch for ${entry.url}`);
+
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  const tmp = `${bin}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, data, { mode: 0o755 });
+    fs.chmodSync(tmp, 0o755);
+    fs.renameSync(tmp, bin);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "version"), pkg.version);
+  return bin;
+}
+
+async function resolveBinary(opts, warn = console.warn) {
+  try {
+    return await ensureBinary(opts);
+  } catch (err) {
+    const bin = binaryPath(opts.home, opts.platform);
+    if (!fs.existsSync(bin)) throw err;
+    warn(`dokky: ${err.message}; using installed binary`);
+    return bin;
+  }
+}
+
+function recordInstall(dir, pkgDir) {
+  const file = path.join(dir, "installs.json");
+  let list = [];
+  try {
+    list = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    list = [];
+  }
+  if (!Array.isArray(list)) list = [];
+  if (list.includes(pkgDir)) return;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify([...list, pkgDir], null, 2));
+}
+
+module.exports = { platformKey, binaryPath, stateDir, ensureBinary, resolveBinary, recordInstall };
