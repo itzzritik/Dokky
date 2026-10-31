@@ -20,7 +20,7 @@ import (
 
 func TestMain(m *testing.M) {
 	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelCritical
-	pollEvery, goneTimeout, remountSettle, retryBase = time.Millisecond, 50*time.Millisecond, 0, 0
+	pollEvery, goneTimeout, remountSettle, retryBase, uploadWait = time.Millisecond, 50*time.Millisecond, 0, 0, time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -38,6 +38,8 @@ type fakeEngine struct {
 	mountedAt   time.Time
 	probes      int
 	services    map[string]store.Service
+	uploads     int
+	failStats   error
 	tested      store.Service
 	failTest    error
 
@@ -131,9 +133,12 @@ func (f *fakeEngine) Stats() ([]engine.MountStats, error) {
 	defer f.rclone.Unlock()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failStats != nil {
+		return nil, f.failStats
+	}
 	var out []engine.MountStats
 	for name := range f.mounted {
-		out = append(out, engine.MountStats{Name: name})
+		out = append(out, engine.MountStats{Name: name, UploadsQueued: f.uploads})
 	}
 	return out, nil
 }

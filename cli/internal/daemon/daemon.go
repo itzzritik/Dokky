@@ -23,6 +23,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/logx"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
+	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/lib/diskusage"
 	"github.com/rclone/rclone/lib/oauthutil"
@@ -46,6 +47,7 @@ type StatusReply struct {
 	FreeBytes    uint64        `json:"freeBytes"`
 	MinFreeBytes uint64        `json:"minFreeBytes"`
 	LoggedIn     bool          `json:"loggedIn"`
+	Pending      bool          `json:"pending"`
 	Offline      bool          `json:"offline"`
 }
 
@@ -70,6 +72,7 @@ type Daemon struct {
 	srv          *ipc.Server
 	isMounted    func(point string) bool
 	forceUnmount func(point string) error
+	openURL      func(url string) error
 
 	// serialises changes; status only TryLocks it
 	opMu        sync.Mutex
@@ -77,10 +80,12 @@ type Daemon struct {
 	edits       map[string]string // configure id → the saved service whose secrets it was given
 
 	// guards data and states; never held across an engine call or an external command
-	mu     sync.Mutex
-	data   store.Data
-	states map[string]*mountState
-	stats  map[string]engine.MountStats
+	mu      sync.Mutex
+	data    store.Data
+	states  map[string]*mountState
+	stats   map[string]engine.MountStats
+	flow    *loginFlow
+	clashes []dsync.Clash
 }
 
 func DefaultPaths() Paths {
@@ -184,7 +189,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir string, log *slog.Logger) *Daemon {
 	return &Daemon{
 		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log,
-		isMounted: engine.IsMounted, forceUnmount: forceUnmount,
+		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
 		unmountedAt: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 	}
 }
@@ -301,10 +306,14 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			p.Service.Options, _ = d.keepSecrets(p.EditOf, p.Service.Type, p.Service.Options)
 			return d.testService(p.Service), nil
 		}),
-		"browse":       decode(d.browse),
-		"transfers":    func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
-		"settings.get": func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
-		"settings.set": decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
+		"browse":        decode(d.browse),
+		"transfers":     func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
+		"settings.get":  func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
+		"settings.set":  decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
+		"login.start":   decodeCtx(func(ctx context.Context, _ struct{}) (loginStartReply, error) { return d.loginStart(ctx) }),
+		"login.poll":    decodeCtx(func(ctx context.Context, _ struct{}) (loginPollReply, error) { return d.loginPoll(ctx) }),
+		"login.resolve": decodeCtx(d.loginResolve),
+		"logout":        decodeCtx(d.logout),
 		// lets the reply out before shutdown closes the connection
 		"daemon.restart": func(context.Context, json.RawMessage) (any, error) {
 			time.AfterFunc(restartDelay, func() {
@@ -331,6 +340,7 @@ func (d *Daemon) status() StatusReply {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r.LoggedIn = d.data.Account != nil
+	r.Pending = r.LoggedIn && d.data.Account.Pending
 	for _, m := range d.data.Mounts {
 		st := d.state(m.ID)
 		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m)}
@@ -528,6 +538,9 @@ func (d *Daemon) setSecrets() {
 	}
 	if d.data.Account != nil {
 		values = append(values, d.data.Account.Token)
+	}
+	if d.flow != nil {
+		values = append(values, d.flow.deviceCode)
 	}
 	logx.SetSecrets(values)
 }

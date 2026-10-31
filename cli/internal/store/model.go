@@ -50,6 +50,7 @@ type Account struct {
 	DeviceID string `json:"deviceId"`
 	Token    string `json:"token"`
 	Rev      string `json:"rev"`
+	Pending  bool   `json:"pending"`
 }
 
 type Data struct {

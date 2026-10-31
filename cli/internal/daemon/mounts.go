@@ -251,10 +251,15 @@ func (d *Daemon) clearPoint(point string) error {
 }
 
 func (d *Daemon) refresh() {
+	if err := d.refreshStats(); err != nil {
+		d.log.Warn("mount stats", "err", err)
+	}
+}
+
+func (d *Daemon) refreshStats() error {
 	stats, err := d.eng.Stats()
 	if err != nil {
-		d.log.Warn("mount stats", "err", err)
-		return
+		return err
 	}
 	live := make(map[string]engine.MountStats, len(stats))
 	for _, s := range stats {
@@ -279,6 +284,7 @@ func (d *Daemon) refresh() {
 	for _, p := range gone {
 		engine.CleanupMountPoint(p)
 	}
+	return nil
 }
 
 func (d *Daemon) remountFlagged() {

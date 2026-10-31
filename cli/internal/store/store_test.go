@@ -128,6 +128,27 @@ func TestDeleteRemovesFileAndKey(t *testing.T) {
 	require.NoError(t, s.Delete())
 }
 
+func TestSaveAfterDeleteStartsNewKey(t *testing.T) {
+	dir := t.TempDir()
+	kr := &fakeKeyring{}
+	s, err := Open(dir, kr)
+	require.NoError(t, err)
+	require.NoError(t, s.Save(sample()))
+	require.NoError(t, s.Delete())
+	got, err := s.Load()
+	require.NoError(t, err)
+	require.Empty(t, got.Services)
+
+	fresh := Data{Local: map[string]LocalMount{}, Services: []Service{{ID: "n1", Name: "fresh"}}}
+	require.NoError(t, s.Save(fresh))
+	require.NotNil(t, kr.key)
+	s2, err := Open(dir, kr)
+	require.NoError(t, err)
+	got, err = s2.Load()
+	require.NoError(t, err)
+	require.Equal(t, fresh, got)
+}
+
 func TestFallbackKeyFileMode0600(t *testing.T) {
 	dir := t.TempDir()
 	kr := newKeyring(&fakeKeyring{fail: errors.New("no secret service")}, dir, true)

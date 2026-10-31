@@ -48,14 +48,29 @@ func TestCallWithoutDaemonOrBinary(t *testing.T) {
 	require.ErrorContains(t, call("status", nil, nil), "npm i -g dokky")
 }
 
-func TestCallRestartsOnProtocolMismatch(t *testing.T) {
+func fakeDaemon(t *testing.T, handlers map[string]ipc.Handler) {
+	t.Helper()
 	cliHome(t)
 	state, err := platform.StateDir()
 	require.NoError(t, err)
 	ln, err := platform.Listen(platform.SocketAddr(state))
 	require.NoError(t, err)
+	srv := ipc.NewServer(ln, handlers)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = srv.Serve(ctx)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+}
+
+func TestCallRestartsOnProtocolMismatch(t *testing.T) {
 	var calls, restarts atomic.Int32
-	srv := ipc.NewServer(ln, map[string]ipc.Handler{
+	fakeDaemon(t, map[string]ipc.Handler{
 		"status": func(context.Context, json.RawMessage) (any, error) {
 			if calls.Add(1) == 1 {
 				return nil, &ipc.Error{Code: "protocol_mismatch", Message: "old daemon"}
@@ -66,16 +81,6 @@ func TestCallRestartsOnProtocolMismatch(t *testing.T) {
 			restarts.Add(1)
 			return nil, nil
 		},
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		_ = srv.Serve(ctx)
-		close(done)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		<-done
 	})
 
 	var out map[string]string

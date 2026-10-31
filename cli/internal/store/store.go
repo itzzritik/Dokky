@@ -29,32 +29,37 @@ func Open(stateDir string, kr Keyring) (*Store, error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	key, err := kr.Get()
+	s := &Store{path: filepath.Join(stateDir, fileName), kr: kr}
+	if err := s.unlock(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) unlock() error {
+	key, err := s.kr.Get()
 	if errors.Is(err, ErrNotFound) {
-		if _, statErr := os.Stat(filepath.Join(stateDir, fileName)); statErr == nil {
-			return nil, fmt.Errorf("%w: cannot read %s", ErrKeyMissing, filepath.Join(stateDir, fileName))
+		if _, statErr := os.Stat(s.path); statErr == nil {
+			return fmt.Errorf("%w: cannot read %s", ErrKeyMissing, s.path)
 		}
 		key = make([]byte, keySize)
 		if _, err = rand.Read(key); err != nil {
-			return nil, err
+			return err
 		}
-		err = kr.Set(key)
+		err = s.kr.Set(key)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("store key: %w", err)
+		return fmt.Errorf("store key: %w", err)
 	}
 	if len(key) != keySize {
-		return nil, errors.New("store key has the wrong length")
+		return errors.New("store key has the wrong length")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return &Store{path: filepath.Join(stateDir, fileName), kr: kr, aead: aead}, nil
+	s.aead, err = cipher.NewGCM(block)
+	return err
 }
 
 func (s *Store) Load() (Data, error) {
@@ -64,6 +69,11 @@ func (s *Store) Load() (Data, error) {
 	}
 	if err != nil {
 		return Data{}, err
+	}
+	if s.aead == nil {
+		if err := s.unlock(); err != nil {
+			return Data{}, err
+		}
 	}
 	n := s.aead.NonceSize()
 	if len(raw) < n {
@@ -84,6 +94,11 @@ func (s *Store) Load() (Data, error) {
 }
 
 func (s *Store) Save(d Data) error {
+	if s.aead == nil {
+		if err := s.unlock(); err != nil {
+			return err
+		}
+	}
 	plain, err := json.Marshal(d)
 	if err != nil {
 		return err
@@ -117,10 +132,12 @@ func (s *Store) Save(d Data) error {
 	return syncDir(dir)
 }
 
+// a Save after Delete starts a new key, like a fresh install
 func (s *Store) Delete() error {
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	s.aead = nil
 	return s.kr.Delete()
 }
 
