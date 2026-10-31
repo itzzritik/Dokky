@@ -110,3 +110,11 @@ func TestCleanupIgnoresWindowsTargets(t *testing.T) {
 	CleanupMountPoint("*")
 	CleanupMountPoint("X:")
 }
+
+func TestIsMounted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("dokky never force-unmounts on Windows")
+	}
+	require.True(t, IsMounted("/"))
+	require.False(t, IsMounted(t.TempDir()))
+}

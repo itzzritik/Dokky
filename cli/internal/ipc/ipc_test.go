@@ -93,6 +93,20 @@ func TestProtocolMismatch(t *testing.T) {
 	require.Equal(t, "protocol_mismatch", resp.Error.Code)
 }
 
+func TestRestartIgnoresProtocol(t *testing.T) {
+	restart := func(context.Context, json.RawMessage) (any, error) { return "ok", nil }
+	_, dir := start(t, map[string]Handler{"daemon.restart": restart})
+	conn, err := platform.Dial(platform.SocketAddr(dir), time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte(`{"v":99,"id":3,"method":"daemon.restart"}` + "\n"))
+	require.NoError(t, err)
+	var resp Response
+	require.NoError(t, json.NewDecoder(conn).Decode(&resp))
+	require.Nil(t, resp.Error)
+	require.JSONEq(t, `"ok"`, string(resp.Result))
+}
+
 func TestEventsStream(t *testing.T) {
 	srv, dir := start(t, nil)
 	c, err := Connect(dir)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http/httptest"
@@ -25,9 +26,29 @@ import (
 	"golang.org/x/net/webdav"
 )
 
+var dokkyBin string
+
 func TestMain(m *testing.M) {
 	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelError
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "dokky-e2e-bin")
+	if err != nil {
+		panic(err)
+	}
+	dokkyBin = filepath.Join(dir, "dokky")
+	args := []string{"build", "-o", dokkyBin}
+	if runtime.GOOS == "windows" {
+		dokkyBin += ".exe"
+		args = []string{"build", "-tags", "cmount", "-o", dokkyBin}
+	}
+	cmd := exec.Command("go", append(args, "../cmd/dokky")...)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
+		panic(fmt.Sprintf("build dokky: %v\n%s", err, out))
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func startWebDAV(t *testing.T) (url, dir string) {

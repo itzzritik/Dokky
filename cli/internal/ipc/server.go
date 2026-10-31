@@ -141,7 +141,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			_ = enc.Encode(Response{Error: &Error{Code: "bad_request", Message: "malformed request"}})
 			continue
 		}
-		if req.V != Protocol {
+		// lets a newer CLI restart an older daemon
+		if req.V != Protocol && req.Method != "daemon.restart" {
 			_ = enc.Encode(Response{ID: req.ID, Error: &Error{Code: "protocol_mismatch", Message: "unsupported protocol version"}})
 			continue
 		}

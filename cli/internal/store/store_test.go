@@ -186,3 +186,16 @@ func TestOpenRefusesWhenKeyMissingButStoreExists(t *testing.T) {
 	require.ErrorContains(t, err, filepath.Join(dir, "store.enc"))
 	require.Nil(t, kr.key)
 }
+
+func TestKeyringEnvUsesFile(t *testing.T) {
+	t.Setenv("DOKKY_KEYRING", "file")
+	dir := t.TempDir()
+	kr := SystemKeyring(dir)
+	require.IsType(t, fileOnly{}, kr.(*fileFallbackKeyring).primary)
+
+	s, err := Open(dir, kr)
+	require.NoError(t, err)
+	require.NoError(t, s.Save(sample()))
+	require.FileExists(t, filepath.Join(dir, "store.key"))
+	require.True(t, kr.(Fallbacker).Fallback())
+}

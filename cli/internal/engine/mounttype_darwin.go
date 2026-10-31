@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"path/filepath"
 	"time"
 
 	_ "github.com/rclone/rclone/cmd/nfsmount"
@@ -43,13 +42,9 @@ func (e *Engine) reap(points map[string]bool) bool {
 	return len(hooks) > 0
 }
 
-// realPoint resolves symlinks in the parent only, never stepping into the mount itself
-func realPoint(p string) string {
-	dir, err := filepath.EvalSymlinks(filepath.Dir(p))
-	if err != nil {
-		return p
-	}
-	return filepath.Join(dir, filepath.Base(p))
+func IsMounted(point string) bool {
+	points, err := osMountPoints()
+	return err == nil && points[realPoint(point)]
 }
 
 func osMountPoints() (map[string]bool, error) {

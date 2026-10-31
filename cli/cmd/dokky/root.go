@@ -29,6 +29,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate("dokky {{.Version}}\n")
+	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd())
 	return cmd
 }
 

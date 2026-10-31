@@ -63,7 +63,18 @@ func newKeyring(primary Keyring, stateDir string, allowed bool) *fileFallbackKey
 	return &fileFallbackKeyring{primary: primary, path: filepath.Join(stateDir, keyFileName), allowed: allowed}
 }
 
+type fileOnly struct{}
+
+var errFileOnly = errors.New("DOKKY_KEYRING=file keeps the store key in a file")
+
+func (fileOnly) Get() ([]byte, error) { return nil, errFileOnly }
+func (fileOnly) Set([]byte) error     { return errFileOnly }
+func (fileOnly) Delete() error        { return nil }
+
 func SystemKeyring(stateDir string) Keyring {
+	if os.Getenv("DOKKY_KEYRING") == "file" {
+		return newKeyring(fileOnly{}, stateDir, true)
+	}
 	return newKeyring(osKeyring{}, stateDir, runtime.GOOS == "linux")
 }
 

@@ -160,12 +160,15 @@ func (e *Engine) TestRemote(s store.Service) error {
 	if err := e.PutService(s); err != nil {
 		return err
 	}
+	return e.Reachable(s, "")
+}
+
+func (e *Engine) Reachable(s store.Service, remotePath string) error {
 	e.opMu.Lock()
 	e.clearFsCache(s.ID)
 	e.opMu.Unlock()
-
 	var job struct{ JobID int64 }
-	if err := rpc("operations/list", map[string]any{"fs": s.ID + ":", "remote": "", "_async": true}, &job); err != nil {
+	if err := rpc("operations/list", probeParams(s.ID, remotePath), &job); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(testRemoteTimeout)
@@ -188,5 +191,13 @@ func (e *Engine) TestRemote(s store.Service) error {
 			return fmt.Errorf("%s did not answer within %s", s.Name, testRemoteTimeout)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// without these, listing reads each object's ModTime, one HEAD per object on S3
+func probeParams(serviceID, remotePath string) map[string]any {
+	return map[string]any{
+		"fs": serviceID + ":", "remote": remotePath, "_async": true,
+		"opt": map[string]any{"noModTime": true, "noMimeType": true, "dirsOnly": true},
 	}
 }

@@ -102,6 +102,38 @@ func TestRemoteUsesCurrentConfigAndTimesOut(t *testing.T) {
 	require.Less(t, time.Since(start), 5*time.Second)
 }
 
+func TestReachableListsMountPath(t *testing.T) {
+	e := startEngine(t)
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
+	s := store.Service{ID: "svc1", Name: "disk", Type: "alias", Options: map[string]string{"remote": dir}}
+	require.NoError(t, e.PutService(s))
+	require.NoError(t, e.Reachable(s, "sub"))
+	require.Error(t, e.Reachable(s, "missing"))
+}
+
+func TestProbeListsCheaply(t *testing.T) {
+	e := startEngine(t)
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644))
+	require.NoError(t, e.PutService(store.Service{ID: "probe", Type: "alias", Options: map[string]string{"remote": dir}}))
+
+	in := probeParams("probe", "")
+	require.Equal(t, map[string]any{"noModTime": true, "noMimeType": true, "dirsOnly": true}, in["opt"])
+	delete(in, "_async")
+	var out struct {
+		List []struct {
+			Name, MimeType, ModTime string
+		}
+	}
+	require.NoError(t, rpc("operations/list", in, &out))
+	require.Len(t, out.List, 1)
+	require.Equal(t, "sub", out.List[0].Name)
+	require.Empty(t, out.List[0].MimeType)
+	require.Empty(t, out.List[0].ModTime)
+}
+
 func TestMountAfterStopErrors(t *testing.T) {
 	e, err := Start(t.TempDir(), nil)
 	require.NoError(t, err)
