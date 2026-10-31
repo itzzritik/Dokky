@@ -8,7 +8,8 @@ const fieldName = z
   .max(64)
   .regex(/^[a-z0-9_]+$/u);
 const options = z.record(fieldName, z.string().max(4096));
-const secrets = z.record(fieldName, z.string().max(16_384));
+const secretValue = z.string().max(16_384);
+const secrets = z.record(fieldName, secretValue);
 const baseVersion = z.int().min(0);
 const duration = z
   .string()
@@ -73,6 +74,12 @@ export const mountBody = z.object({
   remotePath: z.string().max(4096),
   vfs: vfsBody,
   baseVersion,
+});
+
+export const tokenBody = z.object({
+  field: fieldName,
+  value: secretValue.min(1),
+  expiry: z.iso.datetime({ offset: true }).pipe(z.coerce.date()),
 });
 
 export async function readBody<T extends z.ZodType>(
