@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
+import { ObjectId } from "mongodb";
 import { gte, valid } from "semver";
 import type { z } from "zod";
 import { audit } from "@/lib/audit";
@@ -169,5 +170,36 @@ export async function authDevice(
       { $set: { lastSeenAt: now } }
     );
   }
+  if (valid(version) && version !== device.version) {
+    await devices().updateOne({ _id: device._id }, { $set: { version } });
+  }
   return { userId: device.userId, deviceId: String(device._id) };
+}
+
+export const listDevices = (userId: string) =>
+  devices().find({ userId, revokedAt: null }).sort({ createdAt: 1 }).toArray();
+
+export async function revokeDevice(
+  userId: string,
+  id: string,
+  actorDeviceId: string,
+  ip: string,
+  now = new Date()
+): Promise<boolean> {
+  if (!ObjectId.isValid(id)) {
+    return false;
+  }
+  const _id = new ObjectId(id);
+  const device = await devices().findOne({ _id, userId });
+  if (!device) {
+    return false;
+  }
+  const { modifiedCount } = await devices().updateOne(
+    { _id, userId, revokedAt: null },
+    { $set: { revokedAt: now } }
+  );
+  if (modifiedCount === 1) {
+    await audit(userId, actorDeviceId, "device.revoke", device.name, ip);
+  }
+  return true;
 }
