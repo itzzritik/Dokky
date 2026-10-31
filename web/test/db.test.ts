@@ -61,6 +61,8 @@ test("ensureIndexes creates the unique and TTL indexes", async () => {
   ]);
   expect(await indexes("cliLogins")).toEqual([
     { name: "expiresAt_1", key: { expiresAt: 1 }, expireAfterSeconds: 0 },
+    { name: "deviceCodeHash_1", key: { deviceCodeHash: 1 }, unique: true },
+    { name: "userCode_1", key: { userCode: 1 }, unique: true },
   ]);
   expect(await indexes("audit")).toEqual([
     { name: "at_1", key: { at: 1 }, expireAfterSeconds: 31_536_000 },

@@ -34,9 +34,11 @@ export async function ensureIndexes(): Promise<void> {
     d
       .collection("mounts")
       .createIndex({ userId: 1, name: 1 }, { unique: true }),
-    d
-      .collection("cliLogins")
-      .createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    d.collection("cliLogins").createIndexes([
+      { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
+      { key: { deviceCodeHash: 1 }, unique: true },
+      { key: { userCode: 1 }, unique: true },
+    ]),
     d
       .collection("audit")
       .createIndex({ at: 1 }, { expireAfterSeconds: 31_536_000 }),
