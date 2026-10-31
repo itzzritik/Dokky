@@ -55,10 +55,10 @@ type MountStats struct {
 }
 
 type QueueItem struct {
-	Name      string
-	Size      int64
-	Expiry    time.Time
-	Uploading bool
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	Expiry    time.Time `json:"expiry"`
+	Uploading bool      `json:"uploading"`
 }
 
 func Start(cacheDir string, onToken func(serviceID, token string)) (e *Engine, err error) {

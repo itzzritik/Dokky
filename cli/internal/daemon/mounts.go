@@ -40,6 +40,10 @@ type mountEngine interface {
 	PutService(store.Service) error
 	DeleteService(string)
 	Stats() ([]engine.MountStats, error)
+	ConfigStep(ctx context.Context, name, typ string, opts map[string]string, state, result string) (engine.Step, error)
+	TestRemote(store.Service) error
+	ListDirs(store.Service, string) ([]string, error)
+	Queue(string) ([]engine.QueueItem, error)
 }
 
 type mountState struct {

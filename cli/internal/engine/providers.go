@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,28 +16,37 @@ var Featured = []string{"drive", "smb", "webdav", "sftp", "onedrive", "dropbox",
 
 var testRemoteTimeout = 15 * time.Second
 
+const jobPoll = 100 * time.Millisecond
+
 type Option struct {
-	Name, Help, Default        string
-	Required, Advanced, Secret bool
-	Examples                   []string
+	Name     string   `json:"name"`
+	Help     string   `json:"help"`
+	Default  string   `json:"default"`
+	Required bool     `json:"required"`
+	Advanced bool     `json:"advanced"`
+	Secret   bool     `json:"secret"`
+	Hide     bool     `json:"hide"`
+	Examples []string `json:"examples"`
 }
 
 type Provider struct {
-	Type, Description string
-	Options           []Option
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Options     []Option `json:"options"`
 }
 
 type Step struct {
-	State   string
-	Option  *Option
-	Error   string
-	Done    bool
-	Service map[string]string
+	State   string            `json:"state"`
+	Option  *Option           `json:"option"`
+	Error   string            `json:"error"`
+	Done    bool              `json:"done"`
+	Service map[string]string `json:"service"`
 }
 
 type rcOption struct {
 	Name, Help, DefaultStr                    string
 	Required, Advanced, IsPassword, Sensitive bool
+	Hide                                      fs.OptionVisibility
 	Examples                                  []struct{ Value string }
 }
 
@@ -47,6 +58,7 @@ func (o rcOption) option() Option {
 		Required: o.Required,
 		Advanced: o.Advanced,
 		Secret:   o.IsPassword || o.Sensitive,
+		Hide:     o.Hide&fs.OptionHideConfigurator != 0,
 	}
 	if opt.Default == "<nil>" {
 		opt.Default = ""
@@ -109,7 +121,7 @@ func isPassword(typ, key string) bool {
 	return o != nil && o.IsPassword
 }
 
-func (e *Engine) ConfigStep(name, typ string, opts map[string]string, state, result string) (Step, error) {
+func (e *Engine) ConfigStep(ctx context.Context, name, typ string, opts map[string]string, state, result string) (Step, error) {
 	in := map[string]any{
 		"name":       name,
 		"type":       typ,
@@ -126,7 +138,7 @@ func (e *Engine) ConfigStep(name, typ string, opts map[string]string, state, res
 		State, Error string
 		Option       *rcOption
 	}
-	if err := rpc("config/create", in, &out); err != nil {
+	if err := runJob(ctx, "config/create", in, &out); err != nil {
 		return Step{}, err
 	}
 	step := Step{State: out.State, Error: out.Error}
@@ -167,15 +179,40 @@ func (e *Engine) Reachable(s store.Service, remotePath string) error {
 	e.opMu.Lock()
 	e.clearFsCache(s.ID)
 	e.opMu.Unlock()
+	_, err := e.ListDirs(s, remotePath)
+	return err
+}
+
+func (e *Engine) ListDirs(s store.Service, remotePath string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), testRemoteTimeout)
+	defer cancel()
+	var out struct{ List []struct{ Name string } }
+	err := runJob(ctx, "operations/list", probeParams(s.ID, remotePath), &out)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil, fmt.Errorf("%s did not answer within %s", s.Name, testRemoteTimeout)
+	}
+	if err != nil {
+		return nil, err
+	}
+	dirs := make([]string, 0, len(out.List))
+	for _, d := range out.List {
+		dirs = append(dirs, d.Name)
+	}
+	return dirs, nil
+}
+
+// librclone.RPC has no context, so a job is the only call that can be stopped
+func runJob(ctx context.Context, method string, in map[string]any, out any) error {
+	in["_async"] = true
 	var job struct{ JobID int64 }
-	if err := rpc("operations/list", probeParams(s.ID, remotePath), &job); err != nil {
+	if err := rpc(method, in, &job); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(testRemoteTimeout)
 	for {
 		var st struct {
 			Finished bool
 			Error    string
+			Output   json.RawMessage
 		}
 		if err := rpc("job/status", map[string]any{"jobid": job.JobID}, &st); err != nil {
 			return err
@@ -184,20 +221,21 @@ func (e *Engine) Reachable(s store.Service, remotePath string) error {
 			if st.Error != "" {
 				return errors.New(st.Error)
 			}
-			return nil
+			return json.Unmarshal(st.Output, out)
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
 			_ = rpc("job/stop", map[string]any{"jobid": job.JobID}, nil)
-			return fmt.Errorf("%s did not answer within %s", s.Name, testRemoteTimeout)
+			return ctx.Err()
+		case <-time.After(jobPoll):
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
 // without these, listing reads each object's ModTime, one HEAD per object on S3
 func probeParams(serviceID, remotePath string) map[string]any {
 	return map[string]any{
-		"fs": serviceID + ":", "remote": remotePath, "_async": true,
+		"fs": serviceID + ":", "remote": remotePath,
 		"opt": map[string]any{"noModTime": true, "noMimeType": true, "dirsOnly": true},
 	}
 }

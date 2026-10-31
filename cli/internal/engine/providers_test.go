@@ -46,3 +46,12 @@ func TestFeaturedAllExist(t *testing.T) {
 		require.True(t, types[f], f)
 	}
 }
+
+func TestProviderOptionsCarryHide(t *testing.T) {
+	hide := map[string]bool{}
+	for _, o := range provider(t, "sftp").Options {
+		hide[o.Name] = o.Hide
+	}
+	require.True(t, hide["pin_host_key"])
+	require.False(t, hide["host"])
+}

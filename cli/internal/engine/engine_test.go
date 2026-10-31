@@ -63,7 +63,7 @@ func TestConfigStepRevealsPasswords(t *testing.T) {
 	e := startEngine(t)
 	// a plain password that also parses as an obscured value
 	pass := obscure.MustObscure("inner")
-	step, err := e.ConfigStep("svc1", "sftp", map[string]string{"host": "nas.local", "pass": pass}, "", "")
+	step, err := e.ConfigStep(t.Context(), "svc1", "sftp", map[string]string{"host": "nas.local", "pass": pass}, "", "")
 	require.NoError(t, err)
 	require.True(t, step.Done)
 	require.Equal(t, map[string]string{"host": "nas.local", "pass": pass}, step.Service)
@@ -121,7 +121,6 @@ func TestProbeListsCheaply(t *testing.T) {
 
 	in := probeParams("probe", "")
 	require.Equal(t, map[string]any{"noModTime": true, "noMimeType": true, "dirsOnly": true}, in["opt"])
-	delete(in, "_async")
 	var out struct {
 		List []struct {
 			Name, MimeType, ModTime string

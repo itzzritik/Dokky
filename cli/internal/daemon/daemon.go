@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
@@ -23,6 +25,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/store"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/lib/diskusage"
+	"github.com/rclone/rclone/lib/oauthutil"
 )
 
 const (
@@ -118,6 +121,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 		return err
 	}
 	defer eng.Stop()
+	oauthutil.OpenURL = platform.OpenURL
 	// after engine.Start: librclone.Initialize resets slog's default
 	log := logx.New(filepath.Join(p.State, "dokky.log"))
 	defer func() {
@@ -235,15 +239,19 @@ type localParams struct {
 	MountPoint string `json:"mountPoint"`
 }
 
-func decode[T any](fn func(T) (any, error)) ipc.Handler {
-	return func(_ context.Context, raw json.RawMessage) (any, error) {
+func decode[T, R any](fn func(T) (R, error)) ipc.Handler {
+	return decodeCtx(func(_ context.Context, p T) (R, error) { return fn(p) })
+}
+
+func decodeCtx[T, R any](fn func(context.Context, T) (R, error)) ipc.Handler {
+	return func(ctx context.Context, raw json.RawMessage) (any, error) {
 		var p T
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return nil, fmt.Errorf("bad params: %w", err)
 			}
 		}
-		return fn(p)
+		return fn(ctx, p)
 	}
 }
 
@@ -262,11 +270,24 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			}
 			return d.mountStatus(p.Name), nil
 		}),
-		"service.put":    decode(func(s store.Service) (any, error) { return nil, d.putService(s) }),
+		"service.put": decode(func(s store.Service) (idParams, error) {
+			s.ID = cmp.Or(s.ID, uuid.NewString())
+			return idParams{ID: s.ID}, d.putService(s)
+		}),
 		"service.delete": decode(func(p idParams) (any, error) { return nil, d.deleteService(p.ID) }),
-		"mount.put":      decode(func(m store.Mount) (any, error) { return nil, d.putMount(m) }),
-		"mount.delete":   decode(func(p idParams) (any, error) { return nil, d.deleteMount(p.ID) }),
-		"mount.setLocal": decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
+		"mount.put": decode(func(m store.Mount) (idParams, error) {
+			m.ID = cmp.Or(m.ID, uuid.NewString())
+			return idParams{ID: m.ID}, d.putMount(m)
+		}),
+		"mount.delete":      decode(func(p idParams) (any, error) { return nil, d.deleteMount(p.ID) }),
+		"mount.setLocal":    decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
+		"providers":         func(context.Context, json.RawMessage) (any, error) { return engine.Providers() },
+		"service.configure": decodeCtx(d.configure),
+		"service.test":      decode(func(p testParams) (testReply, error) { return d.testService(p.Service), nil }),
+		"browse":            decode(d.browse),
+		"transfers":         func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
+		"settings.get":      func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
+		"settings.set":      decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
 		// lets the reply out before shutdown closes the connection
 		"daemon.restart": func(context.Context, json.RawMessage) (any, error) {
 			time.AfterFunc(restartDelay, func() {
@@ -330,8 +351,9 @@ func (d *Daemon) publish() {
 }
 
 func (d *Daemon) putService(s store.Service) error {
-	if s.ID == "" || s.Type == "" {
-		return errors.New("a service needs an id and a type")
+	s, err := splitSecrets(s)
+	if err != nil {
+		return err
 	}
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
@@ -345,7 +367,7 @@ func (d *Daemon) putService(s store.Service) error {
 		d.data.Services = append(d.data.Services, s)
 	}
 	d.setSecrets()
-	err := d.save()
+	err = d.save()
 	d.mu.Unlock()
 	d.publish()
 	return err
@@ -381,9 +403,6 @@ func (d *Daemon) deleteService(id string) error {
 }
 
 func (d *Daemon) putMount(m store.Mount) error {
-	if m.ID == "" {
-		return errors.New("a mount needs an id")
-	}
 	if err := engine.ValidName(m.Name); err != nil {
 		return err
 	}

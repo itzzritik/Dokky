@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,17 +11,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
+	"github.com/rclone/rclone/fs"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMain(m *testing.M) {
+	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelCritical
 	pollEvery, goneTimeout, remountSettle, retryBase = time.Millisecond, 50*time.Millisecond, 0, 0
 	os.Exit(m.Run())
 }
 
 type fakeEngine struct {
+	mountEngine // methods the fake leaves out panic if called
 	mu          sync.Mutex
 	mounted     map[string]string
 	os          map[string]bool
@@ -410,4 +415,9 @@ func TestMountPutValidates(t *testing.T) {
 	require.Error(t, d.putMount(store.Mount{ID: "m3", Name: "new", ServiceID: "nope"}))
 	require.NoError(t, d.putMount(store.Mount{ID: "m3", Name: "new", ServiceID: "s1", VFS: store.DefaultVFS()}))
 	require.Len(t, load(t, st).Mounts, 3)
+
+	var reply struct{ ID string }
+	require.NoError(t, call(t, d, "mount.put", store.Mount{Name: "fresh", ServiceID: "s1", VFS: store.DefaultVFS()}, &reply))
+	require.NoError(t, uuid.Validate(reply.ID))
+	require.Equal(t, reply.ID, load(t, st).Mounts[3].ID)
 }
