@@ -3,6 +3,7 @@ module github.com/itzzritik/dokky/cli
 go 1.26.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/rclone/rclone v1.75.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
@@ -27,7 +28,6 @@ require (
 	github.com/Files-com/files-sdk-go/v3 v3.3.194 // indirect
 	github.com/IBM/go-sdk-core/v5 v5.23.1 // indirect
 	github.com/Max-Sum/base32768 v0.0.0-20230304063302-18e6ce5945fd // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/bcrypt v0.0.0-20211005172633-e235017c1baf // indirect
 	github.com/ProtonMail/gluon v0.17.1-0.20230724134000-308be39be96e // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
