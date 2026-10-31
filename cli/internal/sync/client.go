@@ -283,6 +283,11 @@ func (c *Client) Revoke(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, "/devices/"+url.PathEscape(id), true, nil, nil, http.StatusNoContent)
 }
 
+func Offline(err error) bool {
+	var ue *url.Error
+	return errors.As(err, &ue)
+}
+
 func nonNil(m map[string]string) map[string]string {
 	if m == nil {
 		return map[string]string{}

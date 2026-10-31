@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/store"
 )
@@ -208,15 +211,96 @@ func (u *uploader) mounts(ms []store.Mount, upload func(store.Mount) bool) error
 
 // a conflict means the id is already in the account; the account's copy wins, as in a pull
 func create[T any](ctx context.Context, item T, put func(context.Context, T, int64) (T, error), id func(T) string) (T, error) {
-	saved, err := put(ctx, item, 0)
+	return accepted(ctx, item, 0, put, func(cur T) bool { return id(cur) == id(item) })
+}
+
+func accepted[T any](ctx context.Context, item T, base int64, put func(context.Context, T, int64) (T, error), ok func(cur T) bool) (T, error) {
+	saved, err := put(ctx, item, base)
 	var ce *ConflictError
 	if errors.As(err, &ce) {
 		var cur T
-		if json.Unmarshal(ce.Current, &cur) == nil && id(cur) == id(item) {
+		if json.Unmarshal(ce.Current, &cur) == nil && ok(cur) {
 			return cur, nil
 		}
 	}
 	return saved, err
+}
+
+// a 409 whose current item is what was sent is a retried save that already landed
+func SaveService(ctx context.Context, c *Client, s store.Service) (store.Service, error) {
+	return accepted(ctx, s, s.Version, c.PutService, func(cur store.Service) bool {
+		return cur.Name == s.Name && cur.Type == s.Type && maps.Equal(cur.Options, s.Options) && maps.Equal(cur.Secrets, s.Secrets)
+	})
+}
+
+func SaveMount(ctx context.Context, c *Client, m store.Mount) (store.Mount, error) {
+	return accepted(ctx, m, m.Version, c.PutMount, func(cur store.Mount) bool {
+		return cur.Name == m.Name && cur.ServiceID == m.ServiceID && cur.RemotePath == m.RemotePath && cur.VFS == m.VFS
+	})
+}
+
+type Loop struct {
+	Log    *slog.Logger
+	mu     sync.Mutex
+	tokens map[string]queuedToken
+}
+
+type queuedToken struct {
+	value  string
+	expiry time.Time
+}
+
+func (l *Loop) Token(serviceID, value string, expiry time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.tokens == nil {
+		l.tokens = map[string]queuedToken{}
+	}
+	l.tokens[serviceID] = queuedToken{value, expiry}
+}
+
+func (l *Loop) Pending() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.tokens) > 0
+}
+
+func (l *Loop) Reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.tokens = nil
+}
+
+// a token the server can never take (service gone, or a 4xx) is dropped so it never blocks pulls
+func (l *Loop) Flush(ctx context.Context, c *Client) error {
+	l.mu.Lock()
+	queued := maps.Clone(l.tokens)
+	l.mu.Unlock()
+	for id, t := range queued {
+		err := c.WriteToken(ctx, id, "token", t.value, t.expiry)
+		var se *StatusError
+		if err != nil && !errors.Is(err, ErrNotFound) && (!errors.As(err, &se) || se.Status >= 500) {
+			return fmt.Errorf("token write-back for service %s holds back pulls: %w", id, err)
+		}
+		if err != nil && l.Log != nil {
+			l.Log.Warn("dropped a token write-back the server refused", "service", id, "err", err)
+		}
+		l.mu.Lock()
+		if l.tokens[id] == t {
+			delete(l.tokens, id)
+		}
+		l.mu.Unlock()
+	}
+	return nil
+}
+
+// a snapshot pulled before a fresher local token reached the server would bring the older token back
+func (l *Loop) Tick(ctx context.Context, c *Client, rev string) (*Snapshot, error) {
+	if err := l.Flush(ctx, c); err != nil {
+		return nil, err
+	}
+	snap, _, err := c.Pull(ctx, rev)
+	return snap, err
 }
 
 func describeService(s store.Service) string {

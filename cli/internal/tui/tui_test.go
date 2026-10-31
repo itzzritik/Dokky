@@ -15,6 +15,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
+	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,6 +24,7 @@ const gib = 1 << 30
 type fakeDaemon struct {
 	mu      sync.Mutex
 	replies map[string]any
+	errs    map[string]error
 	calls   []string
 }
 
@@ -39,6 +41,9 @@ func (f *fakeDaemon) Call(_ context.Context, method string, params, result any) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, method+" "+string(raw))
+	if err := f.errs[method]; err != nil {
+		return err
+	}
 	if r, ok := f.replies[method]; ok && result != nil {
 		b, _ := json.Marshal(r)
 		return json.Unmarshal(b, result)
@@ -139,7 +144,7 @@ func TestHomeEnterMountsUnmounted(t *testing.T) {
 
 func TestStatusShowsWords(t *testing.T) {
 	f := newFake(daemon.StatusReply{Mounts: []daemon.MountStatus{
-		{ID: "m1", Name: "media", State: "mounted"},
+		{ID: "m1", Name: "media", State: "mounted", RemountToApply: true},
 		{ID: "m2", Name: "docs", State: "error", Error: "connection refused"},
 		{ID: "m3", Name: "old", State: "removed"},
 	}})
@@ -149,6 +154,7 @@ func TestStatusShowsWords(t *testing.T) {
 	require.Contains(t, v, "error")
 	require.Contains(t, v, "connection refused")
 	require.Contains(t, v, "removed on another device")
+	require.Equal(t, 1, strings.Count(v, "remount to apply"))
 }
 
 func TestAddMountRejectsBadName(t *testing.T) {
@@ -243,4 +249,65 @@ func TestEditServicePrefillsAndKeepsSecrets(t *testing.T) {
 	require.Equal(t, `{"editOf":"s1","id":"tmp","options":null,"result":"true","state":"s1","type":"sftp"}`, cfg[1])
 	require.Contains(t, f.called("service.test")[0], `"editOf":"s1"`)
 	require.Equal(t, []string{`{"id":"s1","name":"nas","type":"sftp","options":{"pass":"","port":"2022","shell_type":"unix","user":""},"secrets":null,"version":3,"updatedAt":"0001-01-01T00:00:00Z","editOf":"s1"}`}, f.called("service.put"))
+}
+
+func TestDevicesTabRevokesAnotherDevice(t *testing.T) {
+	f := newFake(daemon.StatusReply{LoggedIn: true})
+	seen := time.Date(2026, 10, 31, 9, 30, 0, 0, time.UTC)
+	f.replies["devices.list"] = []dsync.Device{
+		{ID: "d1", Name: "macbook", OS: "darwin", Version: "1.2.0", LastSeenAt: seen, Current: true},
+		{ID: "d2", Name: "office-pc", OS: "windows", Version: "1.1.0"},
+	}
+	m := start(f)
+	require.Len(t, f.called("sync.now"), 1, "opening the TUI pulls")
+
+	m = press(m, "tab", "tab", "tab", "tab")
+	v := view(m)
+	require.Contains(t, v, "macbook")
+	require.Contains(t, v, "this device")
+	require.Contains(t, v, "office-pc")
+	require.Contains(t, v, "windows")
+	require.Contains(t, v, "1.1.0")
+	require.Contains(t, v, seen.Local().Format(lastSeenLayout))
+	require.Contains(t, v, "never")
+
+	m = press(m, "r")
+	require.Contains(t, view(m), "dokky logout")
+	require.NotContains(t, view(m), "will be wiped")
+
+	m = press(m, "down", "r")
+	require.Contains(t, view(m), "Revoke office-pc?")
+	require.Contains(t, view(m), "This device will be wiped, including any uploads it has not sent yet.")
+	m = press(m, "n")
+	require.NotContains(t, view(m), "will be wiped")
+	require.Empty(t, f.called("devices.revoke"))
+
+	press(m, "r", "y")
+	require.Equal(t, []string{`{"id":"d2"}`}, f.called("devices.revoke"))
+	require.Len(t, f.called("devices.list"), 2, "the list reloads after a revoke")
+}
+
+func TestDevicesTabNeedsLogin(t *testing.T) {
+	f := newFake(daemon.StatusReply{})
+	m := press(start(f), "tab", "tab", "tab", "tab")
+	require.Contains(t, view(m), "Log in to see devices.")
+	require.Empty(t, f.called("devices.list"))
+}
+
+func TestServiceSaveConflictEndsFlow(t *testing.T) {
+	f := newFake(daemon.StatusReply{})
+	f.replies["providers"] = []engine.Provider{{Type: "sftp", Description: "SSH/SFTP", Options: []engine.Option{{Name: "host", Type: "string", Required: true}}}}
+	f.replies["service.get"] = map[string]any{"id": "s1", "name": "nas", "type": "sftp", "version": 1, "options": map[string]string{"host": "h"}, "secretsSet": []string{}}
+	f.replies["service.configure"] = map[string]any{"id": "tmp", "step": engine.Step{Done: true, Service: map[string]string{"host": "h"}}}
+	f.replies["service.test"] = map[string]any{"ok": true}
+	f.errs = map[string]error{"service.put": &ipc.Error{Code: "conflict", Message: `{"id":"s1","name":"nas","options":{"host":"moved"},"version":2}`}}
+
+	m := press(start(f), "tab", "e", "enter", "enter")
+	require.Len(t, f.called("service.put"), 1)
+	v := view(m)
+	require.Contains(t, v, "saved on another device first")
+	require.Contains(t, v, `"host":"moved"`)
+	require.NotContains(t, v, "try again")
+	require.Len(t, f.called("sync.now"), 2, "the newer copy is pulled right away")
+	require.Len(t, f.called("service.list"), 3, "on open, on the tab and after the conflict")
 }

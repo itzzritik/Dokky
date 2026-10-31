@@ -240,7 +240,7 @@ func TestStartupOfflineKeepsFlag(t *testing.T) {
 	require.True(t, load(t, st).Local["m1"].Mounted)
 
 	f.failMount = nil
-	d.tick()
+	d.tick(context.Background())
 	state, _ = stateOf(d, "m1")
 	require.Equal(t, stateMounted, state)
 }
@@ -277,7 +277,7 @@ func TestForeignMountIsNeverForced(t *testing.T) {
 
 	require.ErrorContains(t, d.mount("media"), "already in use")
 	require.NoError(t, d.unmount("media"))
-	require.NoError(t, d.deleteMount("m1"))
+	require.NoError(t, d.deleteMount(context.Background(), "m1"))
 	require.Empty(t, f.forced)
 	require.DirExists(t, other)
 }
@@ -329,7 +329,7 @@ func TestCommandsDontWaitOnOfflineRetry(t *testing.T) {
 	f.hangProbe, f.hangMount = "s1", "s1"
 	ticked := make(chan struct{})
 	go func() {
-		d.tick()
+		d.tick(context.Background())
 		close(ticked)
 	}()
 	<-f.entered
@@ -353,7 +353,7 @@ func TestOfflineRetryBacksOff(t *testing.T) {
 	require.True(t, load(t, st).Local["m1"].Mounted)
 
 	probes := f.probes
-	d.tick()
+	d.tick(context.Background())
 	require.Equal(t, probes, f.probes)
 
 	f.failProbe = nil
@@ -402,7 +402,7 @@ func TestTickReapsEjectedMount(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
 	require.NoError(t, d.mount("media"))
 	require.NoError(t, f.Unmount("media"))
-	d.tick()
+	d.tick(context.Background())
 	state, _ := stateOf(d, "m1")
 	require.Equal(t, stateUnmounted, state)
 	require.False(t, load(t, st).Local["m1"].Mounted)
@@ -412,7 +412,7 @@ func TestTickReapsEjectedMount(t *testing.T) {
 func TestServiceDeleteUnmountsItsMounts(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
 	require.NoError(t, d.mount("media"))
-	require.NoError(t, d.deleteService("s1"))
+	require.NoError(t, d.deleteService(context.Background(), "s1"))
 
 	require.Empty(t, f.mounted)
 	require.NotContains(t, f.services, "s1")
@@ -424,10 +424,10 @@ func TestServiceDeleteUnmountsItsMounts(t *testing.T) {
 
 func TestMountPutValidates(t *testing.T) {
 	d, _, st := newTestDaemon(t, sample())
-	require.Error(t, d.putMount(store.Mount{ID: "m3", Name: "Bad Name", ServiceID: "s1"}))
-	require.Error(t, d.putMount(store.Mount{ID: "m3", Name: "media", ServiceID: "s1"}))
-	require.Error(t, d.putMount(store.Mount{ID: "m3", Name: "new", ServiceID: "nope"}))
-	require.NoError(t, d.putMount(store.Mount{ID: "m3", Name: "new", ServiceID: "s1", VFS: store.DefaultVFS()}))
+	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "Bad Name", ServiceID: "s1"}))
+	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "media", ServiceID: "s1"}))
+	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "nope"}))
+	require.NoError(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "s1", VFS: store.DefaultVFS()}))
 	require.Len(t, load(t, st).Mounts, 3)
 
 	var reply struct{ ID string }

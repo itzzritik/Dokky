@@ -89,6 +89,7 @@ type app struct {
 	svc   services
 	xfers transfers
 	set   settings
+	dev   devices
 }
 
 var (
@@ -112,7 +113,7 @@ func newApp(d Daemon) *app {
 }
 
 func (a *app) Init() tea.Cmd {
-	return tea.Batch(a.poll(), a.fetchServices(), a.subscribe(), tick(), tea.RequestBackgroundColor)
+	return tea.Batch(a.poll(), a.fetchServices(), a.subscribe(), tick(), tea.RequestBackgroundColor, a.do("sync.now", nil, nil))
 }
 
 func tick() tea.Cmd {
@@ -140,6 +141,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case servicesMsg:
 		a.services = msg
+	case devicesMsg:
+		a.dev.list, a.dev.loaded = msg, true
 	case errMsg:
 		a.notice = msg.err.Error()
 	case tickMsg:
@@ -198,12 +201,14 @@ func (a *app) key(k tea.KeyPressMsg) tea.Cmd {
 		return a.svcKey(k)
 	case tabSettings:
 		return a.setKey(k)
+	case tabDevices:
+		return a.devKey(k)
 	}
 	return nil
 }
 
 func (a *app) capturing() bool {
-	return a.home.add != nil || a.svc.mode != svcList || a.set.edit != nil
+	return a.home.add != nil || a.svc.mode != svcList || a.set.edit != nil || a.dev.revoking != nil
 }
 
 func (a *app) switchTab(step int) tea.Cmd {
@@ -215,6 +220,8 @@ func (a *app) switchTab(step int) tea.Cmd {
 		return a.fetchSettings()
 	case tabServices:
 		return a.fetchServices()
+	case tabDevices:
+		return a.fetchDevices()
 	}
 	return nil
 }
@@ -257,7 +264,7 @@ func (a *app) View() tea.View {
 	case tabSettings:
 		body, help = a.setView()
 	case tabDevices:
-		body, help = devicesView(), ""
+		body, help = a.devView()
 	}
 	b.WriteString(body + "\n")
 	if a.warning != "" {

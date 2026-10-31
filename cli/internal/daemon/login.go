@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -133,6 +132,9 @@ func (d *Daemon) loginPoll(ctx context.Context) (loginPollReply, error) {
 	data := d.data
 	d.mu.Unlock()
 	out, clashes, err := dsync.Upload(ctx, client(acct), data)
+	if errors.Is(err, dsync.ErrRevoked) {
+		return loginPollReply{}, d.checked(acct, err)
+	}
 	if err != nil {
 		clashes = nil
 	}
@@ -176,6 +178,9 @@ func (d *Daemon) loginResolve(ctx context.Context, p resolveParams) (resolveRepl
 		return resolveReply{}, err
 	}
 	out, more, err := dsync.Resolve(ctx, client(data.Account), data, cl, p.Keep)
+	if errors.Is(err, dsync.ErrRevoked) {
+		return resolveReply{}, d.checked(data.Account, err)
+	}
 	if err != nil {
 		return resolveReply{}, err
 	}
@@ -304,33 +309,17 @@ func (d *Daemon) logout(ctx context.Context, p logoutParams) (logoutReply, error
 	}
 
 	var warnings []string
-	for _, dir := range []string{"vfs", "vfsMeta"} {
-		if err := os.RemoveAll(filepath.Join(d.cacheDir, dir)); err != nil {
-			d.log.Warn("remove cache", "err", err)
-			warnings = append(warnings, fmt.Sprintf("could not remove the cache: %v", err))
-		}
+	if err := d.clearCache(); err != nil {
+		warnings = append(warnings, fmt.Sprintf("could not remove the cache: %v", err))
 	}
 	// the device is wiped even when the caller is gone or offline
 	if err := client(acct).Revoke(context.WithoutCancel(ctx), "self"); err != nil && !errors.Is(err, dsync.ErrRevoked) && !errors.Is(err, dsync.ErrUnauthorized) {
 		d.log.Warn("revoke device", "err", err)
 		warnings = append(warnings, fmt.Sprintf("could not reach dokky to remove this device, remove it at %s/devices", acct.APIBase))
 	}
-	reply := logoutReply{Warning: strings.Join(warnings, "\n")}
-
-	d.mu.Lock()
-	services := d.data.Services
-	err := d.st.Delete()
-	d.data = store.Data{Local: map[string]store.LocalMount{}}
-	d.states, d.edits = map[string]*mountState{}, map[string]string{}
-	d.flow, d.clashes = nil, nil
-	d.setSecrets()
-	d.mu.Unlock()
-	for _, s := range services {
-		d.eng.DeleteService(s.ID)
-	}
+	err := d.forget()
 	d.log.Info("logged out")
-	d.publish()
-	return reply, err
+	return logoutReply{Warning: strings.Join(warnings, "\n")}, err
 }
 
 func (d *Daemon) waitUploads(ctx context.Context) error {

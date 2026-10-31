@@ -110,7 +110,12 @@ func (a *app) setView() (string, string) {
 	}
 	fmt.Fprintf(&b, "\n%sAuto update: %s\n", cursor(cur == len(mounts)), auto)
 	account := "not logged in"
-	if a.status.LoggedIn {
+	switch {
+	case a.status.SignedOut:
+		account = "signed out on the server, run dokky logout, then dokky login"
+	case a.status.Offline:
+		account = "logged in, offline"
+	case a.status.LoggedIn:
 		account = "logged in"
 	}
 	fmt.Fprintf(&b, "\nAccount: %s\nVersion: dokky %s, daemon %s\n", account, buildinfo.Version, a.status.Version)

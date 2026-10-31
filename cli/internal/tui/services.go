@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/itzzritik/dokky/cli/internal/engine"
+	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/logx"
 	"github.com/itzzritik/dokky/cli/internal/store"
 )
@@ -205,6 +206,14 @@ func (a *app) svcMsg(msg tea.Msg) tea.Cmd {
 	case savedMsg:
 		if f == nil || msg.gen != f.gen {
 			return nil
+		}
+		// retrying would send the same stale version, so the edit starts over from the newer copy
+		var ie *ipc.Error
+		if errors.As(msg.err, &ie) && ie.Code == "conflict" {
+			name := f.name
+			a.endFlow()
+			a.notice = name + " was saved on another device first, so this edit was not saved. The newer copy: " + ie.Message + ". Edit it again to change it."
+			return a.do("sync.now", nil, tea.Batch(a.fetchServices(), a.refreshStatus()))
 		}
 		if msg.err != nil {
 			return a.fail(msg.err)

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,11 +40,17 @@ type fakeAPI struct {
 	revoked  bool
 	fail     map[string]string
 	hook     func()
+	rev      int
+	reqs     []string
+	down     bool
+	devices  []dsync.Device
+	revokes  []string
+	expiry   map[string]time.Time
 }
 
 func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 	t.Helper()
-	f := &fakeAPI{polls: polls, services: map[string]store.Service{}, mounts: map[string]store.Mount{}, fail: map[string]string{}}
+	f := &fakeAPI{polls: polls, services: map[string]store.Service{}, mounts: map[string]store.Mount{}, fail: map[string]string{}, expiry: map[string]time.Time{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/cli/login/start", func(w http.ResponseWriter, r *http.Request) {
 		var info dsync.DeviceInfo
@@ -71,21 +78,36 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 	})
 	device := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.down {
+				if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+					conn.Close()
+				}
+				return
+			}
 			if r.Header.Get("Authorization") != "Bearer "+testToken {
 				writeJSON(w, http.StatusUnauthorized, apiError("unauthorized"))
 				return
 			}
-			f.mu.Lock()
-			defer f.mu.Unlock()
+			f.reqs = append(f.reqs, r.Method+" "+r.URL.Path)
 			if f.hook != nil {
 				f.hook()
 			}
 			h(w, r)
 		}
 	}
-	mux.HandleFunc("GET /api/v1/sync", device(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("ETag", `"7"`)
-		writeJSON(w, http.StatusOK, map[string]any{"rev": 7, "services": slices.AppendSeq([]store.Service{}, maps.Values(f.services)), "mounts": slices.AppendSeq([]store.Mount{}, maps.Values(f.mounts))})
+	mux.HandleFunc("GET /api/v1/sync", device(func(w http.ResponseWriter, r *http.Request) {
+		etag := fmt.Sprintf(`"%d"`, f.rev)
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
+			f.reqs[len(f.reqs)-1] += " 304"
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rev": f.rev,
+			"services": sortedBy(f.services, func(s store.Service) string { return s.Name }),
+			"mounts":   sortedBy(f.mounts, func(m store.Mount) string { return m.Name })})
 	}))
 	mux.HandleFunc("PUT /api/v1/services/{id}", device(func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
@@ -108,6 +130,7 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 		if save(w, exists, cur.Version, b.BaseVersion, taken, cur) {
 			s.Version, s.UpdatedAt = b.BaseVersion+1, time.Now().UTC()
 			f.services[s.ID] = s
+			f.rev++
 			writeJSON(w, http.StatusOK, s)
 		}
 	}))
@@ -136,12 +159,63 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 		if save(w, exists, cur.Version, b.BaseVersion, taken, cur) {
 			m.Version, m.UpdatedAt = b.BaseVersion+1, time.Now().UTC()
 			f.mounts[m.ID] = m
+			f.rev++
 			writeJSON(w, http.StatusOK, m)
 		}
 	}))
 	mux.HandleFunc("DELETE /api/v1/devices/self", device(func(w http.ResponseWriter, _ *http.Request) {
 		f.revoked = true
 		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("DELETE /api/v1/devices/{id}", device(func(w http.ResponseWriter, r *http.Request) {
+		f.revokes = append(f.revokes, r.PathValue("id"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("GET /api/v1/devices", device(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, append([]dsync.Device{}, f.devices...))
+	}))
+	mux.HandleFunc("DELETE /api/v1/services/{id}", device(func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, ok := f.services[id]; !ok {
+			writeJSON(w, http.StatusNotFound, apiError("not_found"))
+			return
+		}
+		delete(f.services, id)
+		maps.DeleteFunc(f.mounts, func(_ string, m store.Mount) bool { return m.ServiceID == id })
+		f.rev++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("DELETE /api/v1/mounts/{id}", device(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := f.mounts[r.PathValue("id")]; !ok {
+			writeJSON(w, http.StatusNotFound, apiError("not_found"))
+			return
+		}
+		delete(f.mounts, r.PathValue("id"))
+		f.rev++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("POST /api/v1/services/{id}/token", device(func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Field, Value string
+			Expiry       time.Time
+		}
+		id := r.PathValue("id")
+		s, ok := f.services[id]
+		switch {
+		case json.NewDecoder(r.Body).Decode(&b) != nil:
+			writeJSON(w, http.StatusBadRequest, apiError("bad_request"))
+		case !ok:
+			writeJSON(w, http.StatusNotFound, apiError("not_found"))
+		case !b.Expiry.After(f.expiry[id]):
+			writeJSON(w, http.StatusOK, map[string]string{"kept": "existing"})
+		default:
+			s.Secrets = maps.Clone(s.Secrets)
+			s.Secrets[b.Field] = b.Value
+			s.Version++
+			f.services[id], f.expiry[id] = s, b.Expiry
+			f.rev++
+			writeJSON(w, http.StatusOK, map[string]string{"kept": "new"})
+		}
 	}))
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -162,6 +236,10 @@ func save(w http.ResponseWriter, exists bool, version, base int64, taken bool, c
 		return true
 	}
 	return false
+}
+
+func sortedBy[T any](m map[string]T, name func(T) string) []T {
+	return append([]T{}, slices.SortedFunc(maps.Values(m), func(a, b T) int { return cmp.Compare(name(a), name(b)) })...)
 }
 
 func apiError(code string) map[string]any {
@@ -196,6 +274,12 @@ func (f *fakeAPI) set(fn func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	fn()
+}
+
+func (f *fakeAPI) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reqs)
 }
 
 func (f *fakeAPI) wasRevoked() bool {
@@ -260,7 +344,7 @@ func TestLoginUploadsLocalItems(t *testing.T) {
 	require.Equal(t, []string{"service nas 0", "mount media 0", "mount docs 0"}, api.putLog())
 
 	saved := load(t, st)
-	require.Equal(t, &store.Account{APIBase: api.srv.URL, DeviceID: "dev1", Token: testToken}, saved.Account)
+	require.Equal(t, &store.Account{APIBase: api.srv.URL, DeviceID: "dev1", Token: testToken, Rev: `"3"`}, saved.Account, "a pull runs as soon as the login finishes")
 	require.Equal(t, int64(1), saved.Services[0].Version)
 	require.False(t, saved.Services[0].UpdatedAt.IsZero())
 	require.Equal(t, "hunter2-secret", saved.Services[0].Secrets["pass"])
@@ -314,7 +398,7 @@ func TestLoginClashKeepAccountDeletesLocalCopy(t *testing.T) {
 	require.NoError(t, call(t, d, "login.resolve", map[string]string{"kind": "mount", "name": "media", "keep": "account"}, &rr))
 	require.Empty(t, rr.Clashes)
 	saved = load(t, st)
-	require.Equal(t, []string{"m2"}, mountIDs(saved))
+	require.Equal(t, []string{"m2", "rm1"}, mountIDs(saved), "the pull after login brings the account's media")
 	require.NotContains(t, saved.Local, "m1")
 	require.Equal(t, point, saved.Local["rm1"].MountPoint, "the account's mount of that name takes over this device's settings")
 	require.False(t, saved.Account.Pending)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
+	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 )
 
 const (
@@ -51,6 +52,7 @@ type mountState struct {
 	name, point string
 	failures    int
 	retryAt     time.Time
+	remount     bool // a pulled change waits for the next mount
 }
 
 func byName(name string) func(store.Mount) bool {
@@ -206,7 +208,7 @@ func (d *Daemon) unmountLocked(m store.Mount) error {
 		st.state, st.err = stateError, err.Error()
 	} else {
 		*st = mountState{state: stateUnmounted}
-		d.setMounted(m.ID, false)
+		d.markUnmounted(m.ID)
 		err = d.save()
 	}
 	d.mu.Unlock()
@@ -272,7 +274,7 @@ func (d *Daemon) refreshStats() error {
 		if _, ok := live[st.name]; st.state == stateMounted && !ok {
 			gone = append(gone, st.point)
 			*st = mountState{state: stateUnmounted}
-			d.setMounted(id, false)
+			d.markUnmounted(id)
 		}
 	}
 	if len(gone) > 0 {
@@ -338,6 +340,15 @@ func (d *Daemon) setMounted(id string, on bool) {
 	lm := d.data.Local[id]
 	lm.Mounted = on
 	d.data.Local[id] = lm
+}
+
+// caller holds mu; a mount deleted on another device goes once it is unmounted here
+func (d *Daemon) markUnmounted(id string) {
+	d.setMounted(id, false)
+	if d.data.Local[id].RemovedRemotely {
+		d.data = dsync.DropRemoved(d.data, id)
+		delete(d.states, id)
+	}
 }
 
 func (d *Daemon) defaultPoint(name string) string {

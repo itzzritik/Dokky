@@ -92,8 +92,12 @@ func (a *app) homeView() (string, string) {
 			if p, ok := a.home.pending[m.Name]; ok {
 				state = p
 			}
+			word := stateWord(state)
+			if m.RemountToApply {
+				word += " " + yellow.Render("(remount to apply)")
+			}
 			fmt.Fprintf(&b, "%s%-*s  %s  %-10s  %d queued, %d uploading\n", cursor(i == cur), w, m.Name,
-				pad(stateWord(state), 12), size(m.CacheBytes), m.UploadsQueued, m.UploadsInProgress)
+				pad(word, 12), size(m.CacheBytes), m.UploadsQueued, m.UploadsInProgress)
 			if m.State == "error" && m.Error != "" {
 				fmt.Fprintf(&b, "  %s  %s\n", strings.Repeat(" ", w), red.Render(m.Error))
 				if a.driverFix != "" {

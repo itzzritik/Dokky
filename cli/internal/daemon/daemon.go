@@ -49,6 +49,7 @@ type StatusReply struct {
 	LoggedIn     bool          `json:"loggedIn"`
 	Pending      bool          `json:"pending"`
 	Offline      bool          `json:"offline"`
+	SignedOut    bool          `json:"signedOut"`
 }
 
 type MountStatus struct {
@@ -61,6 +62,7 @@ type MountStatus struct {
 	CacheBytes        int64  `json:"cacheBytes"`
 	UploadsQueued     int    `json:"uploadsQueued"`
 	UploadsInProgress int    `json:"uploadsInProgress"`
+	RemountToApply    bool   `json:"remountToApply"`
 }
 
 type Daemon struct {
@@ -74,6 +76,9 @@ type Daemon struct {
 	forceUnmount func(point string) error
 	openURL      func(url string) error
 
+	loop   dsync.Loop
+	syncMu sync.Mutex // one pull at a time; taken before opMu
+
 	// serialises changes; status only TryLocks it
 	opMu        sync.Mutex
 	unmountedAt map[string]time.Time
@@ -86,6 +91,9 @@ type Daemon struct {
 	stats   map[string]engine.MountStats
 	flow    *loginFlow
 	clashes []dsync.Clash
+	saves   uint64 // a pull that started before a save is dropped
+
+	offline, signedOut bool
 }
 
 func DefaultPaths() Paths {
@@ -123,7 +131,12 @@ func Run(ctx context.Context, p Paths) (err error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Start(p.Cache, nil)
+	var d *Daemon
+	eng, err := engine.Start(p.Cache, func(serviceID, token string) {
+		if d != nil {
+			d.onToken(serviceID, token)
+		}
+	})
 	if err != nil {
 		return err
 	}
@@ -145,7 +158,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 		return err
 	}
 
-	d := newDaemon(eng, st, data, home, p.Cache, log)
+	d = newDaemon(eng, st, data, home, p.Cache, log)
 	d.start()
 	defer d.shutdown()
 
@@ -181,14 +194,14 @@ func Run(ctx context.Context, p Paths) (err error) {
 			serving = false
 			return fmt.Errorf("ipc server stopped: %v", serr)
 		case <-tick.C:
-			d.tick()
+			d.tick(ctx)
 		}
 	}
 }
 
 func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir string, log *slog.Logger) *Daemon {
 	return &Daemon{
-		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log,
+		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log, loop: dsync.Loop{Log: log},
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
 		unmountedAt: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 	}
@@ -207,7 +220,8 @@ func (d *Daemon) start() {
 	d.remountFlagged()
 }
 
-func (d *Daemon) tick() {
+func (d *Daemon) tick(ctx context.Context) {
+	d.syncNow(ctx)
 	d.opMu.Lock()
 	d.refresh()
 	d.opMu.Unlock()
@@ -260,7 +274,12 @@ func decodeCtx[T, R any](fn func(context.Context, T) (R, error)) ipc.Handler {
 		}
 		r, err := fn(ctx, p)
 		if err != nil {
-			return r, errors.New(logx.Redact(err.Error()))
+			code := "internal"
+			var ce ipc.CodedError
+			if errors.As(err, &ce) {
+				code = ce.Code()
+			}
+			return r, &codedError{code, logx.Redact(err.Error())}
 		}
 		return r, nil
 	}
@@ -281,24 +300,24 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			}
 			return d.mountStatus(p.Name), nil
 		}),
-		"service.put": decode(func(p putParams) (idParams, error) {
+		"service.put": decodeCtx(func(ctx context.Context, p putParams) (idParams, error) {
 			s := p.Service
 			s.ID = cmp.Or(s.ID, uuid.NewString())
 			if p.EditOf != "" && p.EditOf != s.ID {
 				return idParams{}, fmt.Errorf("editOf %q must be the id of the service being saved", p.EditOf)
 			}
 			s.Options, _ = d.keepSecrets(p.EditOf, s.Type, s.Options)
-			return idParams{ID: s.ID}, d.putService(s)
+			return idParams{ID: s.ID}, d.putService(ctx, s)
 		}),
-		"service.delete": decode(func(p idParams) (any, error) { return nil, d.deleteService(p.ID) }),
+		"service.delete": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.deleteService(ctx, p.ID) }),
 		"service.list":   func(context.Context, json.RawMessage) (any, error) { return d.serviceList(), nil },
 		"service.get":    decode(d.serviceGet),
 		"oauth.status":   func(context.Context, json.RawMessage) (any, error) { return oauthStatus() },
-		"mount.put": decode(func(m store.Mount) (idParams, error) {
+		"mount.put": decodeCtx(func(ctx context.Context, m store.Mount) (idParams, error) {
 			m.ID = cmp.Or(m.ID, uuid.NewString())
-			return idParams{ID: m.ID}, d.putMount(m)
+			return idParams{ID: m.ID}, d.putMount(ctx, m)
 		}),
-		"mount.delete":      decode(func(p idParams) (any, error) { return nil, d.deleteMount(p.ID) }),
+		"mount.delete":      decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.deleteMount(ctx, p.ID) }),
 		"mount.setLocal":    decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
 		"providers":         func(context.Context, json.RawMessage) (any, error) { return engine.Providers() },
 		"service.configure": decodeCtx(d.configure),
@@ -306,14 +325,25 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			p.Service.Options, _ = d.keepSecrets(p.EditOf, p.Service.Type, p.Service.Options)
 			return d.testService(p.Service), nil
 		}),
-		"browse":        decode(d.browse),
-		"transfers":     func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
-		"settings.get":  func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
-		"settings.set":  decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
-		"login.start":   decodeCtx(func(ctx context.Context, _ struct{}) (loginStartReply, error) { return d.loginStart(ctx) }),
-		"login.poll":    decodeCtx(func(ctx context.Context, _ struct{}) (loginPollReply, error) { return d.loginPoll(ctx) }),
-		"login.resolve": decodeCtx(d.loginResolve),
-		"logout":        decodeCtx(d.logout),
+		"browse":       decode(d.browse),
+		"transfers":    func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
+		"settings.get": func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
+		"settings.set": decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
+		"login.start":  decodeCtx(func(ctx context.Context, _ struct{}) (loginStartReply, error) { return d.loginStart(ctx) }),
+		"login.poll": decodeCtx(func(ctx context.Context, _ struct{}) (loginPollReply, error) {
+			r, err := d.loginPoll(ctx)
+			d.syncNow(ctx)
+			return r, err
+		}),
+		"login.resolve": decodeCtx(func(ctx context.Context, p resolveParams) (resolveReply, error) {
+			r, err := d.loginResolve(ctx, p)
+			d.syncNow(ctx)
+			return r, err
+		}),
+		"logout":         decodeCtx(d.logout),
+		"sync.now":       decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { d.syncNow(ctx); return nil, nil }),
+		"devices.list":   decodeCtx(func(ctx context.Context, _ struct{}) ([]dsync.Device, error) { return d.devices(ctx) }),
+		"devices.revoke": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.revokeDevice(ctx, p.ID) }),
 		// lets the reply out before shutdown closes the connection
 		"daemon.restart": func(context.Context, json.RawMessage) (any, error) {
 			time.AfterFunc(restartDelay, func() {
@@ -341,12 +371,14 @@ func (d *Daemon) status() StatusReply {
 	defer d.mu.Unlock()
 	r.LoggedIn = d.data.Account != nil
 	r.Pending = r.LoggedIn && d.data.Account.Pending
+	r.Offline, r.SignedOut = d.offline, d.signedOut
 	for _, m := range d.data.Mounts {
 		st := d.state(m.ID)
 		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m)}
 		if st.state == stateMounted {
 			s := d.stats[st.name]
 			ms.MountPoint, ms.CacheBytes, ms.UploadsQueued, ms.UploadsInProgress = st.point, s.CacheBytes, s.UploadsQueued, s.UploadsInProgress
+			ms.RemountToApply = st.remount
 		}
 		if d.data.Local[m.ID].RemovedRemotely {
 			ms.State = stateRemoved
@@ -377,13 +409,19 @@ func (d *Daemon) publish() {
 	d.srv.Publish(ipc.Event{Event: "status", Data: raw})
 }
 
-func (d *Daemon) putService(s store.Service) error {
+func (d *Daemon) putService(ctx context.Context, s store.Service) error {
 	s, err := splitSecrets(s)
 	if err != nil {
 		return err
 	}
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	if err := d.serverFirst(func(c *dsync.Client) (err error) {
+		s, err = dsync.SaveService(ctx, c, s)
+		return err
+	}); err != nil {
+		return err
+	}
 	if err := d.eng.PutService(s); err != nil {
 		return err
 	}
@@ -393,6 +431,7 @@ func (d *Daemon) putService(s store.Service) error {
 	} else {
 		d.data.Services = append(d.data.Services, s)
 	}
+	d.saves++
 	d.setSecrets()
 	err = d.save()
 	d.mu.Unlock()
@@ -400,9 +439,12 @@ func (d *Daemon) putService(s store.Service) error {
 	return err
 }
 
-func (d *Daemon) deleteService(id string) error {
+func (d *Daemon) deleteService(ctx context.Context, id string) error {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	if err := d.serverFirst(func(c *dsync.Client) error { return notFoundOK(c.DeleteService(ctx, id)) }); err != nil {
+		return err
+	}
 	d.mu.Lock()
 	var mounts []store.Mount
 	for _, m := range d.data.Mounts {
@@ -421,6 +463,7 @@ func (d *Daemon) deleteService(id string) error {
 		d.dropMount(m.ID)
 	}
 	d.data.Services = slices.DeleteFunc(d.data.Services, func(s store.Service) bool { return s.ID == id })
+	d.saves++
 	d.setSecrets()
 	err := d.save()
 	d.mu.Unlock()
@@ -429,15 +472,28 @@ func (d *Daemon) deleteService(id string) error {
 	return err
 }
 
-func (d *Daemon) putMount(m store.Mount) error {
+func (d *Daemon) putMount(ctx context.Context, m store.Mount) error {
 	if err := engine.ValidName(m.Name); err != nil {
 		return err
 	}
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
-	err := d.upsertMount(m)
+	_, err := d.mountSlot(m)
+	d.mu.Unlock()
 	if err == nil {
+		err = d.serverFirst(func(c *dsync.Client) (err error) {
+			m, err = dsync.SaveMount(ctx, c, m)
+			return err
+		})
+	}
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	err = d.upsertMount(m)
+	if err == nil {
+		d.saves++
 		err = d.save()
 	}
 	d.mu.Unlock()
@@ -445,9 +501,9 @@ func (d *Daemon) putMount(m store.Mount) error {
 	return err
 }
 
-func (d *Daemon) upsertMount(m store.Mount) error {
+func (d *Daemon) mountSlot(m store.Mount) (int, error) {
 	if !slices.ContainsFunc(d.data.Services, func(s store.Service) bool { return s.ID == m.ServiceID }) {
-		return fmt.Errorf("no service with id %q", m.ServiceID)
+		return -1, fmt.Errorf("no service with id %q", m.ServiceID)
 	}
 	i := -1
 	for j, x := range d.data.Mounts {
@@ -455,8 +511,16 @@ func (d *Daemon) upsertMount(m store.Mount) error {
 		case x.ID == m.ID:
 			i = j
 		case x.Name == m.Name:
-			return fmt.Errorf("a mount named %q already exists", m.Name)
+			return -1, fmt.Errorf("a mount named %q already exists", m.Name)
 		}
+	}
+	return i, nil
+}
+
+func (d *Daemon) upsertMount(m store.Mount) error {
+	i, err := d.mountSlot(m)
+	if err != nil {
+		return err
 	}
 	if i < 0 {
 		d.data.Mounts = append(d.data.Mounts, m)
@@ -466,9 +530,12 @@ func (d *Daemon) upsertMount(m store.Mount) error {
 	return nil
 }
 
-func (d *Daemon) deleteMount(id string) error {
+func (d *Daemon) deleteMount(ctx context.Context, id string) error {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	if err := d.serverFirst(func(c *dsync.Client) error { return notFoundOK(c.DeleteMount(ctx, id)) }); err != nil {
+		return err
+	}
 	m, ok := d.findMount(byID(id))
 	if !ok {
 		return nil
@@ -478,6 +545,7 @@ func (d *Daemon) deleteMount(id string) error {
 	}
 	d.mu.Lock()
 	d.dropMount(id)
+	d.saves++
 	err := d.save()
 	d.mu.Unlock()
 	d.publish()
