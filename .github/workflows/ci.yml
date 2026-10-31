@@ -72,3 +72,19 @@ jobs:
           node-version: 24
       - run: node --test
         working-directory: npm
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bunx next typegen
+      - run: bunx tsc --noEmit
+      - run: bun test

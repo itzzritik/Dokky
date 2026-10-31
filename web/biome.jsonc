@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react",
+    "ultracite/biome/next"
+  ],
+  "vcs": { "root": ".." },
+  // MongoDB key order is meaningful (compound indexes, sorts).
+  "assist": { "actions": { "source": { "useSortedKeys": "off" } } }
+}
