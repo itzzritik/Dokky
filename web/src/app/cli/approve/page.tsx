@@ -77,6 +77,9 @@ export default async function ApprovePage({
       <p className="text-muted-foreground">
         Approve only if this code matches the one in your terminal.
       </p>
+      <p className="text-muted-foreground">
+        If you didn't just run dokky login, deny.
+      </p>
       <div className="flex gap-3">
         <form action={approve}>
           <input name="code" type="hidden" value={userCode} />

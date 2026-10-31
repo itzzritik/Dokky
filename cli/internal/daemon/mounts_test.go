@@ -44,6 +44,7 @@ type fakeEngine struct {
 	failTotal   error
 	tested      store.Service
 	failTest    error
+	onUnmount   func(name string)
 
 	// rclone holds its mount lock across a whole mount, and Stats needs it
 	rclone               sync.Mutex
@@ -97,6 +98,9 @@ func (f *fakeEngine) Mount(m store.Mount, point string) (string, error) {
 }
 
 func (f *fakeEngine) Unmount(name string) error {
+	if f.onUnmount != nil {
+		f.onUnmount(name)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failUnmount > 0 {
@@ -434,8 +438,9 @@ func TestServiceDeleteUnmountsItsMounts(t *testing.T) {
 func TestMountPutValidates(t *testing.T) {
 	d, _, st := newTestDaemon(t, sample())
 	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "Bad Name", ServiceID: "s1"}))
-	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "media", ServiceID: "s1"}))
-	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "nope"}))
+	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "media", ServiceID: "s1", VFS: store.DefaultVFS()}), "already exists")
+	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "nope", VFS: store.DefaultVFS()}), "no service")
+	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "s1"}), "cache max age")
 	require.NoError(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "s1", VFS: store.DefaultVFS()}))
 	require.Len(t, load(t, st).Mounts, 3)
 
@@ -443,4 +448,35 @@ func TestMountPutValidates(t *testing.T) {
 	require.NoError(t, call(t, d, "mount.put", store.Mount{Name: "fresh", ServiceID: "s1", VFS: store.DefaultVFS()}, &reply))
 	require.NoError(t, uuid.Validate(reply.ID))
 	require.Equal(t, reply.ID, load(t, st).Mounts[3].ID)
+}
+
+func TestMountPutCacheMaxAge(t *testing.T) {
+	d, f, st := newTestDaemon(t, sample("m1"))
+	d.start()
+	require.Contains(t, f.mounted, "media")
+
+	var m store.Mount
+	require.NoError(t, call(t, d, "mount.get", idParams{ID: "m1"}, &m))
+	require.Equal(t, "media", m.Name)
+	require.Equal(t, "5m", d.mountStatus("media").CacheMaxAge)
+
+	m.VFS.CacheMaxAge = "2h"
+	require.ErrorContains(t, call(t, d, "mount.put", m, nil), "cache max age")
+	require.Equal(t, "5m", load(t, st).Mounts[0].VFS.CacheMaxAge)
+
+	m.VFS.CacheMaxAge = "1h"
+	require.NoError(t, call(t, d, "mount.put", m, nil))
+	require.Equal(t, "1h", load(t, st).Mounts[0].VFS.CacheMaxAge)
+	require.Equal(t, "1h", d.mountStatus("media").CacheMaxAge)
+	require.True(t, d.mountStatus("media").RemountToApply)
+
+	docs := load(t, st).Mounts[1]
+	docs.VFS.CacheMaxAge = "7d"
+	require.NoError(t, call(t, d, "mount.put", docs, nil))
+	require.False(t, d.mountStatus("docs").RemountToApply)
+
+	require.NoError(t, d.unmount("media"))
+	require.NoError(t, d.mount("media"))
+	require.False(t, d.mountStatus("media").RemountToApply)
+	require.ErrorContains(t, call(t, d, "mount.get", idParams{ID: "nope"}, nil), "no mount")
 }

@@ -74,10 +74,19 @@ func (d tuiDaemon) Call(ctx context.Context, method string, params, result any) 
 	case "service.configure", "service.test", "browse":
 		c = d.long
 	}
-	err := c.Call(ctx, method, params, result)
+	return messageOnly(c.Call(ctx, method, params, result))
+}
+
+// prints only the message while errors.As still finds the code
+type daemonError struct{ ie *ipc.Error }
+
+func (e *daemonError) Error() string { return e.ie.Message }
+func (e *daemonError) Unwrap() error { return e.ie }
+
+func messageOnly(err error) error {
 	var ie *ipc.Error
 	if errors.As(err, &ie) {
-		return errors.New(ie.Message)
+		return &daemonError{ie}
 	}
 	return err
 }

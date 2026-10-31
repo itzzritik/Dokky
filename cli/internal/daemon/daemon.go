@@ -63,6 +63,7 @@ type MountStatus struct {
 	UploadsQueued     int    `json:"uploadsQueued"`
 	UploadsInProgress int    `json:"uploadsInProgress"`
 	RemountToApply    bool   `json:"remountToApply"`
+	CacheMaxAge       string `json:"cacheMaxAge"`
 }
 
 type Daemon struct {
@@ -352,6 +353,13 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			m.ID = cmp.Or(m.ID, uuid.NewString())
 			return idParams{ID: m.ID}, d.putMount(ctx, m)
 		}),
+		"mount.get": decode(func(p idParams) (store.Mount, error) {
+			m, ok := d.findMount(byID(p.ID))
+			if !ok {
+				return m, fmt.Errorf("no mount with id %q", p.ID)
+			}
+			return m, nil
+		}),
 		"mount.delete":      decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.deleteMount(ctx, p.ID) }),
 		"mount.setLocal":    decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
 		"providers":         func(context.Context, json.RawMessage) (any, error) { return engine.Providers() },
@@ -420,7 +428,7 @@ func (d *Daemon) status() StatusReply {
 	r.Offline, r.SignedOut = d.offline, d.signedOut
 	for _, m := range d.data.Mounts {
 		st := d.state(m.ID)
-		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m)}
+		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m), CacheMaxAge: m.VFS.CacheMaxAge}
 		if st.state == stateMounted {
 			s := d.stats[st.name]
 			ms.MountPoint, ms.CacheBytes, ms.UploadsQueued, ms.UploadsInProgress = st.point, s.CacheBytes, s.UploadsQueued, s.UploadsInProgress
@@ -522,10 +530,17 @@ func (d *Daemon) putMount(ctx context.Context, m store.Mount) error {
 	if err := engine.ValidName(m.Name); err != nil {
 		return err
 	}
+	if err := engine.ValidCacheMaxAge(m.VFS.CacheMaxAge); err != nil {
+		return err
+	}
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
-	_, err := d.mountSlot(m)
+	i, err := d.mountSlot(m)
+	var old store.Mount
+	if i >= 0 {
+		old = d.data.Mounts[i]
+	}
 	d.mu.Unlock()
 	if err == nil {
 		err = d.serverFirst(func(c *dsync.Client) (err error) {
@@ -539,6 +554,9 @@ func (d *Daemon) putMount(ctx context.Context, m store.Mount) error {
 	d.mu.Lock()
 	err = d.upsertMount(m)
 	if err == nil {
+		if st := d.state(m.ID); i >= 0 && st.state == stateMounted && dsync.MountNeedsRemount(old, m) {
+			st.remount = true
+		}
 		d.saves++
 		err = d.save()
 	}

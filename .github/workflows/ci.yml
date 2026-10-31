@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
 
+env:
+  CGO_ENABLED: "0"
+
 jobs:
   unit:
     strategy:
@@ -46,12 +49,12 @@ jobs:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
       - if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get install -y fuse3
-      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y fuse3
+      - if: matrix.os != 'windows-latest'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: web/package.json
-      - if: matrix.os == 'ubuntu-latest'
+      - if: matrix.os != 'windows-latest'
         run: bun install --frozen-lockfile
         working-directory: web
       - if: matrix.os == 'windows-latest'

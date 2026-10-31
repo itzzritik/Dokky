@@ -1,12 +1,16 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
+	"github.com/itzzritik/dokky/cli/internal/engine"
+	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/store"
 )
 
@@ -15,6 +19,12 @@ type settings struct {
 	cfg    store.Settings
 	edit   *textinput.Model
 	editID string
+	pick   *agePick
+}
+
+type agePick struct {
+	id, name string
+	cursor   int
 }
 
 type settingsMsg store.Settings
@@ -41,7 +51,21 @@ func (a *app) setKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
-	n := len(mounts) + 1
+	if p := s.pick; p != nil {
+		switch k.String() {
+		case "up", "k":
+			p.cursor = clamp(p.cursor-1, len(engine.CacheMaxAges))
+		case "down", "j":
+			p.cursor = clamp(p.cursor+1, len(engine.CacheMaxAges))
+		case "enter":
+			s.pick = nil
+			return a.setCacheMaxAge(p.id, p.name, engine.CacheMaxAges[p.cursor])
+		case "esc":
+			s.pick = nil
+		}
+		return nil
+	}
+	n := 2*len(mounts) + 1
 	switch k.String() {
 	case "up", "k":
 		s.cursor = clamp(s.cursor-1, n)
@@ -49,9 +73,14 @@ func (a *app) setKey(k tea.KeyPressMsg) tea.Cmd {
 		s.cursor = clamp(s.cursor+1, n)
 	case "enter", "space":
 		c := clamp(s.cursor, n)
-		if c == len(mounts) {
+		switch {
+		case c == 2*len(mounts):
 			s.cfg.AutoUpdate = !s.cfg.AutoUpdate
 			return a.do("settings.set", s.cfg, a.fetchSettings())
+		case c >= len(mounts):
+			m := mounts[c-len(mounts)]
+			s.pick = &agePick{id: m.ID, name: m.Name, cursor: max(0, slices.Index(engine.CacheMaxAges, m.CacheMaxAge))}
+			return nil
 		}
 		ti := textinput.New()
 		ti.Placeholder = "empty for the default"
@@ -62,6 +91,28 @@ func (a *app) setKey(k tea.KeyPressMsg) tea.Cmd {
 		return ti.Focus()
 	}
 	return nil
+}
+
+func (a *app) setCacheMaxAge(id, name, age string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := a.callCtx()
+		defer cancel()
+		var m store.Mount
+		err := a.d.Call(ctx, "mount.get", map[string]string{"id": id}, &m)
+		if err == nil {
+			m.VFS.CacheMaxAge = age
+			err = a.d.Call(ctx, "mount.put", m, nil)
+		}
+		var ie *ipc.Error
+		if errors.As(err, &ie) && ie.Code == "conflict" {
+			_ = a.d.Call(ctx, "sync.now", nil, nil)
+			err = errors.New(name + " was changed on another device first, so this was not saved. Pick the cache max age again.")
+		}
+		if err != nil {
+			return errMsg{err}
+		}
+		return a.refreshStatus()()
+	}
 }
 
 func (a *app) setMsg(msg tea.Msg) tea.Cmd {
@@ -91,8 +142,15 @@ func (a *app) setView() (string, string) {
 		}
 		return b.String(), "enter save · esc cancel"
 	}
+	if p := s.pick; p != nil {
+		fmt.Fprintf(&b, "Cache max age for %s: how long a file stays cached after its last use.\n\n", p.name)
+		for i, age := range engine.CacheMaxAges {
+			fmt.Fprintf(&b, "%s%s\n", cursor(i == p.cursor), age)
+		}
+		return b.String(), "enter save · esc cancel"
+	}
 	b.WriteString(bold.Render("Mount points on this device") + "\n")
-	cur := clamp(s.cursor, len(mounts)+1)
+	cur := clamp(s.cursor, 2*len(mounts)+1)
 	w := 4
 	for _, m := range mounts {
 		w = max(w, len(m.Name))
@@ -104,11 +162,19 @@ func (a *app) setView() (string, string) {
 		}
 		fmt.Fprintf(&b, "%s%-*s  %s\n", cursor(i == cur), w, m.Name, point)
 	}
+	b.WriteString("\n" + bold.Render("Cache max age") + faint.Render("  how long a file stays cached after its last use") + "\n")
+	for i, m := range mounts {
+		age := m.CacheMaxAge
+		if m.RemountToApply {
+			age += " " + yellow.Render("(remount to apply)")
+		}
+		fmt.Fprintf(&b, "%s%-*s  %s\n", cursor(len(mounts)+i == cur), w, m.Name, age)
+	}
 	auto := "off"
 	if s.cfg.AutoUpdate {
 		auto = "on"
 	}
-	fmt.Fprintf(&b, "\n%sAuto update: %s\n", cursor(cur == len(mounts)), auto)
+	fmt.Fprintf(&b, "\n%sAuto update: %s\n", cursor(cur == 2*len(mounts)), auto)
 	account := "not logged in"
 	switch {
 	case a.status.SignedOut:

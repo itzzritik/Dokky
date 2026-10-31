@@ -97,7 +97,8 @@ func TestLowDiskWarns(t *testing.T) {
 	c := find(t, Run(t.Context(), env), "disk")
 	require.False(t, c.OK)
 	require.True(t, c.Warn)
-	require.NotEmpty(t, c.Fix)
+	require.Contains(t, c.Fix, "shorter cache max age")
+	require.Contains(t, c.Fix, "Settings tab")
 }
 
 func TestDaemonChecks(t *testing.T) {

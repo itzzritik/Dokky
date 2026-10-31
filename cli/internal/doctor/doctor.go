@@ -209,7 +209,7 @@ func checkDisk(env Env) Check {
 	free, floor := fs.SizeSuffix(env.FreeBytes).ByteUnit(), fs.SizeSuffix(env.MinFreeBytes).ByteUnit()
 	if env.FreeBytes < env.MinFreeBytes {
 		return Check{Name: "disk space", Warn: true, Detail: fmt.Sprintf("%s free, below the %s dokky keeps free", free, floor),
-			Fix: "free up disk space or lower the cache min free space in the mount settings"}
+			Fix: "free up disk space, or pick a shorter cache max age for your mounts in the dokky Settings tab"}
 	}
 	return pass("disk space", fmt.Sprintf("%s free", free))
 }

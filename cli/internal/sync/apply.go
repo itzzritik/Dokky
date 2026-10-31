@@ -83,7 +83,7 @@ func Apply(d store.Data, s Snapshot) (store.Data, []Change) {
 		case !ok:
 			mark(m, "added", false)
 		case o.Version != m.Version:
-			mark(m, "changed", mounted && mountNeedsRemount(o, m))
+			mark(m, "changed", mounted && MountNeedsRemount(o, m))
 		}
 		if wasRemoved {
 			mark(m, "changed", false)
@@ -156,7 +156,7 @@ func DropRemoved(d store.Data, mountID string) store.Data {
 	return out
 }
 
-func mountNeedsRemount(o, n store.Mount) bool {
+func MountNeedsRemount(o, n store.Mount) bool {
 	return o.Name != n.Name || o.ServiceID != n.ServiceID || o.RemotePath != n.RemotePath || o.VFS != n.VFS
 }
 

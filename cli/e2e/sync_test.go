@@ -85,13 +85,17 @@ func TestTwoDevicesSync(t *testing.T) {
 
 func startAPI(t *testing.T) (api, helper string) {
 	t.Helper()
+	missing := t.Skip
+	if os.Getenv("CI") == "true" {
+		missing = t.Fatal
+	}
 	if _, err := exec.LookPath("bun"); err != nil {
-		t.Skip("bun is not on PATH; this test runs the web API with bun")
+		missing("bun is not on PATH; this test runs the web API with bun")
 	}
 	web, err := filepath.Abs(filepath.Join("..", "..", "web"))
 	require.NoError(t, err)
 	if !exists(filepath.Join(web, "node_modules", ".bin", "next")) {
-		t.Skip("web deps are not installed; run bun install in web/")
+		missing("web deps are not installed; run bun install in web/")
 	}
 	cmd := exec.Command("bun", filepath.Join("test", "e2e-server.ts"))
 	cmd.Dir = web

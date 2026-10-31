@@ -9,6 +9,11 @@
     "fix": "ultracite fix",
     "start": "next start"
   },
+  "config": {
+    "mongodbMemoryServer": {
+      "downloadDir": "node_modules/.cache/mongodb-binaries"
+    }
+  },
   "dependencies": {
     "@auth/mongodb-adapter": "3.11.3",
     "@base-ui/react": "1.9.0",

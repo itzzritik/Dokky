@@ -96,6 +96,7 @@ func TestRemoteUsesCurrentConfigAndTimesOut(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { close(hang) })
 	old := testRemoteTimeout
+	require.Equal(t, time.Minute, old, "Mega logins can take longer than 15 s")
 	testRemoteTimeout = time.Second
 	t.Cleanup(func() { testRemoteTimeout = old })
 

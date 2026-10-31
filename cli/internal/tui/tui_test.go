@@ -15,6 +15,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
+	"github.com/itzzritik/dokky/cli/internal/store"
 	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 	"github.com/stretchr/testify/require"
 )
@@ -353,4 +354,71 @@ func TestDriveClientIDIsAdvancedWithOwnClientHelp(t *testing.T) {
 	require.Contains(t, v, "Show advanced options?")
 	require.Contains(t, ownClientHelp, "being retired during 2026")
 	require.Contains(t, ownClientHelp, "https://rclone.org/drive/#making-your-own-client-id")
+}
+
+func TestHomeDeleteMountConfirms(t *testing.T) {
+	f := newFake(daemon.StatusReply{Mounts: []daemon.MountStatus{
+		{ID: "m1", Name: "media", State: "mounted", UploadsQueued: 2, UploadsInProgress: 1},
+		{ID: "m2", Name: "docs", State: "unmounted"},
+	}})
+	m := press(start(f), "d")
+	v := view(m)
+	require.Contains(t, v, "Delete media?")
+	require.Contains(t, v, "It is mounted, so it is unmounted first.")
+	require.Contains(t, v, "3 uploads have not finished")
+	m = press(m, "n")
+	require.NotContains(t, view(m), "Delete media?")
+	require.Empty(t, f.called("mount.delete"))
+
+	m = press(m, "down", "d")
+	v = view(m)
+	require.Contains(t, v, "Delete docs?")
+	require.NotContains(t, v, "unmounted first")
+	require.NotContains(t, v, "have not finished")
+	statuses := len(f.called("status"))
+	m = press(m, "y")
+	require.Equal(t, []string{`{"id":"m2"}`}, f.called("mount.delete"))
+	require.Greater(t, len(f.called("status")), statuses, "home refreshes after a delete")
+	require.NotContains(t, view(m), "Delete docs?")
+}
+
+func TestSettingsChangesCacheMaxAge(t *testing.T) {
+	f := newFake(daemon.StatusReply{Mounts: []daemon.MountStatus{
+		{ID: "m1", Name: "media", State: "mounted", CacheMaxAge: "5m", RemountToApply: true},
+		{ID: "m2", Name: "docs", State: "unmounted", CacheMaxAge: "1h"},
+	}})
+	f.replies["mount.get"] = store.Mount{ID: "m1", Name: "media", ServiceID: "s1", RemotePath: "Media", VFS: store.DefaultVFS(), Version: 4}
+	m := press(start(f), "tab", "tab", "tab")
+	v := view(m)
+	require.Contains(t, v, "Cache max age")
+	require.Contains(t, v, "5m (remount to apply)")
+	require.Contains(t, v, "1h")
+
+	m = press(m, "down", "down", "enter")
+	v = view(m)
+	require.Contains(t, v, "Cache max age for media")
+	for _, age := range engine.CacheMaxAges {
+		require.Contains(t, v, age)
+	}
+	m = press(m, "esc")
+	require.NotContains(t, view(m), "Cache max age for media")
+	require.Empty(t, f.called("mount.put"))
+
+	press(m, "enter", "down", "down", "enter")
+	require.Equal(t, []string{`{"id":"m1"}`}, f.called("mount.get"))
+	puts := f.called("mount.put")
+	require.Len(t, puts, 1)
+	require.Contains(t, puts[0], `"id":"m1","name":"media","serviceId":"s1","remotePath":"Media"`)
+	require.Contains(t, puts[0], `"cacheMaxAge":"1h"`)
+	require.Contains(t, puts[0], `"version":4`)
+}
+
+func TestSettingsCacheMaxAgeConflictPulls(t *testing.T) {
+	f := newFake(daemon.StatusReply{Mounts: []daemon.MountStatus{{ID: "m1", Name: "media", State: "unmounted", CacheMaxAge: "5m"}}})
+	f.replies["mount.get"] = store.Mount{ID: "m1", Name: "media", ServiceID: "s1", VFS: store.DefaultVFS(), Version: 1}
+	f.errs = map[string]error{"mount.put": &ipc.Error{Code: "conflict", Message: `{"id":"m1"}`}}
+	m := press(start(f), "tab", "tab", "tab", "down", "enter", "down", "enter")
+	require.Len(t, f.called("mount.put"), 1)
+	require.Contains(t, view(m), "media was changed on another device first")
+	require.Len(t, f.called("sync.now"), 2, "the newer copy is pulled right away")
 }

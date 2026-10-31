@@ -21,7 +21,7 @@ You can also run `dokky mount <name>`, `dokky unmount <name>` and `dokky status`
 
 ## macOS, Linux and Windows
 
-- macOS: nothing extra to install.
+- macOS: needs macOS 13 or newer. Nothing extra to install.
 - Linux: needs FUSE 3. Install it with one of:
   - `sudo apt install fuse3`
   - `sudo dnf install fuse3`
@@ -35,14 +35,14 @@ Sync is optional. Run `dokky login` to sign in with GitHub.
 
 - Syncs: your services, your mounts and their saved logins, across all your devices.
 - Does not sync: your files and the cache.
-- `dokky logout` removes your account's data from this device. It waits for queued uploads first (`--force` skips the wait).
+- `dokky logout` removes your account's data from this device and clears the local cache. It waits for queued uploads first. If a mount that is not mounted still has files waiting to upload, it stops and asks you to mount it so they can finish. `--force` skips all of this, and any uploads that have not been sent are lost.
 - If you revoke a device from another device, it unmounts everything and wipes its dokky data the next time it talks to the server.
 
 Privacy: the server stores your credentials encrypted, but it can decrypt them to serve your devices.
 
 ## Updates
 
-dokky updates itself. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Set `DOKKY_NO_UPDATE=1` to turn auto update off.
+dokky updates itself. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
 
 ## Uninstall
 
@@ -50,7 +50,7 @@ dokky updates itself. To update right now, run `dokky update`. To go back to a s
 npm rm -g dokky
 ```
 
-A few minutes later dokky cleans up after itself. It stops transfers, unmounts everything, removes the mount folders and `~/dokky` if empty, the background service, the program, the cache and the logs. If you were logged in, it also removes this device from your account and deletes your settings from this device. If you were local-only, it keeps your encrypted services and mounts, so a reinstall brings them all back.
+About 10 minutes later dokky cleans up after itself. It stops transfers, unmounts everything, removes the mount folders and `~/dokky` if empty, the background service, the program, the PATH entry it added, the cache and the logs. Uploads that have not been sent by then are dropped. If you were logged in, it also removes this device from your account and deletes your settings from this device. If you were local-only, it keeps your encrypted services and mounts, so a reinstall brings them all back.
 
 ## Doctor
 

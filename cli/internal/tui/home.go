@@ -6,12 +6,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/itzzritik/dokky/cli/internal/daemon"
 )
 
 type home struct {
-	cursor  int
-	pending map[string]string
-	add     *addMount
+	cursor   int
+	pending  map[string]string
+	add      *addMount
+	deleting *daemon.MountStatus
 }
 
 type mountDoneMsg struct {
@@ -23,6 +25,16 @@ func (a *app) homeKey(k tea.KeyPressMsg) tea.Cmd {
 	if a.home.add != nil {
 		return a.addKey(k)
 	}
+	if m := a.home.deleting; m != nil {
+		switch k.String() {
+		case "y":
+			a.home.deleting = nil
+			return a.do("mount.delete", map[string]string{"id": m.ID}, a.refreshStatus())
+		case "n", "esc":
+			a.home.deleting = nil
+		}
+		return nil
+	}
 	mounts := a.status.Mounts
 	switch k.String() {
 	case "up", "k":
@@ -32,6 +44,11 @@ func (a *app) homeKey(k tea.KeyPressMsg) tea.Cmd {
 	case "a":
 		a.home.add = &addMount{}
 		return a.fetchServices()
+	case "d":
+		if len(mounts) > 0 {
+			m := mounts[clamp(a.home.cursor, len(mounts))]
+			a.home.deleting = &m
+		}
 	case "enter":
 		if len(mounts) == 0 {
 			return nil
@@ -77,6 +94,17 @@ func (a *app) homeView() (string, string) {
 		return a.addView()
 	}
 	var b strings.Builder
+	if m := a.home.deleting; m != nil {
+		fmt.Fprintf(&b, "Delete %s?\n\n", m.Name)
+		if m.State == "mounted" {
+			b.WriteString("It is mounted, so it is unmounted first.\n")
+		}
+		if n := m.UploadsQueued + m.UploadsInProgress; n > 0 {
+			fmt.Fprintf(&b, "%d uploads have not finished; deleting now stops them.\n", n)
+		}
+		b.WriteString("Your files on the service are not touched.\n")
+		return b.String(), "y delete · n keep"
+	}
 	mounts := a.status.Mounts
 	if len(mounts) == 0 {
 		b.WriteString("No mounts yet. Press a to add one.\n")
@@ -112,7 +140,7 @@ func (a *app) homeView() (string, string) {
 		active += m.UploadsInProgress
 	}
 	fmt.Fprintf(&b, "\nUploads: %d queued, %d uploading    Free space: %s\n", queued, active, size(int64(a.status.FreeBytes)))
-	return b.String(), "enter mount/unmount · a add mount"
+	return b.String(), "enter mount/unmount · a add mount · d delete"
 }
 
 func pad(styled string, to int) string {

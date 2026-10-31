@@ -14,7 +14,7 @@ import (
 
 var Featured = []string{"drive", "smb", "webdav", "sftp", "onedrive", "dropbox", "mega"}
 
-var testRemoteTimeout = 15 * time.Second
+var testRemoteTimeout = time.Minute
 
 const jobPoll = 100 * time.Millisecond
 

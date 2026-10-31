@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"path"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -236,7 +240,80 @@ func (d *Daemon) uploadsIdle(ms []store.Mount) error {
 	if err == nil && n > 0 {
 		err = fmt.Errorf("%d uploads on %s still running; resolve again when they finish", n, name)
 	}
+	if err == nil {
+		err = d.refuseUnsent(ms, "and let the uploads finish, then resolve again")
+	}
 	return err
+}
+
+func (d *Daemon) refuseUnsent(ms []store.Mount, then string) error {
+	counts, err := d.unsentFiles(ms)
+	if err != nil {
+		return fmt.Errorf("could not check for unsent uploads: %w", err)
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	n := 0
+	for _, c := range counts {
+		n += c
+	}
+	names := strings.Join(slices.Sorted(maps.Keys(counts)), ", ")
+	return fmt.Errorf("%d files on %s are not uploaded yet: mount %s %s", n, names, names, then)
+}
+
+// an unmount pauses uploads: rclone keeps each file Dirty in vfsMeta and resumes it on the next mount
+func (d *Daemon) unsentFiles(ms []store.Mount) (map[string]int, error) {
+	root := filepath.Join(d.cacheDir, "vfsMeta")
+	counts := map[string]int{}
+	err := filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return nil
+		case err != nil || e.IsDir():
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		name := metaOwner(ms, filepath.ToSlash(rel))
+		if name == "" {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var info struct{ Dirty bool }
+		if json.Unmarshal(b, &info) == nil && info.Dirty {
+			counts[name]++
+		}
+		return nil
+	})
+	return counts, err
+}
+
+// rel is <service id>/<remote path>/<file>; the longest matching remote path wins, else any mount of the service
+func metaOwner(ms []store.Mount, rel string) string {
+	svc, file, _ := strings.Cut(rel, "/")
+	owner, best := "", -1
+	for _, m := range ms {
+		if m.ServiceID != svc {
+			continue
+		}
+		score := 0
+		if root := strings.Trim(path.Clean("/"+m.RemotePath), "/"); root == "" || strings.HasPrefix(file, root+"/") {
+			score = len(root) + 1
+		}
+		if score > best {
+			owner, best = m.Name, score
+		}
+	}
+	return owner
 }
 
 // fails closed: stale counts must never pass as idle; caller holds opMu
@@ -302,9 +379,21 @@ func (d *Daemon) logout(ctx context.Context, p logoutParams) (logoutReply, error
 	if acct == nil {
 		return logoutReply{}, errors.New("not logged in")
 	}
+	const unsentFix = "to finish, or use --force to drop them"
+	if !p.Force {
+		if err := d.refuseUnsent(mounts, unsentFix); err != nil {
+			return logoutReply{}, err
+		}
+	}
 	for _, m := range mounts {
 		if err := d.release(m); err != nil {
 			return logoutReply{}, fmt.Errorf("could not unmount %s, close its open files and try again: %w", m.Name, err)
+		}
+	}
+	// an upload that started after the check above was paused by the unmount
+	if !p.Force {
+		if err := d.refuseUnsent(mounts, unsentFix); err != nil {
+			return logoutReply{}, err
 		}
 	}
 

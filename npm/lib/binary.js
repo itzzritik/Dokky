@@ -41,7 +41,7 @@ function installedVersion(dir) {
   }
 }
 
-async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch }) {
+async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch, rename = fs.renameSync }) {
   const bin = binaryPath(home, platform);
   const dir = stateDir({ env, home, platform });
   const have = installedVersion(dir);
@@ -59,17 +59,29 @@ async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetc
   if (sum !== String(entry.sha256).toLowerCase()) throw new Error(`sha256 mismatch for ${entry.url}`);
 
   fs.mkdirSync(path.dirname(bin), { recursive: true });
+  fs.mkdirSync(dir, { recursive: true });
   const tmp = `${bin}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(tmp, data, { mode: 0o755 });
     fs.chmodSync(tmp, 0o755);
-    fs.renameSync(tmp, bin);
+    replace(tmp, bin, path.join(dir, "dokky.old"), platform === "win32" && fs.existsSync(bin), rename);
   } finally {
     fs.rmSync(tmp, { force: true });
   }
-  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "version"), pkg.version);
   return bin;
+}
+
+// Windows can rename a running exe but not replace it, so the old one moves aside first
+function replace(tmp, bin, old, aside, rename) {
+  if (!aside) return rename(tmp, bin);
+  rename(bin, old);
+  try {
+    rename(tmp, bin);
+  } catch (err) {
+    rename(old, bin);
+    throw err;
+  }
 }
 
 async function resolveBinary(opts, warn = console.warn) {

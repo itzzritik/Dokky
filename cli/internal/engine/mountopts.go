@@ -7,11 +7,11 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/store"
 )
 
-var cacheMaxAges = []string{"5m", "15m", "1h", "6h", "24h", "7d"}
+var CacheMaxAges = []string{"5m", "15m", "1h", "6h", "24h", "7d"}
 
 func ValidCacheMaxAge(s string) error {
-	if !slices.Contains(cacheMaxAges, s) {
-		return fmt.Errorf("cache max age %q must be one of %v", s, cacheMaxAges)
+	if !slices.Contains(CacheMaxAges, s) {
+		return fmt.Errorf("cache max age %q must be one of %v", s, CacheMaxAges)
 	}
 	return nil
 }

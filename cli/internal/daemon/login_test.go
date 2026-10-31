@@ -515,6 +515,92 @@ func TestLogoutRecheckKeepsCacheForNewUpload(t *testing.T) {
 	requireWiped(t, d, f, d.cacheDir)
 }
 
+func writeMeta(t *testing.T, d *Daemon, rel string, dirty bool) {
+	t.Helper()
+	p := filepath.Join(d.cacheDir, "vfsMeta", filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o700))
+	b, err := json.MarshalIndent(map[string]any{"ModTime": time.Now(), "Size": 3, "Fingerprint": "", "Dirty": dirty}, "", "\t")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(p, b, 0o600))
+}
+
+func TestUnsentUploadsByMount(t *testing.T) {
+	data := sample()
+	data.Mounts[1].RemotePath = "/Work/docs"
+	d, _, _ := newTestDaemon(t, data)
+	writeMeta(t, d, "s1/Work/docs/report.pdf", true)
+	writeMeta(t, d, "s1/Work/docs/sub/a.txt", true)
+	writeMeta(t, d, "s1/Work/docs/read.txt", false)
+	writeMeta(t, d, "s1/movie.mkv", true)
+	writeMeta(t, d, "gone/old.txt", true)
+	p := filepath.Join(d.cacheDir, "vfsMeta", "s1", "corrupt")
+	require.NoError(t, os.WriteFile(p, []byte("{"), 0o600))
+
+	got, err := d.unsentFiles(data.Mounts)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"docs": 2, "media": 1}, got)
+
+	got, err = d.unsentFiles(data.Mounts[1:])
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"docs": 3}, got, "a file no mount path claims stays with its service")
+
+	require.NoError(t, os.RemoveAll(filepath.Join(d.cacheDir, "vfsMeta")))
+	got, err = d.unsentFiles(data.Mounts)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+func TestLogoutRefusesPausedUploads(t *testing.T) {
+	api := newFakeAPI(t, "approved")
+	data := loggedIn(api.srv.URL)
+	data.Mounts[1].RemotePath = "docs"
+	d, f, st := newTestDaemon(t, data)
+	d.start()
+	fillCache(t, d)
+	writeMeta(t, d, "s1/docs/report.pdf", true)
+	writeMeta(t, d, "s1/docs/notes.txt", true)
+
+	err := call(t, d, "logout", map[string]bool{"force": false}, nil)
+	require.ErrorContains(t, err, "2 files on docs are not uploaded yet")
+	require.ErrorContains(t, err, "mount docs to finish, or use --force")
+	require.NotNil(t, load(t, st).Account)
+	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
+	require.Contains(t, f.mounted, "media")
+	require.False(t, api.wasRevoked())
+
+	require.NoError(t, call(t, d, "logout", map[string]bool{"force": true}, nil))
+	requireWiped(t, d, f, d.cacheDir)
+}
+
+func TestLogoutRechecksCacheAfterUnmount(t *testing.T) {
+	api := newFakeAPI(t, "approved")
+	d, f, st := newTestDaemon(t, loggedIn(api.srv.URL))
+	d.start()
+	fillCache(t, d)
+	f.onUnmount = func(string) { writeMeta(t, d, "s1/late.mkv", true) }
+
+	err := call(t, d, "logout", map[string]bool{"force": false}, nil)
+	require.ErrorContains(t, err, "1 files on media are not uploaded yet")
+	require.NotNil(t, load(t, st).Account)
+	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
+	require.False(t, api.wasRevoked())
+}
+
+func TestResolveRefusesPausedUploads(t *testing.T) {
+	api, d, f, st, _ := clashAccount(t)
+	login(t, d)
+	writeMeta(t, d, "s1/paused.mkv", true)
+
+	err := call(t, d, "login.resolve", map[string]string{"kind": "service", "name": "nas", "keep": "account"}, nil)
+	require.ErrorContains(t, err, "1 files on media are not uploaded yet")
+	require.ErrorContains(t, err, "resolve again")
+	requireUnmoved(t, f, st)
+	require.Equal(t, []string{"service nas 0"}, api.putLog())
+
+	writeMeta(t, d, "s1/paused.mkv", false)
+	require.NoError(t, call(t, d, "login.resolve", map[string]string{"kind": "service", "name": "nas", "keep": "account"}, nil))
+}
+
 func TestLoginClashKeepLocalOverwritesAccount(t *testing.T) {
 	api := newFakeAPI(t, "approved")
 	api.services["r1"] = store.Service{ID: "r1", Name: "nas", Type: "webdav", Options: map[string]string{"url": "http://old"}, Secrets: map[string]string{}, Version: 3}

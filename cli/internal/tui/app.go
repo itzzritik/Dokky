@@ -208,7 +208,7 @@ func (a *app) key(k tea.KeyPressMsg) tea.Cmd {
 }
 
 func (a *app) capturing() bool {
-	return a.home.add != nil || a.svc.mode != svcList || a.set.edit != nil || a.dev.revoking != nil
+	return a.home.add != nil || a.home.deleting != nil || a.svc.mode != svcList || a.set.edit != nil || a.set.pick != nil || a.dev.revoking != nil
 }
 
 func (a *app) switchTab(step int) tea.Cmd {

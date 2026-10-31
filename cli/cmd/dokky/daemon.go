@@ -67,11 +67,7 @@ func call(method string, params, result any) error {
 			}
 		}
 	}
-	var ie *ipc.Error
-	if errors.As(err, &ie) {
-		return errors.New(ie.Message)
-	}
-	return err
+	return messageOnly(err)
 }
 
 func callOnce(method string, params, result any) error {

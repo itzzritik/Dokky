@@ -5,29 +5,27 @@ package platform
 import (
 	"fmt"
 	"net"
-	"os/user"
-	"strings"
 	"time"
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
 
+// only this user (or an admin) can own a pipe as their SID
 func SocketAddr(string) string {
-	name := "user"
-	if u, err := user.Current(); err == nil {
-		name = u.Username[strings.LastIndex(u.Username, `\`)+1:]
+	sid, err := currentSID()
+	if err != nil {
+		return `\\.\pipe\dokky`
 	}
-	return `\\.\pipe\dokky-` + name
+	return `\\.\pipe\dokky-` + sid.String()
 }
 
 func Listen(addr string) (net.Listener, error) {
-	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	sid, err := currentSID()
 	if err != nil {
-		return nil, fmt.Errorf("current user sid: %w", err)
+		return nil, err
 	}
-	sid := tu.User.Sid.String()
-	cfg := &winio.PipeConfig{SecurityDescriptor: "O:" + sid + "D:P(A;;GA;;;" + sid + ")"}
+	cfg := &winio.PipeConfig{SecurityDescriptor: "O:" + sid.String() + "D:P(A;;GA;;;" + sid.String() + ")"}
 	ln, err := winio.ListenPipe(addr, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("listen on pipe %s: %w", addr, err)
@@ -36,5 +34,21 @@ func Listen(addr string) (net.Listener, error) {
 }
 
 func Dial(addr string, timeout time.Duration) (net.Conn, error) {
-	return winio.DialPipe(addr, &timeout)
+	conn, err := winio.DialPipe(addr, &timeout)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyPipeOwner(conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func currentSID() (*windows.SID, error) {
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, fmt.Errorf("current user sid: %w", err)
+	}
+	return tu.User.Sid, nil
 }

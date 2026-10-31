@@ -105,3 +105,43 @@ test("resolveBinary falls back to the installed binary when the upgrade fails", 
   assert.match(warnings[0], /offline/);
   await assert.rejects(resolveBinary(args(tmp(), { pkg: pkgFor("z"), fetchImpl: failing })), /offline/);
 });
+
+const winPkg = (body, version) => ({
+  version,
+  dokky: { binaries: { "windows-amd64": { url: "http://x/dokky.exe", sha256: sha(body) } } },
+});
+const winArgs = (home, extra) => ({ home, platform: "win32", arch: "x64", env: {}, ...extra });
+// Windows refuses to replace an exe that is running, but lets it be renamed
+const runningExe = (bin) => (from, to) => {
+  if (to === bin && fs.existsSync(bin)) throw Object.assign(new Error(`EPERM: rename '${from}' -> '${to}'`), { code: "EPERM" });
+  fs.renameSync(from, to);
+};
+
+test("on Windows the running exe moves aside to dokky.old", async () => {
+  const home = tmp();
+  const bin = binaryPath(home, "win32");
+  const dir = stateDir({ env: {}, home, platform: "win32" });
+  await ensureBinary(winArgs(home, { pkg: winPkg("y", "1.0.0"), fetchImpl: fakeFetch("y"), rename: runningExe(bin) }));
+  await ensureBinary(winArgs(home, { pkg: winPkg("z", "1.1.0"), fetchImpl: fakeFetch("z"), rename: runningExe(bin) }));
+  assert.equal(fs.readFileSync(bin, "utf8"), "z");
+  assert.equal(fs.readFileSync(path.join(dir, "dokky.old"), "utf8"), "y");
+  assert.equal(fs.readFileSync(path.join(dir, "version"), "utf8"), "1.1.0");
+  const calls = [];
+  await ensureBinary(winArgs(home, { pkg: winPkg("z", "1.1.0"), fetchImpl: fakeFetch("z", calls), rename: runningExe(bin) }));
+  assert.equal(calls.length, 0, "the next launch does not download again");
+});
+
+test("on Windows a failed move puts the old exe back", async () => {
+  const home = tmp();
+  const bin = binaryPath(home, "win32");
+  const dir = stateDir({ env: {}, home, platform: "win32" });
+  await ensureBinary(winArgs(home, { pkg: winPkg("y", "1.0.0"), fetchImpl: fakeFetch("y") }));
+  const failNew = (from, to) => {
+    if (to === bin && from !== path.join(dir, "dokky.old")) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    fs.renameSync(from, to);
+  };
+  await assert.rejects(ensureBinary(winArgs(home, { pkg: winPkg("z", "1.1.0"), fetchImpl: fakeFetch("z"), rename: failNew })), /EBUSY/);
+  assert.equal(fs.readFileSync(bin, "utf8"), "y");
+  assert.equal(fs.readFileSync(path.join(dir, "version"), "utf8"), "1.0.0");
+  assert.deepEqual(fs.readdirSync(path.dirname(bin)), ["dokky.exe"]);
+});
