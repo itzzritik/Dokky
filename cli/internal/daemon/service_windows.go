@@ -102,11 +102,43 @@ func ServiceInstalled() bool {
 	return err == nil && schtasks("/Query", "/TN", name) == nil
 }
 
-func RemoveService() error {
+// leaves the running daemon alone, so StopService after it is a no-op
+func unregisterService() error {
 	name, err := taskName()
 	if err != nil || !ServiceInstalled() {
 		return err
 	}
-	_ = StopService()
 	return schtasks("/Delete", "/TN", name, "/F")
+}
+
+// Windows can't delete a running exe or an open file, so a helper retries until the daemon has exited
+func deleteAfterExit(left []string, state string) error {
+	var del, rd string
+	for _, p := range left {
+		fi, err := os.Lstat(p)
+		switch {
+		case err != nil:
+		case fi.Mode().IsRegular():
+			del += fmt.Sprintf(` "%s"`, p)
+		case fi.Mode().IsDir():
+			rd += fmt.Sprintf(` & rmdir /s /q "%s" 2>nul`, p)
+		}
+	}
+	if del == "" && rd == "" {
+		return nil
+	}
+	if del != "" {
+		del = " & del /f /q" + del + " 2>nul"
+	}
+	line := fmt.Sprintf(`(for /l %%i in (1,1,15) do @(ping -n 2 127.0.0.1 >nul%s%s)) & rmdir "%s" 2>nul`, del, rd, state)
+	cmd := exec.Command("cmd.exe")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP,
+		CmdLine:       "cmd.exe /d /c " + line,
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
 }

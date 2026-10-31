@@ -76,6 +76,12 @@ type Daemon struct {
 	forceUnmount func(point string) error
 	openURL      func(url string) error
 
+	unregister  func() error
+	stopService func() error
+	removePath  func(home, state string) error
+	removeLater func(left []string, state string) error
+	notify      func(title, body string) error
+
 	idle   Idle
 	upd    updater
 	loop   dsync.Loop
@@ -183,6 +189,8 @@ func Run(ctx context.Context, p Paths) (err error) {
 	}()
 	log.Info("daemon started", "version", buildinfo.Version)
 	d.autoUpdate(ctx, time.Now())
+	wipe := make(chan *InstallWatch)
+	go d.watchInstalls(ctx, wipe)
 
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
@@ -190,6 +198,23 @@ func Run(ctx context.Context, p Paths) (err error) {
 		select {
 		case <-ctx.Done():
 			log.Info("daemon stopping")
+			return nil
+		case w := <-wipe:
+			cancel()
+			<-served
+			serving = false
+			// draining commands can take a while; a reinstall meanwhile wins
+			if d.checkInstalls(w, time.Now(), pathExists) != Wipe {
+				log.Info("dokky is installed again, not uninstalling")
+				return ErrRestart
+			}
+			cleaned := make(chan struct{})
+			go func() { DeepClean(d); close(cleaned) }()
+			// stopping the service ends this process before DeepClean returns on macOS and Linux
+			select {
+			case <-cleaned:
+			case <-ctx.Done():
+			}
 			return nil
 		case <-restart:
 			log.Info("daemon restarting")
@@ -211,6 +236,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 	return &Daemon{
 		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log, loop: dsync.Loop{Log: log},
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
+		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
 		unmountedAt: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/obscure"
+	"github.com/rclone/rclone/fs/operations"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,4 +152,68 @@ func TestStatsSkipsMountsRcloneDropped(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, stats)
 	require.Contains(t, e.mounted, "nas")
+}
+
+func TestRemovePartialsDeletesOnlyLeftovers(t *testing.T) {
+	e := startEngine(t)
+	dir := t.TempDir()
+	share := filepath.Join(dir, "share")
+	require.NoError(t, e.PutService(store.Service{ID: "parts", Type: "alias", Options: map[string]string{"remote": dir}}))
+	long := "sub/" + strings.Repeat("l", 120) + ".mov"
+	const suffix = ".0123abcd.partial"
+	leftovers := []string{
+		"a.txt" + suffix,
+		"sub/b.bin.deadbeef.partial",
+		operations.TruncateString(long, len(long)-len(suffix)) + suffix,
+	}
+	kept := []string{
+		"a.txt",
+		"a.txt.partial",
+		"a.txt.0123abcz.partial",
+		"a.txt.0123abcd.partial.bak",
+		"a.txt.0123abc.partial",
+		"other.txt" + suffix,
+		"sub/b.bin",
+	}
+	for _, f := range append(slices.Clone(leftovers), kept...) {
+		p := filepath.Join(share, filepath.FromSlash(f))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+	}
+	outside := filepath.Join(dir, "a.txt"+suffix)
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
+
+	m := store.Mount{ID: "m1", Name: "share", ServiceID: "parts", RemotePath: "share"}
+	require.NoError(t, e.RemovePartials(t.Context(), m, []string{"a.txt", "sub/b.bin", long, "c.txt", "gone/x.txt"}), "a folder the upload never created holds no leftover")
+
+	for _, f := range leftovers {
+		require.NoFileExists(t, filepath.Join(share, filepath.FromSlash(f)))
+	}
+	for _, f := range kept {
+		require.FileExists(t, filepath.Join(share, filepath.FromSlash(f)))
+	}
+	require.FileExists(t, outside)
+}
+
+func TestStopJobsStopsRunningJobs(t *testing.T) {
+	e := startEngine(t)
+	hang := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-hang:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(hang) })
+	require.NoError(t, e.PutService(store.Service{ID: "slow", Type: "webdav", Options: map[string]string{"url": srv.URL}}))
+	var job struct{ JobID int64 }
+	require.NoError(t, rpc("operations/list", map[string]any{"fs": "slow:", "remote": "", "_async": true}, &job))
+
+	require.NoError(t, e.StopJobs())
+
+	require.Eventually(t, func() bool {
+		var st struct{ Finished bool }
+		return rpc("job/status", map[string]any{"jobid": job.JobID}, &st) == nil && st.Finished
+	}, 5*time.Second, 20*time.Millisecond)
 }

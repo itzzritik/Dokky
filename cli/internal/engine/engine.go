@@ -1,15 +1,19 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +24,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/cache"
 	"github.com/rclone/rclone/fs/config"
-	_ "github.com/rclone/rclone/fs/operations"
+	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/lib/atexit"
 	"github.com/rclone/rclone/lib/diskusage"
 	"github.com/rclone/rclone/librclone/librclone"
@@ -45,7 +49,10 @@ type liveMount struct {
 	onUnmount            func()
 }
 
-var takeUnmountHook = func(*Engine) func() { return nil }
+var (
+	takeUnmountHook = func(*Engine) func() { return nil }
+	partialHash     = regexp.MustCompile(`^\.[0-9a-f]{8}$`)
+)
 
 type MountStats struct {
 	Name                             string
@@ -271,6 +278,68 @@ func (e *Engine) TotalBytes() (int64, error) {
 	var out struct{ Bytes int64 }
 	err := rpc("core/stats", nil, &out)
 	return out.Bytes, err
+}
+
+func (e *Engine) StopJobs() error {
+	var out struct {
+		RunningIDs []int64 `json:"runningIds"`
+	}
+	if err := rpc("job/list", nil, &out); err != nil {
+		return err
+	}
+	var errs []error
+	for _, id := range out.RunningIDs {
+		if err := rpc("job/stop", map[string]any{"jobid": id}, nil); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (e *Engine) RemovePartials(ctx context.Context, m store.Mount, names []string) error {
+	fsName := m.ServiceID + ":" + m.RemotePath
+	suffix := fs.GetConfig(ctx).PartialSuffix
+	byDir := map[string][]string{}
+	for _, n := range names {
+		p := partialPrefix(n, len(".00000000")+len(suffix))
+		byDir[path.Dir(p)] = append(byDir[path.Dir(p)], p)
+	}
+	var errs []error
+	for dir, prefixes := range byDir {
+		if dir == "." {
+			dir = ""
+		}
+		var out struct{ List []struct{ Path string } }
+		in := map[string]any{"fs": fsName, "remote": dir, "opt": map[string]any{"filesOnly": true, "noModTime": true, "noMimeType": true}}
+		err := runJob(ctx, "operations/list", in, &out)
+		if err != nil && !strings.Contains(err.Error(), fs.ErrorDirNotFound.Error()) {
+			errs = append(errs, err)
+		}
+		for _, f := range out.List {
+			if !slices.ContainsFunc(prefixes, func(p string) bool { return isPartial(f.Path, p, suffix) }) {
+				continue
+			}
+			var done struct{}
+			if err := runJob(ctx, "operations/deletefile", map[string]any{"fs": fsName, "remote": f.Path}, &done); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// rclone uploads to "<name>.<8 hex>.partial", cutting a name over 100 bytes (fs/operations/copy.go checkPartial)
+func partialPrefix(name string, suffixLen int) string {
+	if len(path.Base(name)) > 100 {
+		return operations.TruncateString(name, len(name)-suffixLen)
+	}
+	return name
+}
+
+func isPartial(file, prefix, suffix string) bool {
+	rest, ok := strings.CutPrefix(file, prefix)
+	hash, cut := strings.CutSuffix(rest, suffix)
+	return ok && cut && partialHash.MatchString(hash)
 }
 
 func (e *Engine) Stop() {

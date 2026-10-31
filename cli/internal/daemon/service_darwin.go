@@ -92,10 +92,7 @@ func ServiceInstalled() bool {
 	return err == nil
 }
 
-func RemoveService() error {
-	if err := StopService(); err != nil {
-		return err
-	}
+func unregisterService() error {
 	path, err := plistPath()
 	if err != nil {
 		return err
@@ -105,3 +102,5 @@ func RemoveService() error {
 	}
 	return nil
 }
+
+func deleteAfterExit([]string, string) error { return nil }

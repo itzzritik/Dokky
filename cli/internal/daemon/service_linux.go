@@ -65,7 +65,7 @@ func ServiceInstalled() bool {
 	return err == nil
 }
 
-func RemoveService() error {
+func unregisterService() error {
 	path, err := unitPath()
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func RemoveService() error {
 	if !ServiceInstalled() {
 		return nil
 	}
-	if err := systemctl("disable", "--now", systemdUnit); err != nil {
+	if err := systemctl("disable", systemdUnit); err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil {
@@ -81,3 +81,5 @@ func RemoveService() error {
 	}
 	return systemctl("daemon-reload")
 }
+
+func deleteAfterExit([]string, string) error { return nil }

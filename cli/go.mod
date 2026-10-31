@@ -10,6 +10,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/coreos/go-semver v0.3.1
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/google/uuid v1.6.0
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/rclone/rclone v1.75.2

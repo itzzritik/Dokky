@@ -46,6 +46,8 @@ type mountEngine interface {
 	ListDirs(store.Service, string) ([]string, error)
 	Queue(string) ([]engine.QueueItem, error)
 	TotalBytes() (int64, error)
+	StopJobs() error
+	RemovePartials(ctx context.Context, m store.Mount, names []string) error
 }
 
 type mountState struct {

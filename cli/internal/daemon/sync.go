@@ -219,6 +219,16 @@ func (d *Daemon) wipeLocked(acct *store.Account) {
 	if cur == nil || cur.Token != acct.Token {
 		return
 	}
+	d.releaseAll(mounts)
+	_ = d.clearCache()
+	if err := d.forget(); err != nil {
+		d.log.Error("delete store", "err", err)
+	}
+	d.log.Warn("wiped this device")
+}
+
+// caller holds opMu
+func (d *Daemon) releaseAll(mounts []store.Mount) {
 	for _, m := range mounts {
 		if err := d.release(m); err != nil {
 			d.mu.Lock()
@@ -231,11 +241,6 @@ func (d *Daemon) wipeLocked(acct *store.Account) {
 			engine.CleanupMountPoint(point)
 		}
 	}
-	_ = d.clearCache()
-	if err := d.forget(); err != nil {
-		d.log.Error("delete store", "err", err)
-	}
-	d.log.Warn("wiped this device")
 }
 
 func (d *Daemon) clearCache() error {
