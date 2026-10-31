@@ -16,7 +16,7 @@ func newRootCmd() *cobra.Command {
 		Version: buildinfo.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			switch cmd.Name() {
-			case "daemon", "selftest":
+			case "daemon", "selftest", "doctor":
 				return nil
 			}
 			if err := ensurePath(); err != nil {
@@ -29,7 +29,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate("dokky {{.Version}}\n")
-	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd())
+	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd(), newDoctorCmd())
 	return cmd
 }
 
