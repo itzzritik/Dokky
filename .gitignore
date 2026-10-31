@@ -3,3 +3,5 @@
 node_modules/
 .next/
 .env*
+/cli/dokky
+/cli/dokky.exe

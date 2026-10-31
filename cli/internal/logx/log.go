@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ const (
 
 var (
 	mu      sync.RWMutex
+	values  []string
 	secrets map[string]struct{}
 	plain   []string
 
@@ -38,10 +40,17 @@ func New(path string) *slog.Logger {
 	return l
 }
 
-func SetSecrets(values []string) {
-	set := make(map[string]struct{}, len(values))
+func SetSecrets(vs []string) {
+	set, long := index(vs)
+	mu.Lock()
+	values, secrets, plain = slices.Clone(vs), set, long
+	mu.Unlock()
+}
+
+func index(vs []string) (map[string]struct{}, []string) {
+	set := make(map[string]struct{}, len(vs))
 	var long []string
-	for _, v := range values {
+	for _, v := range vs {
 		if v == "" {
 			continue
 		}
@@ -52,27 +61,28 @@ func SetSecrets(values []string) {
 	}
 	// longest first so a secret containing another is masked whole
 	sort.Slice(long, func(i, j int) bool { return len(long[i]) > len(long[j]) })
-
-	mu.Lock()
-	secrets, plain = set, long
-	mu.Unlock()
+	return set, long
 }
 
-func redact(s string) string {
+func Redact(s string, extra ...string) string {
 	mu.RLock()
-	defer mu.RUnlock()
-	if len(secrets) == 0 {
+	set, long := secrets, plain
+	if len(extra) > 0 {
+		set, long = index(append(slices.Clone(values), extra...))
+	}
+	mu.RUnlock()
+	if len(set) == 0 {
 		return s
 	}
 	s = obscuredRun.ReplaceAllStringFunc(s, func(run string) string {
 		if v, err := obscure.Reveal(run); err == nil {
-			if _, ok := secrets[v]; ok {
+			if _, ok := set[v]; ok {
 				return mask
 			}
 		}
 		return run
 	})
-	for _, v := range plain {
+	for _, v := range long {
 		s = strings.ReplaceAll(s, v, mask)
 	}
 	return s
@@ -82,7 +92,7 @@ func redactAttr(a slog.Attr) slog.Attr {
 	v := a.Value.Resolve()
 	switch v.Kind() {
 	case slog.KindString:
-		return slog.String(a.Key, redact(v.String()))
+		return slog.String(a.Key, Redact(v.String()))
 	case slog.KindGroup:
 		g := v.Group()
 		out := make([]any, len(g))
@@ -93,11 +103,11 @@ func redactAttr(a slog.Attr) slog.Attr {
 	case slog.KindAny:
 		switch x := v.Any().(type) {
 		case error:
-			return slog.String(a.Key, redact(x.Error()))
+			return slog.String(a.Key, Redact(x.Error()))
 		case interface{ String() string }:
-			return slog.String(a.Key, redact(x.String()))
+			return slog.String(a.Key, Redact(x.String()))
 		default:
-			return slog.String(a.Key, redact(fmt.Sprintf("%+v", x)))
+			return slog.String(a.Key, Redact(fmt.Sprintf("%+v", x)))
 		}
 	}
 	return a
@@ -110,7 +120,7 @@ func (h *redactHandler) Enabled(ctx context.Context, l slog.Level) bool {
 }
 
 func (h *redactHandler) Handle(ctx context.Context, r slog.Record) error {
-	nr := slog.NewRecord(r.Time, r.Level, redact(r.Message), r.PC)
+	nr := slog.NewRecord(r.Time, r.Level, Redact(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
 		nr.AddAttrs(redactAttr(a))
 		return true

@@ -62,10 +62,8 @@ func Run(_ context.Context, env Env) []Check {
 
 	var cs []Check
 	switch env.GOOS {
-	case "linux":
-		cs = append(cs, checkFuse(env))
-	case "windows":
-		cs = append(cs, checkWinFsp(env))
+	case "linux", "windows":
+		cs = append(cs, Driver(env))
 	case "darwin":
 		cs = append(cs, checkMac(env))
 	}
@@ -74,6 +72,24 @@ func Run(_ context.Context, env Env) []Check {
 	wg.Wait()
 	cs = append(cs, net[0], net[1], checkDisk(env))
 	return cs
+}
+
+func Driver(env Env) Check {
+	switch env.GOOS {
+	case "linux":
+		return checkFuse(env)
+	case "windows":
+		return checkWinFsp(env)
+	}
+	return pass("driver", "no driver needed")
+}
+
+func OpenReadWrite(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func pass(name, detail string) Check { return Check{Name: name, OK: true, Detail: detail} }

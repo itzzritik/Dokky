@@ -19,14 +19,21 @@ var testRemoteTimeout = 15 * time.Second
 const jobPoll = 100 * time.Millisecond
 
 type Option struct {
-	Name     string   `json:"name"`
-	Help     string   `json:"help"`
-	Default  string   `json:"default"`
-	Required bool     `json:"required"`
-	Advanced bool     `json:"advanced"`
-	Secret   bool     `json:"secret"`
-	Hide     bool     `json:"hide"`
-	Examples []string `json:"examples"`
+	Name      string    `json:"name"`
+	Help      string    `json:"help"`
+	Type      string    `json:"type"`
+	Default   string    `json:"default"`
+	Required  bool      `json:"required"`
+	Advanced  bool      `json:"advanced"`
+	Secret    bool      `json:"secret"`
+	Hide      bool      `json:"hide"`
+	Exclusive bool      `json:"exclusive"`
+	Examples  []Example `json:"examples"`
+}
+
+type Example struct {
+	Value string `json:"value"`
+	Help  string `json:"help"`
 }
 
 type Provider struct {
@@ -44,27 +51,27 @@ type Step struct {
 }
 
 type rcOption struct {
-	Name, Help, DefaultStr                    string
-	Required, Advanced, IsPassword, Sensitive bool
-	Hide                                      fs.OptionVisibility
-	Examples                                  []struct{ Value string }
+	Name, Help, DefaultStr, Type                         string
+	Required, Advanced, IsPassword, Sensitive, Exclusive bool
+	Hide                                                 fs.OptionVisibility
+	Examples                                             []Example
 }
 
 func (o rcOption) option() Option {
 	opt := Option{
-		Name:     o.Name,
-		Help:     o.Help,
-		Default:  o.DefaultStr,
-		Required: o.Required,
-		Advanced: o.Advanced,
-		Secret:   o.IsPassword || o.Sensitive,
-		Hide:     o.Hide&fs.OptionHideConfigurator != 0,
+		Name:      o.Name,
+		Help:      o.Help,
+		Type:      o.Type,
+		Default:   o.DefaultStr,
+		Required:  o.Required,
+		Advanced:  o.Advanced,
+		Secret:    o.IsPassword || o.Sensitive,
+		Hide:      o.Hide&fs.OptionHideConfigurator != 0,
+		Exclusive: o.Exclusive,
+		Examples:  o.Examples,
 	}
 	if opt.Default == "<nil>" {
 		opt.Default = ""
-	}
-	for _, ex := range o.Examples {
-		opt.Examples = append(opt.Examples, ex.Value)
 	}
 	return opt
 }
@@ -92,6 +99,12 @@ func Providers() ([]Provider, error) {
 		ps = append(ps, pr)
 	}
 	return ps, nil
+}
+
+func OAuthURL() (string, error) {
+	var out struct{ AuthURL string }
+	err := rpc("config/oauthstatus", nil, &out)
+	return out.AuthURL, err
 }
 
 func SplitSecrets(p Provider, opts map[string]string) (plain, secret map[string]string) {

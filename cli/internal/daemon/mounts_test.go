@@ -38,6 +38,8 @@ type fakeEngine struct {
 	mountedAt   time.Time
 	probes      int
 	services    map[string]store.Service
+	tested      store.Service
+	failTest    error
 
 	// rclone holds its mount lock across a whole mount, and Stats needs it
 	rclone               sync.Mutex
@@ -109,6 +111,13 @@ func (f *fakeEngine) PutService(s store.Service) error {
 	defer f.mu.Unlock()
 	f.services[s.ID] = s
 	return nil
+}
+
+func (f *fakeEngine) TestRemote(s store.Service) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tested = s
+	return f.failTest
 }
 
 func (f *fakeEngine) DeleteService(id string) {

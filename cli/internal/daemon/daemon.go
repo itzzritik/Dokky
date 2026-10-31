@@ -52,6 +52,7 @@ type StatusReply struct {
 type MountStatus struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
+	ServiceID         string `json:"serviceId"`
 	State             string `json:"state"`
 	Error             string `json:"error"`
 	MountPoint        string `json:"mountPoint"`
@@ -73,6 +74,7 @@ type Daemon struct {
 	// serialises changes; status only TryLocks it
 	opMu        sync.Mutex
 	unmountedAt map[string]time.Time
+	edits       map[string]string // configure id → the saved service whose secrets it was given
 
 	// guards data and states; never held across an engine call or an external command
 	mu     sync.Mutex
@@ -183,7 +185,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 	return &Daemon{
 		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log,
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount,
-		unmountedAt: map[string]time.Time{}, states: map[string]*mountState{},
+		unmountedAt: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 	}
 }
 
@@ -251,7 +253,11 @@ func decodeCtx[T, R any](fn func(context.Context, T) (R, error)) ipc.Handler {
 				return nil, fmt.Errorf("bad params: %w", err)
 			}
 		}
-		return fn(ctx, p)
+		r, err := fn(ctx, p)
+		if err != nil {
+			return r, errors.New(logx.Redact(err.Error()))
+		}
+		return r, nil
 	}
 }
 
@@ -270,11 +276,19 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			}
 			return d.mountStatus(p.Name), nil
 		}),
-		"service.put": decode(func(s store.Service) (idParams, error) {
+		"service.put": decode(func(p putParams) (idParams, error) {
+			s := p.Service
 			s.ID = cmp.Or(s.ID, uuid.NewString())
+			if p.EditOf != "" && p.EditOf != s.ID {
+				return idParams{}, fmt.Errorf("editOf %q must be the id of the service being saved", p.EditOf)
+			}
+			s.Options, _ = d.keepSecrets(p.EditOf, s.Type, s.Options)
 			return idParams{ID: s.ID}, d.putService(s)
 		}),
 		"service.delete": decode(func(p idParams) (any, error) { return nil, d.deleteService(p.ID) }),
+		"service.list":   func(context.Context, json.RawMessage) (any, error) { return d.serviceList(), nil },
+		"service.get":    decode(d.serviceGet),
+		"oauth.status":   func(context.Context, json.RawMessage) (any, error) { return oauthStatus() },
 		"mount.put": decode(func(m store.Mount) (idParams, error) {
 			m.ID = cmp.Or(m.ID, uuid.NewString())
 			return idParams{ID: m.ID}, d.putMount(m)
@@ -283,11 +297,14 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"mount.setLocal":    decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
 		"providers":         func(context.Context, json.RawMessage) (any, error) { return engine.Providers() },
 		"service.configure": decodeCtx(d.configure),
-		"service.test":      decode(func(p testParams) (testReply, error) { return d.testService(p.Service), nil }),
-		"browse":            decode(d.browse),
-		"transfers":         func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
-		"settings.get":      func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
-		"settings.set":      decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
+		"service.test": decode(func(p testParams) (testReply, error) {
+			p.Service.Options, _ = d.keepSecrets(p.EditOf, p.Service.Type, p.Service.Options)
+			return d.testService(p.Service), nil
+		}),
+		"browse":       decode(d.browse),
+		"transfers":    func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
+		"settings.get": func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
+		"settings.set": decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
 		// lets the reply out before shutdown closes the connection
 		"daemon.restart": func(context.Context, json.RawMessage) (any, error) {
 			time.AfterFunc(restartDelay, func() {
@@ -316,7 +333,7 @@ func (d *Daemon) status() StatusReply {
 	r.LoggedIn = d.data.Account != nil
 	for _, m := range d.data.Mounts {
 		st := d.state(m.ID)
-		ms := MountStatus{ID: m.ID, Name: m.Name, State: st.state, Error: st.err, MountPoint: d.mountPoint(m)}
+		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m)}
 		if st.state == stateMounted {
 			s := d.stats[st.name]
 			ms.MountPoint, ms.CacheBytes, ms.UploadsQueued, ms.UploadsInProgress = st.point, s.CacheBytes, s.UploadsQueued, s.UploadsInProgress

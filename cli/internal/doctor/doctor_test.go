@@ -140,3 +140,15 @@ func TestNetworkFailures(t *testing.T) {
 	require.True(t, find(t, cs, "dokky.ritik.me").OK)
 	require.False(t, find(t, cs, "github.com").OK)
 }
+
+func TestDriverChecksOnlyTheMountDriver(t *testing.T) {
+	env := good("linux")
+	env.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	require.Equal(t, "sudo apt install fuse3", Driver(env).Fix)
+
+	env = good("windows")
+	env.Stat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	require.Equal(t, "winget install -e --id WinFsp.WinFsp", Driver(env).Fix)
+
+	require.True(t, Driver(Env{GOOS: "darwin"}).OK)
+}

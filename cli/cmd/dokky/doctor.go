@@ -86,7 +86,7 @@ func realDoctorEnv() doctor.Env {
 		LookPath:        exec.LookPath,
 		Stat:            os.Stat,
 		ReadFile:        os.ReadFile,
-		Access:          openReadWrite,
+		Access:          doctor.OpenReadWrite,
 		HTTPGet:         httpProbe,
 		MacVersion:      macVersion,
 		DaemonInstalled: daemon.ServiceInstalled(),
@@ -134,14 +134,6 @@ func keyringState(kr store.Keyring, state string) (fallback bool, err error) {
 	}
 	f, ok := kr.(store.Fallbacker)
 	return ok && f.Fallback(), nil
-}
-
-func openReadWrite(path string) error {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	return f.Close()
 }
 
 func httpProbe(url string) error {

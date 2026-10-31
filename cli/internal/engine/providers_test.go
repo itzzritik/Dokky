@@ -55,3 +55,22 @@ func TestProviderOptionsCarryHide(t *testing.T) {
 	require.True(t, hide["pin_host_key"])
 	require.False(t, hide["host"])
 }
+
+func TestProviderOptionsCarryTypeAndChoices(t *testing.T) {
+	sftp := map[string]Option{}
+	for _, o := range provider(t, "sftp").Options {
+		sftp[o.Name] = o
+	}
+	require.Equal(t, "bool", sftp["disable_hashcheck"].Type)
+	require.Equal(t, "string", sftp["host"].Type)
+	require.False(t, sftp["host"].Exclusive)
+
+	for _, o := range provider(t, "azureblob").Options {
+		if o.Name == "delete_snapshots" {
+			require.True(t, o.Exclusive)
+			require.Equal(t, Example{Value: "include", Help: "Specify 'include' to remove the root blob and all its snapshots"}, o.Examples[1])
+			return
+		}
+	}
+	t.Fatal("azureblob has no delete_snapshots option")
+}

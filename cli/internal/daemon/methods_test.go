@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -145,6 +146,8 @@ func TestConfigureAssignsOneID(t *testing.T) {
 	require.NoError(t, uuid.Validate(first.ID))
 	require.NotNil(t, first.Step.Option)
 	require.Equal(t, "config_shared_client_id", first.Step.Option.Name)
+	require.Equal(t, "bool", first.Step.Option.Type)
+	require.True(t, first.Step.Option.Exclusive)
 
 	require.NoError(t, call(t, d, "service.configure", map[string]any{
 		"id": first.ID, "type": "drive", "state": first.Step.State, "result": "false",
@@ -167,6 +170,10 @@ func TestConfigureCancelStopsOAuth(t *testing.T) {
 	}
 	t.Cleanup(func() { oauthutil.OpenURL = prev })
 
+	var oauth oauthReply
+	require.NoError(t, call(t, d, "oauth.status", nil, &oauth))
+	require.Empty(t, oauth.AuthURL)
+
 	h, ok := d.handlers(nil)["service.configure"]
 	require.True(t, ok, "no handler for service.configure")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -177,8 +184,9 @@ func TestConfigureCancelStopsOAuth(t *testing.T) {
 		done <- err
 	}()
 
+	var u string
 	select {
-	case u := <-opened:
+	case u = <-opened:
 		require.Contains(t, u, "127.0.0.1:53682/auth")
 	case err := <-done:
 		t.Fatalf("configure returned before the browser step: %v", err)
@@ -186,6 +194,8 @@ func TestConfigureCancelStopsOAuth(t *testing.T) {
 		t.Fatal("rclone never asked to open the browser")
 	}
 	require.Contains(t, remotes(t), "half-made")
+	require.NoError(t, call(t, d, "oauth.status", nil, &oauth))
+	require.Equal(t, u, oauth.AuthURL)
 
 	cancel()
 	select {
@@ -201,6 +211,9 @@ func TestConfigureCancelStopsOAuth(t *testing.T) {
 			c.Close()
 		}
 		return err != nil
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return call(t, d, "oauth.status", nil, &oauth) == nil && oauth.AuthURL == ""
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
@@ -245,4 +258,107 @@ func TestServiceTestLeavesConfigAlone(t *testing.T) {
 
 	require.Equal(t, []string{"disk"}, remotes(t))
 	require.Equal(t, before, section(t, "disk"))
+}
+
+func TestServiceListHidesSecrets(t *testing.T) {
+	d, _, _ := newTestDaemon(t, sample())
+	var list []map[string]any
+	require.NoError(t, call(t, d, "service.list", nil, &list))
+	require.Equal(t, []map[string]any{{"id": "s1", "name": "nas", "type": "webdav"}}, list)
+}
+
+func TestReplyErrorsAreRedacted(t *testing.T) {
+	d, f, _ := newTestDaemon(t, sample())
+	d.mu.Lock()
+	d.setSecrets()
+	d.mu.Unlock()
+	t.Cleanup(func() { logx.SetSecrets(nil) })
+	f.failProbe = errors.New("login refused for hunter2-secret")
+
+	err := call(t, d, "mount", map[string]string{"name": "media"}, nil)
+	require.ErrorContains(t, err, "login refused for ***")
+
+	var st StatusReply
+	require.NoError(t, call(t, d, "status", nil, &st))
+	require.Equal(t, "s1", st.Mounts[0].ServiceID)
+	require.Equal(t, stateError, st.Mounts[0].State)
+	require.Equal(t, "login refused for ***", st.Mounts[0].Error)
+}
+
+func TestServiceGetHidesSecretValues(t *testing.T) {
+	data := sample()
+	data.Services[0].Version = 3
+	d, _, _ := newTestDaemon(t, data)
+	var raw json.RawMessage
+	require.NoError(t, call(t, d, "service.get", map[string]string{"id": "s1"}, &raw))
+	require.JSONEq(t, `{"id":"s1","name":"nas","type":"webdav","options":{"url":"http://nas"},"secretsSet":["pass"],"version":3}`, string(raw))
+	require.Error(t, call(t, d, "service.get", map[string]string{"id": "nope"}, nil))
+}
+
+func TestEditKeepsBlankSecrets(t *testing.T) {
+	d, f, st := newTestDaemon(t, sample())
+	var reply testReply
+	require.NoError(t, call(t, d, "service.test", map[string]any{
+		"service": store.Service{Name: "nas", Type: "webdav", Options: map[string]string{"url": "http://nas2", "pass": ""}}, "editOf": "s1",
+	}, &reply))
+	require.True(t, reply.OK)
+	require.Equal(t, "hunter2-secret", f.tested.Options["pass"])
+
+	require.NoError(t, call(t, d, "service.put", map[string]any{
+		"id": "s1", "name": "nas", "type": "webdav", "options": map[string]string{"url": "http://nas2", "pass": ""}, "version": 4, "editOf": "s1",
+	}, nil))
+	saved := load(t, st).Services[0]
+	require.Equal(t, map[string]string{"url": "http://nas2"}, saved.Options)
+	require.Equal(t, map[string]string{"pass": "hunter2-secret"}, saved.Secrets)
+	require.EqualValues(t, 4, saved.Version)
+}
+
+func TestConfigureEditKeepsBlankSecrets(t *testing.T) {
+	d := newEngineDaemon(t, store.Data{
+		Services: []store.Service{{ID: "box", Name: "box", Type: "sftp", Options: map[string]string{"port": "22"}, Secrets: map[string]string{"host": "nas.local", "pass": "hunter2-pw"}}},
+		Local:    map[string]store.LocalMount{},
+	})
+	var r configureReply
+	require.NoError(t, call(t, d, "service.configure", map[string]any{
+		"type": "sftp", "options": map[string]string{"port": "2022", "pass": ""}, "editOf": "box",
+	}, &r))
+	require.NotEqual(t, "box", r.ID)
+	require.True(t, r.Step.Done)
+	require.Equal(t, "2022", r.Step.Service["port"])
+	require.Empty(t, r.Step.Service["host"])
+	require.Empty(t, r.Step.Service["pass"])
+	used := section(t, r.ID)
+	require.Equal(t, "nas.local", used["host"])
+	require.NotEmpty(t, used["pass"])
+
+	require.NoError(t, call(t, d, "service.configure", map[string]any{
+		"type": "webdav", "options": map[string]string{"url": "http://x"}, "editOf": "box",
+	}, &r))
+	require.True(t, r.Step.Done)
+	require.Empty(t, section(t, r.ID)["pass"])
+}
+
+func TestEditOfStaysWithinItsService(t *testing.T) {
+	d, f, st := newTestDaemon(t, sample())
+	var reply testReply
+	require.NoError(t, call(t, d, "service.test", map[string]any{
+		"service": store.Service{Name: "x", Type: "sftp", Options: map[string]string{"host": "other", "pass": ""}}, "editOf": "s1",
+	}, &reply))
+	require.Empty(t, f.tested.Options["pass"])
+
+	err := call(t, d, "service.put", map[string]any{
+		"id": "new", "name": "copy", "type": "webdav", "options": map[string]string{"url": "http://nas"}, "editOf": "s1",
+	}, nil)
+	require.Error(t, err)
+	require.Len(t, load(t, st).Services, 1)
+}
+
+func TestServiceTestRedactsItsSecrets(t *testing.T) {
+	d, f, _ := newTestDaemon(t, sample())
+	f.failTest = errors.New("401 for new-pass-123")
+	var reply testReply
+	require.NoError(t, call(t, d, "service.test", map[string]any{
+		"service": store.Service{Name: "nas", Type: "webdav", Options: map[string]string{"url": "http://nas", "pass": "new-pass-123"}},
+	}, &reply))
+	require.Equal(t, testReply{Error: "401 for ***"}, reply)
 }

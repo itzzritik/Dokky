@@ -133,3 +133,9 @@ func TestRcloneInitializeThenNewRedactsDefaultLoggers(t *testing.T) {
 	require.Contains(t, out, "stdlib pass=***")
 	require.Contains(t, out, "default pass=***")
 }
+
+func TestRedactExtraLongestFirst(t *testing.T) {
+	SetSecrets(nil)
+	t.Cleanup(func() { SetSecrets(nil) })
+	require.Equal(t, "login *** refused for ***", Redact("login ritik@123 refused for ritik", "ritik", "ritik@123"))
+}
