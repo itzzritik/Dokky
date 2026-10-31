@@ -1,0 +1,121 @@
+package engine
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/itzzritik/dokky/cli/internal/store"
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config"
+	"github.com/rclone/rclone/fs/config/obscure"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMain(m *testing.M) {
+	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelCritical
+	os.Exit(m.Run())
+}
+
+func startEngine(t *testing.T) *Engine {
+	t.Helper()
+	e, err := Start(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(e.Stop)
+	return e
+}
+
+func TestStartStop(t *testing.T) {
+	dir := t.TempDir()
+	e, err := Start(dir, nil)
+	require.NoError(t, err)
+	t.Cleanup(e.Stop)
+	require.Same(t, e.mem, config.Data())
+	require.Equal(t, filepath.Join(dir, "rclone.conf"), config.GetConfigPath())
+	require.Equal(t, 4, fs.GetConfig(context.Background()).Transfers)
+
+	_, err = Start(t.TempDir(), nil)
+	require.ErrorContains(t, err, "already running")
+
+	require.Error(t, e.PutService(store.Service{ID: "x", Type: "no-such-backend"}))
+	require.NoError(t, e.PutService(store.Service{ID: "svc1", Type: "alias", Options: map[string]string{"remote": dir}}))
+	config.SaveConfig()
+
+	stats, err := e.Stats()
+	require.NoError(t, err)
+	require.Empty(t, stats)
+	_, err = e.TotalBytes()
+	require.NoError(t, err)
+
+	e.Stop()
+	require.NoFileExists(t, filepath.Join(dir, "rclone.conf"))
+
+	e2, err := Start(t.TempDir(), nil)
+	require.NoError(t, err)
+	e2.Stop()
+}
+
+func TestConfigStepRevealsPasswords(t *testing.T) {
+	e := startEngine(t)
+	// a plain password that also parses as an obscured value
+	pass := obscure.MustObscure("inner")
+	step, err := e.ConfigStep("svc1", "sftp", map[string]string{"host": "nas.local", "pass": pass}, "", "")
+	require.NoError(t, err)
+	require.True(t, step.Done)
+	require.Equal(t, map[string]string{"host": "nas.local", "pass": pass}, step.Service)
+	stored, _ := e.mem.GetValue("svc1", "pass")
+	require.Equal(t, pass, obscure.MustReveal(stored))
+}
+
+func TestRemoteUsesCurrentConfigAndTimesOut(t *testing.T) {
+	e := startEngine(t)
+	dir := t.TempDir()
+	s := store.Service{
+		ID: "svc1", Name: "vault", Type: "crypt",
+		Options: map[string]string{"remote": dir},
+		Secrets: map[string]string{"password": "hunter2"},
+	}
+	require.NoError(t, e.TestRemote(s))
+	s.Options = map[string]string{"remote": filepath.Join(dir, "missing")}
+	require.Error(t, e.TestRemote(s))
+
+	hang := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-hang:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(hang) })
+	old := testRemoteTimeout
+	testRemoteTimeout = time.Second
+	t.Cleanup(func() { testRemoteTimeout = old })
+
+	start := time.Now()
+	err := e.TestRemote(store.Service{ID: "svc2", Name: "slow", Type: "webdav", Options: map[string]string{"url": srv.URL}})
+	require.ErrorContains(t, err, "slow")
+	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestMountAfterStopErrors(t *testing.T) {
+	e, err := Start(t.TempDir(), nil)
+	require.NoError(t, err)
+	e.Stop()
+	e.Stop()
+	_, err = e.Mount(store.Mount{Name: "nas", ServiceID: "no-such-service", VFS: store.DefaultVFS()}, t.TempDir())
+	require.ErrorContains(t, err, "stopped")
+}
+
+func TestStatsSkipsMountsRcloneDropped(t *testing.T) {
+	e := startEngine(t)
+	e.mounted["nas"] = liveMount{fs: "svc1:", point: filepath.Join(t.TempDir(), "nas"), serviceID: "svc1"}
+	stats, err := e.Stats()
+	require.NoError(t, err)
+	require.Empty(t, stats)
+	require.Contains(t, e.mounted, "nas")
+}
