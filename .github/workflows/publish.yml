@@ -22,61 +22,96 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      - id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+          LATEST="${LATEST#v}"
+          VERSION="$(node -e 'const [a,b,c]=(process.argv[1]||"0.0.0").split(".").map(Number);const t=process.argv[2];console.log(t==="major"?`${a+1}.0.0`:t==="minor"?`${a}.${b+1}.0`:`${a}.${b}.${c+1}`)' "$LATEST" "$BUMP")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        goos: [darwin, linux, windows]
+        goarch: [amd64, arm64]
+    env:
+      CGO_ENABLED: 0
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
+          cache: false
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('cli/go.sum') }}
+          restore-keys: go-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+      - name: Build
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        working-directory: cli
+        run: |
+          EXT=""; TAGS=""
+          if [ "$GOOS" = windows ]; then EXT=".exe"; TAGS="cmount"; fi
+          go build -trimpath -tags "$TAGS" \
+            -ldflags "-s -w -X github.com/itzzritik/dokky/cli/internal/buildinfo.Version=$VERSION" \
+            -o "../dokky-$GOOS-$GOARCH$EXT" ./cmd/dokky
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dokky-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dokky-*
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - id: version
-        env:
-          BUMP: ${{ inputs.bump }}
-        run: |
-          TAG="$(npm version "$BUMP" --prefix npm --no-git-tag-version)"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Checks
-        run: |
-          cd cli
-          go vet ./...
-          go test ./...
-
-      - name: Tag
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "publish $TAG"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push --follow-tags origin HEAD:main
-
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: actions/download-artifact@v8
         with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+          pattern: dokky-*
+          merge-multiple: true
 
-      - run: node scripts/write-hashes.mjs "${{ steps.version.outputs.version }}" dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum dokky-* > checksums.txt
+
+      - name: GitHub release
+        run: gh release create "$TAG" dist/dokky-* dist/checksums.txt --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+
+      - run: node scripts/write-hashes.mjs "$VERSION" dist
 
       - run: npm publish --provenance --access public ./npm
-
-      - env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git commit -am "release $TAG binaries"
-          git push origin HEAD:main
