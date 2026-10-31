@@ -20,7 +20,7 @@ let server: MongoMemoryServer;
 beforeAll(async () => {
   (globalThis as { mongo?: unknown }).mongo = undefined;
   server = await MongoMemoryServer.create();
-  process.env.MONGODB_URI = server.getUri();
+  process.env.DATABASE_URL = server.getUri();
   await ensureIndexes();
 }, 120_000);
 

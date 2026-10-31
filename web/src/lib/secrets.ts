@@ -10,13 +10,13 @@ const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 
 function loadKey(): Buffer {
-  const raw = process.env.DOKKY_SECRET_KEY;
+  const raw = process.env.ENCRYPTION_KEY;
   if (!raw) {
-    throw new Error("DOKKY_SECRET_KEY is not set");
+    throw new Error("ENCRYPTION_KEY is not set");
   }
   const key = Buffer.from(raw, "base64");
   if (key.length !== KEY_BYTES) {
-    throw new Error(`DOKKY_SECRET_KEY must be base64 of ${KEY_BYTES} bytes`);
+    throw new Error(`ENCRYPTION_KEY must be base64 of ${KEY_BYTES} bytes`);
   }
   return key;
 }

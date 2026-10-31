@@ -21,7 +21,7 @@ const freePort = () =>
   });
 
 const mongod = await MongoMemoryServer.create();
-process.env.MONGODB_URI = mongod.getUri();
+process.env.DATABASE_URL = mongod.getUri();
 const { insertedId } = await db().collection("users").insertOne({
   name: "e2e",
   email: "e2e@example.com",
@@ -45,13 +45,13 @@ const next = spawn(
     cwd: join(import.meta.dir, ".."),
     env: {
       ...process.env,
-      MONGODB_URI: mongod.getUri(),
+      DATABASE_URL: mongod.getUri(),
       AUTH_SECRET: randomBytes(32).toString("base64"),
-      AUTH_GITHUB_ID: "e2e",
-      AUTH_GITHUB_SECRET: "e2e",
+      GITHUB_CLIENT_ID: "e2e",
+      GITHUB_CLIENT_SECRET: "e2e",
       AUTH_URL: api,
       AUTH_TRUST_HOST: "true",
-      DOKKY_SECRET_KEY: randomBytes(32).toString("base64"),
+      ENCRYPTION_KEY: randomBytes(32).toString("base64"),
       NEXT_TELEMETRY_DISABLED: "1",
     },
     stdin: "ignore",

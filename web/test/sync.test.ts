@@ -21,8 +21,8 @@ let server: MongoMemoryServer;
 beforeAll(async () => {
   (globalThis as { mongo?: unknown }).mongo = undefined;
   server = await MongoMemoryServer.create();
-  process.env.MONGODB_URI = server.getUri();
-  process.env.DOKKY_SECRET_KEY = k1;
+  process.env.DATABASE_URL = server.getUri();
+  process.env.ENCRYPTION_KEY = k1;
   await ensureIndexes();
 }, 120_000);
 

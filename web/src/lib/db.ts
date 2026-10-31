@@ -6,9 +6,9 @@ const cache = globalThis as typeof globalThis & { mongo?: MongoClient };
 
 export function mongo(): MongoClient {
   if (!cache.mongo) {
-    const uri = process.env.MONGODB_URI;
+    const uri = process.env.DATABASE_URL;
     if (!uri) {
-      throw new Error("MONGODB_URI is not set");
+      throw new Error("DATABASE_URL is not set");
     }
     const client = new MongoClient(uri);
     cache.mongo = client;

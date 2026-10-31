@@ -7,7 +7,7 @@ let server: MongoMemoryServer;
 
 beforeAll(async () => {
   server = await MongoMemoryServer.create();
-  process.env.MONGODB_URI = server.getUri();
+  process.env.DATABASE_URL = server.getUri();
 }, 120_000);
 
 afterAll(async () => {
@@ -19,11 +19,11 @@ test("a failed connect is not cached", async () => {
   const cache = globalThis as { mongo?: MongoClient };
   await cache.mongo?.close();
   cache.mongo = undefined;
-  process.env.MONGODB_URI =
+  process.env.DATABASE_URL =
     "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=200";
   await expect(db().collection("probe").findOne()).rejects.toThrow();
 
-  process.env.MONGODB_URI = server.getUri();
+  process.env.DATABASE_URL = server.getUri();
   expect(await db().collection("probe").findOne()).toBeNull();
 });
 

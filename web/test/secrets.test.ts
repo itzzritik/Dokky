@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { aadFor, decrypt, encrypt } from "@/lib/secrets";
 
-const reKey = /DOKKY_SECRET_KEY is not set/u;
+const reKey = /ENCRYPTION_KEY is not set/u;
 const reBytes = /32 bytes/u;
 const reMalformed = /malformed/u;
 
@@ -10,7 +10,7 @@ const key = () => randomBytes(32).toString("base64");
 const k1 = key();
 
 beforeEach(() => {
-  process.env.DOKKY_SECRET_KEY = k1;
+  process.env.ENCRYPTION_KEY = k1;
 });
 
 const aad = aadFor("u1", "s1", "password");
@@ -42,7 +42,7 @@ test("tampered ciphertext throws", () => {
 
 test("a different key throws", () => {
   const box = encrypt("hunter2", aad);
-  process.env.DOKKY_SECRET_KEY = key();
+  process.env.ENCRYPTION_KEY = key();
   expect(() => decrypt(box, aad)).toThrow();
 });
 
@@ -57,15 +57,15 @@ test("nonces differ for equal plaintexts", () => {
 });
 
 test("config errors are clear", () => {
-  process.env.DOKKY_SECRET_KEY = "";
+  process.env.ENCRYPTION_KEY = "";
   expect(() => encrypt("a", aad)).toThrow(reKey);
-  process.env.DOKKY_SECRET_KEY = randomBytes(16).toString("base64");
+  process.env.ENCRYPTION_KEY = randomBytes(16).toString("base64");
   expect(() => encrypt("a", aad)).toThrow(reBytes);
 });
 
 test("config errors never contain key text", () => {
   const short = randomBytes(16).toString("base64");
-  process.env.DOKKY_SECRET_KEY = short;
+  process.env.ENCRYPTION_KEY = short;
   expect(() => encrypt("a", aad)).toThrow();
   try {
     encrypt("a", aad);
@@ -78,8 +78,8 @@ test("config errors never contain key text", () => {
 
 test("the key is read lazily", () => {
   const box = encrypt("x", aad);
-  process.env.DOKKY_SECRET_KEY = key();
+  process.env.ENCRYPTION_KEY = key();
   expect(() => decrypt(box, aad)).toThrow();
-  process.env.DOKKY_SECRET_KEY = k1;
+  process.env.ENCRYPTION_KEY = k1;
   expect(decrypt(box, aad)).toBe("x");
 });
