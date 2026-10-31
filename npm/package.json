@@ -16,7 +16,32 @@
     "test": "node --test"
   },
   "dokky": {
-    "binaries": {}
+    "binaries": {
+      "darwin-amd64": {
+        "url": "https://github.com/itzzritik/dokky/releases/download/v0.0.2/dokky-darwin-amd64",
+        "sha256": "b11ac63e9320f337ea62bb7ca083c196e38df4fc32c3063b647f4442a869873f"
+      },
+      "darwin-arm64": {
+        "url": "https://github.com/itzzritik/dokky/releases/download/v0.0.2/dokky-darwin-arm64",
+        "sha256": "265182a24e157e1ef010f2f19ccf0bce710a1bac90b8eaaa0942223242f7d033"
+      },
+      "linux-amd64": {
+        "url": "https://github.com/itzzritik/dokky/releases/download/v0.0.2/dokky-linux-amd64",
+        "sha256": "f4db73f5c28c809519a8399df41ce7376b4454b7652739f96b8d8ea642e45f63"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/itzzritik/dokky/releases/download/v0.0.2/dokky-linux-arm64",
+        "sha256": "5e29c687baa2f64ce0fa0c5907430ac1f0a90fff52bbdefe46e339ea8ca019a2"
+      },
+      "windows-amd64": {
+        "url": "https://github.com/itzzritik/dokky/releases/download/v0.0.2/dokky-windows-amd64.exe",
+        "sha256": "d68acbb4ea7fa843165a911efbef5c06c34eb1ac42231c98a6b04d087b78b009"
+      },
+      "windows-arm64": {
+        "url": "https://github.com/itzzritik/dokky/releases/download/v0.0.2/dokky-windows-arm64.exe",
+        "sha256": "c5056c18886b85c2cdbb7699486a0eb51b2864a1c70b6675c0dd8393ee585b3d"
+      }
+    }
   },
   "files": [
     "bin",
