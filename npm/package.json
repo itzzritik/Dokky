@@ -3,8 +3,22 @@
   "version": "0.0.1",
   "description": "Mount your cloud and NAS storage as local folders",
   "license": "MIT",
+  "homepage": "https://dokky.ritik.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itzzritik/Dokky.git"
+  },
   "bin": { "dokky": "bin/dokky.js" },
-  "scripts": { "postinstall": "node install.js", "test": "node --test" },
-  "dokky": { "binaries": {} },
-  "files": ["bin", "lib", "install.js"]
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node --test"
+  },
+  "dokky": {
+    "binaries": {}
+  },
+  "files": [
+    "bin",
+    "lib",
+    "install.js"
+  ]
 }
