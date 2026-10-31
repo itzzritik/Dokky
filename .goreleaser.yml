@@ -1,0 +1,35 @@
+version: 2
+
+project_name: dokky
+
+builds:
+  - id: dokky
+    dir: ./cli
+    main: ./cmd/dokky
+    binary: dokky
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    tags:
+      - '{{ if eq .Os "windows" }}cmount{{ end }}'
+    ldflags:
+      - -s -w
+      - -X github.com/itzzritik/dokky/cli/internal/buildinfo.Version={{.Version}}
+
+archives:
+  - formats: [binary]
+    name_template: "dokky-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
