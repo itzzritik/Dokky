@@ -76,6 +76,7 @@ type Daemon struct {
 	forceUnmount func(point string) error
 	openURL      func(url string) error
 
+	idle   Idle
 	loop   dsync.Loop
 	syncMu sync.Mutex // one pull at a time; taken before opMu
 
@@ -223,8 +224,9 @@ func (d *Daemon) start() {
 func (d *Daemon) tick(ctx context.Context) {
 	d.syncNow(ctx)
 	d.opMu.Lock()
-	d.refresh()
+	statsErr := d.refresh()
 	d.opMu.Unlock()
+	d.observeIdle(time.Now(), statsErr)
 	d.remountFlagged()
 	d.publish()
 }
@@ -360,7 +362,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 func (d *Daemon) status() StatusReply {
 	// Stats waits on rclone's mount lock while a mount runs; serve the cache then
 	if d.opMu.TryLock() {
-		d.refresh()
+		_ = d.refresh()
 		d.opMu.Unlock()
 	}
 	r := StatusReply{Version: buildinfo.Version, Protocol: ipc.Protocol, Mounts: []MountStatus{}}

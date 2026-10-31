@@ -40,6 +40,8 @@ type fakeEngine struct {
 	services    map[string]store.Service
 	uploads     int
 	failStats   error
+	totalBytes  int64
+	failTotal   error
 	tested      store.Service
 	failTest    error
 
@@ -141,6 +143,12 @@ func (f *fakeEngine) Stats() ([]engine.MountStats, error) {
 		out = append(out, engine.MountStats{Name: name, UploadsQueued: f.uploads})
 	}
 	return out, nil
+}
+
+func (f *fakeEngine) TotalBytes() (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.totalBytes, f.failTotal
 }
 
 func (f *fakeEngine) isMounted(point string) bool {

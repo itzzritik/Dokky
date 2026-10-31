@@ -45,6 +45,7 @@ type mountEngine interface {
 	TestRemote(store.Service) error
 	ListDirs(store.Service, string) ([]string, error)
 	Queue(string) ([]engine.QueueItem, error)
+	TotalBytes() (int64, error)
 }
 
 type mountState struct {
@@ -76,7 +77,7 @@ func (d *Daemon) mount(name string) error {
 	}
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
-	d.refresh()
+	_ = d.refresh()
 	if m, ok = d.findMount(byID(m.ID)); !ok {
 		return fmt.Errorf("no mount named %q", name)
 	}
@@ -182,7 +183,7 @@ func (d *Daemon) attach(m store.Mount, engineName, point string, ours bool) (str
 func (d *Daemon) unmount(name string) error {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
-	d.refresh()
+	_ = d.refresh()
 	m, ok := d.findMount(byName(name))
 	if !ok {
 		return fmt.Errorf("no mount named %q", name)
@@ -252,10 +253,32 @@ func (d *Daemon) clearPoint(point string) error {
 	return fmt.Errorf("%s is still mounted and could not be force-unmounted", point)
 }
 
-func (d *Daemon) refresh() {
-	if err := d.refreshStats(); err != nil {
+func (d *Daemon) refresh() error {
+	err := d.refreshStats()
+	if err != nil {
 		d.log.Warn("mount stats", "err", err)
 	}
+	return err
+}
+
+func (d *Daemon) observeIdle(now time.Time, statsErr error) {
+	if statsErr != nil {
+		d.idle.Unknown()
+		return
+	}
+	total, err := d.eng.TotalBytes()
+	if err != nil {
+		d.log.Warn("total bytes", "err", err)
+		d.idle.Unknown()
+		return
+	}
+	d.mu.Lock()
+	uploads := 0
+	for _, s := range d.stats {
+		uploads += s.UploadsQueued + s.UploadsInProgress
+	}
+	d.mu.Unlock()
+	d.idle.Observe(now, uploads, total)
 }
 
 func (d *Daemon) refreshStats() error {
