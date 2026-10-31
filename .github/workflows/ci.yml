@@ -47,6 +47,13 @@ jobs:
           cache-dependency-path: cli/go.sum
       - if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y fuse3
+      - if: matrix.os == 'ubuntu-latest'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/package.json
+      - if: matrix.os == 'ubuntu-latest'
+        run: bun install --frozen-lockfile
+        working-directory: web
       - if: matrix.os == 'windows-latest'
         run: choco install winfsp -y
       - run: go test -tags "${{ matrix.tags }}" ./e2e -count=1 -timeout 30m

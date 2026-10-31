@@ -121,6 +121,10 @@ func ipcCall(method string, params, result any) error {
 	if err != nil {
 		return err
 	}
+	return ipcAt(state, method, params, result)
+}
+
+func ipcAt(state, method string, params, result any) error {
 	c, err := ipc.Connect(state)
 	if err != nil {
 		return err
