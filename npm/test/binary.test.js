@@ -70,6 +70,16 @@ test("upgrades an older binary", async () => {
   assert.equal(fs.readFileSync(binaryPath(home, "linux"), "utf8"), "z");
 });
 
+test("a pin from dokky update --to keeps the installed binary", async () => {
+  const home = tmp();
+  await ensureBinary(args(home, { pkg: pkgFor("y", "1.0.0"), fetchImpl: fakeFetch("y") }));
+  fs.writeFileSync(path.join(stateDir({ env: {}, home, platform: "linux" }), "pin"), "1.0.0");
+  const calls = [];
+  await ensureBinary(args(home, { pkg: pkgFor("z", "1.1.0"), fetchImpl: fakeFetch("z", calls) }));
+  assert.equal(calls.length, 0);
+  assert.equal(fs.readFileSync(binaryPath(home, "linux"), "utf8"), "y");
+});
+
 test("rejects clearly when no binary for the platform", async () => {
   const pkg = { version: "0.0.1", dokky: { binaries: {} } };
   await assert.rejects(ensureBinary(args(tmp(), { pkg, fetchImpl: fakeFetch("") })), /no binary for linux\/x64/);

@@ -45,7 +45,8 @@ async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetc
   const bin = binaryPath(home, platform);
   const dir = stateDir({ env, home, platform });
   const have = installedVersion(dir);
-  if (have && fs.existsSync(bin) && cmp(have, pkg.version) >= 0) return bin;
+  const pinned = fs.existsSync(path.join(dir, "pin"));
+  if (fs.existsSync(bin) && (pinned || (have && cmp(have, pkg.version) >= 0))) return bin;
 
   const key = platformKey(platform, arch);
   const entry = key && pkg.dokky && pkg.dokky.binaries && pkg.dokky.binaries[key];

@@ -78,6 +78,7 @@ func TestLoadMissingIsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Local)
 	require.Empty(t, got.Services)
+	require.True(t, got.Settings.AutoUpdate)
 }
 
 func TestFileIsNotPlaintext(t *testing.T) {

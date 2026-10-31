@@ -217,6 +217,9 @@ func (d *Daemon) settings() store.Settings {
 func (d *Daemon) setSettings(s store.Settings) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if err := writePin(d.upd.paths.State, s.PinnedVersion); err != nil {
+		return err
+	}
 	d.data.Settings = s
 	return d.save()
 }

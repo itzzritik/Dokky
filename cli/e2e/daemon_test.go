@@ -48,6 +48,7 @@ func daemonHome(t *testing.T) string {
 		"LocalAppData":    filepath.Join(home, "AppData", "Local"),
 		"PATH":            filepath.Join(home, ".local", "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"DOKKY_KEYRING":   "file",
+		"DOKKY_NO_UPDATE": "1",
 	} {
 		t.Setenv(k, v)
 	}

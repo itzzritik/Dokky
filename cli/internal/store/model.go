@@ -61,6 +61,10 @@ type Data struct {
 	Account  *Account              `json:"account"`
 }
 
+func Fresh() Data {
+	return Data{Local: map[string]LocalMount{}, Settings: Settings{AutoUpdate: true}}
+}
+
 func DefaultVFS() VFS {
 	return VFS{
 		CacheMode:         "full",

@@ -193,6 +193,7 @@ func newTestDaemon(t *testing.T, data store.Data) (*Daemon, *fakeEngine, *store.
 	f := newFakeEngine()
 	d := newDaemon(f, st, data, t.TempDir(), dir, slog.New(slog.DiscardHandler))
 	d.isMounted, d.forceUnmount = f.isMounted, f.forceUnmount
+	d.upd.paths.State = dir
 	return d, f, st
 }
 

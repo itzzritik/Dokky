@@ -9,6 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/coreos/go-semver v0.3.1
 	github.com/google/uuid v1.6.0
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/rclone/rclone v1.75.2
@@ -94,7 +95,6 @@ require (
 	github.com/cloudsoda/go-smb2 v0.0.0-20260701064823-d8c5600d73b8 // indirect
 	github.com/cloudsoda/sddl v0.0.0-20250224235906-926454e91efc // indirect
 	github.com/colinmarc/hdfs/v2 v2.4.0 // indirect
-	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/creasty/defaults v1.8.0 // indirect
 	github.com/cronokirby/saferith v0.33.1-0.20250226174546-1f11f94ce488 // indirect

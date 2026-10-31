@@ -77,6 +77,7 @@ type Daemon struct {
 	openURL      func(url string) error
 
 	idle   Idle
+	upd    updater
 	loop   dsync.Loop
 	syncMu sync.Mutex // one pull at a time; taken before opMu
 
@@ -160,6 +161,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 	}
 
 	d = newDaemon(eng, st, data, home, p.Cache, log)
+	d.startUpdater(p)
 	d.start()
 	defer d.shutdown()
 
@@ -180,6 +182,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 		}
 	}()
 	log.Info("daemon started", "version", buildinfo.Version)
+	d.autoUpdate(ctx, time.Now())
 
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
@@ -196,6 +199,10 @@ func Run(ctx context.Context, p Paths) (err error) {
 			return fmt.Errorf("ipc server stopped: %v", serr)
 		case <-tick.C:
 			d.tick(ctx)
+			if d.autoUpdate(ctx, time.Now()) {
+				log.Info("daemon restarting onto the new dokky", "version", installedVersion(p.State))
+				return ErrRestart
+			}
 		}
 	}
 }
@@ -346,17 +353,28 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"sync.now":       decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { d.syncNow(ctx); return nil, nil }),
 		"devices.list":   decodeCtx(func(ctx context.Context, _ struct{}) ([]dsync.Device, error) { return d.devices(ctx) }),
 		"devices.revoke": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.revokeDevice(ctx, p.ID) }),
-		// lets the reply out before shutdown closes the connection
+		"update": decodeCtx(func(ctx context.Context, p updateParams) (updateReply, error) {
+			r, err := d.update(ctx, p)
+			if err == nil && r.Updated {
+				requestRestart(restart)
+			}
+			return r, err
+		}),
 		"daemon.restart": func(context.Context, json.RawMessage) (any, error) {
-			time.AfterFunc(restartDelay, func() {
-				select {
-				case restart <- struct{}{}:
-				default:
-				}
-			})
+			requestRestart(restart)
 			return nil, nil
 		},
 	}
+}
+
+// lets the reply out before shutdown closes the connection
+func requestRestart(restart chan<- struct{}) {
+	time.AfterFunc(restartDelay, func() {
+		select {
+		case restart <- struct{}{}:
+		default:
+		}
+	})
 }
 
 func (d *Daemon) status() StatusReply {

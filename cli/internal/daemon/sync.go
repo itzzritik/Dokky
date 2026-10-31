@@ -160,7 +160,8 @@ func (d *Daemon) note(err error) bool {
 		d.log.Warn("this device was removed from the account, wiping it")
 		return true
 	case errors.Is(err, dsync.ErrUpgrade):
-		d.log.Warn("the dokky server needs a newer version", "err", err)
+		d.log.Warn("the dokky server needs a newer version, checking for one", "err", err)
+		d.upd.upgrade.Store(true)
 	default:
 		d.log.Warn("dokky server", "err", err)
 	}
@@ -252,8 +253,8 @@ func (d *Daemon) clearCache() error {
 func (d *Daemon) forget() error {
 	d.mu.Lock()
 	services := d.data.Services
-	err := d.st.Delete()
-	d.data = store.Data{Local: map[string]store.LocalMount{}}
+	err := errors.Join(d.st.Delete(), writePin(d.upd.paths.State, ""))
+	d.data = store.Fresh()
 	d.states, d.edits = map[string]*mountState{}, map[string]string{}
 	d.flow, d.clashes = nil, nil
 	d.offline, d.signedOut = false, false

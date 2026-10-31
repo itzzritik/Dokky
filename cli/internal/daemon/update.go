@@ -1,0 +1,358 @@
+package daemon
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coreos/go-semver/semver"
+	"github.com/itzzritik/dokky/cli/internal/buildinfo"
+	"github.com/itzzritik/dokky/cli/internal/store"
+)
+
+const (
+	lookupTimeout   = 20 * time.Second
+	downloadTimeout = 15 * time.Minute
+	selftestTimeout = time.Minute
+	maxMeta         = 1 << 20
+	maxBinary       = 200 << 20
+	checkTicks      = int(6 * time.Hour / tickInterval)
+)
+
+var (
+	registry    = "https://registry.npmjs.org"
+	releaseBase = "https://github.com/itzzritik/dokky/releases/download/"
+	executable  = os.Executable
+	rename      = os.Rename
+	runSelftest = func(ctx context.Context, bin, state string) error {
+		ctx, cancel := context.WithTimeout(ctx, selftestTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "selftest", "--state", state)
+		cmd.WaitDelay = time.Second
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("the new dokky failed its selftest: %w: %s", err, bytes.TrimSpace(out))
+		}
+		return nil
+	}
+)
+
+type Release struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+	SHA256  string `json:"sha256"`
+}
+
+type updater struct {
+	mu      sync.Mutex
+	paths   Paths
+	blocked string // decided at start: after a swap, Linux reports the running exe as dokky.old
+	upgrade atomic.Bool
+	ticks   int
+	off     string
+}
+
+type updateParams struct {
+	To string `json:"to"`
+}
+
+type updateReply struct {
+	Version string `json:"version"`
+	Updated bool   `json:"updated"`
+}
+
+func Latest(ctx context.Context, hc *http.Client, version, key string) (Release, error) {
+	if version != "latest" && !valid(version) {
+		return Release{}, fmt.Errorf("%q is not a dokky version", version)
+	}
+	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	res, err := get(ctx, hc, registry+"/dokky/"+version)
+	if err != nil {
+		return Release{}, fmt.Errorf("npm registry: %w", err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxMeta+1))
+	if err == nil && len(body) > maxMeta {
+		err = errors.New("reply too large")
+	}
+	var doc struct {
+		Version string `json:"version"`
+		Dokky   struct {
+			Binaries map[string]Release `json:"binaries"`
+		} `json:"dokky"`
+	}
+	if err == nil {
+		err = json.Unmarshal(body, &doc)
+	}
+	if err != nil {
+		return Release{}, fmt.Errorf("npm registry: %w", err)
+	}
+	if !valid(doc.Version) || version != "latest" && doc.Version != version {
+		return Release{}, fmt.Errorf("npm registry sent version %q for %s", doc.Version, version)
+	}
+	r := doc.Dokky.Binaries[key]
+	if r.URL == "" {
+		return Release{}, fmt.Errorf("dokky %s has no binary for %s", doc.Version, key)
+	}
+	if !strings.HasPrefix(r.URL, releaseBase+"v"+doc.Version+"/") {
+		return Release{}, fmt.Errorf("dokky %s: %s is not a dokky release download", doc.Version, r.URL)
+	}
+	if sum, err := hex.DecodeString(r.SHA256); err != nil || len(sum) != sha256.Size {
+		return Release{}, fmt.Errorf("dokky %s: bad sha256 %q", doc.Version, r.SHA256)
+	}
+	r.Version, r.SHA256 = doc.Version, strings.ToLower(r.SHA256)
+	return r, nil
+}
+
+func Install(ctx context.Context, r Release, p Paths) error {
+	dir := filepath.Join(p.State, "updates")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	file := filepath.Join(dir, "dokky-"+r.Version+filepath.Ext(p.Bin))
+	defer os.Remove(file)
+	if err := download(ctx, r, file); err != nil {
+		return err
+	}
+	if err := runSelftest(ctx, file, p.State); err != nil {
+		return err
+	}
+	return swap(file, r.Version, p)
+}
+
+func get(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		_ = res.Body.Close()
+		return nil, fmt.Errorf("GET %s: %s", url, res.Status)
+	}
+	return res, nil
+}
+
+func download(ctx context.Context, r Release, file string) error {
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
+	res, err := get(ctx, http.DefaultClient, r.URL)
+	if err != nil {
+		return fmt.Errorf("download dokky %s: %w", r.Version, err)
+	}
+	defer res.Body.Close()
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(res.Body, maxBinary+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	switch {
+	case err != nil:
+		return fmt.Errorf("download dokky %s: %w", r.Version, err)
+	case n > maxBinary:
+		return fmt.Errorf("download dokky %s: larger than %d MB", r.Version, maxBinary>>20)
+	case hex.EncodeToString(h.Sum(nil)) != r.SHA256:
+		return fmt.Errorf("download dokky %s: its sha256 does not match the npm registry", r.Version)
+	}
+	return os.Chmod(file, 0o755)
+}
+
+// Windows can rename a running exe but not delete it, so the old one is kept as dokky.old
+func swap(file, version string, p Paths) error {
+	old := filepath.Join(p.State, "dokky.old")
+	if err := rename(p.Bin, old); err != nil {
+		return err
+	}
+	err := rename(file, p.Bin)
+	if err == nil {
+		err = writeAtomic(p.State, "version", version)
+	}
+	if err != nil {
+		if rerr := rename(old, p.Bin); rerr != nil {
+			return fmt.Errorf("%w; putting the old dokky back also failed: %v", err, rerr)
+		}
+	}
+	return err
+}
+
+// the npm launcher leaves the binary alone while <State>/pin exists
+func writePin(state, version string) error {
+	if version != "" {
+		return writeAtomic(state, "pin", version)
+	}
+	if err := os.Remove(filepath.Join(state, "pin")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func writeAtomic(state, name, content string) error {
+	f, err := os.CreateTemp(state, name+"-*")
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(content)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), filepath.Join(state, name))
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+	}
+	return err
+}
+
+func installedVersion(state string) string {
+	b, _ := os.ReadFile(filepath.Join(state, "version"))
+	return strings.TrimSpace(string(b))
+}
+
+func valid(v string) bool {
+	_, err := semver.NewVersion(v)
+	return err == nil
+}
+
+func newer(a, than string) bool {
+	va, err := semver.NewVersion(a)
+	if err != nil {
+		return false
+	}
+	vb, err := semver.NewVersion(than)
+	return err == nil && vb.LessThan(*va)
+}
+
+func updateBlocked(bin string) string {
+	v, err := semver.NewVersion(buildinfo.Version)
+	if err != nil || strings.Contains(string(v.PreRelease), "dev") {
+		return "dev build " + buildinfo.Version
+	}
+	exe, err := executable()
+	if err != nil {
+		return "cannot find the running dokky: " + err.Error()
+	}
+	a, aerr := os.Stat(exe)
+	b, berr := os.Stat(bin)
+	if aerr != nil || berr != nil || !os.SameFile(a, b) {
+		return "running " + exe + ", not " + bin
+	}
+	return ""
+}
+
+// unblocked means the exe is Bin, so a version file that disagrees is wrong and would loop restarts
+func (d *Daemon) startUpdater(p Paths) {
+	d.upd.paths, d.upd.blocked = p, updateBlocked(p.Bin)
+	if v := installedVersion(p.State); d.upd.blocked == "" && v != buildinfo.Version {
+		d.log.Warn("the version file does not match the running dokky, fixing it", "file", v, "running", buildinfo.Version)
+		if err := writeAtomic(p.State, "version", buildinfo.Version); err != nil {
+			d.log.Error("write version file", "err", err)
+		}
+	}
+}
+
+func autoOff(s store.Settings) string {
+	switch {
+	case os.Getenv("DOKKY_NO_UPDATE") == "1":
+		return "DOKKY_NO_UPDATE=1"
+	case !s.AutoUpdate:
+		return "turned off in settings"
+	}
+	return ""
+}
+
+// true: restart onto the newer installed dokky now
+func (d *Daemon) autoUpdate(ctx context.Context, now time.Time) bool {
+	u := &d.upd
+	due := u.upgrade.Swap(false) || u.ticks%checkTicks == 0
+	u.ticks++
+	if u.blocked != "" {
+		d.updateOff(u.blocked)
+		return false
+	}
+	if newer(installedVersion(u.paths.State), buildinfo.Version) {
+		return d.idle.IsIdle(now)
+	}
+	why := autoOff(d.settings())
+	d.updateOff(why)
+	if why == "" && due && u.mu.TryLock() {
+		_, _, err := d.install(ctx, "latest")
+		u.mu.Unlock()
+		if err != nil {
+			d.log.Warn("auto update", "err", err)
+		}
+	}
+	// idle was observed before any download; the next tick decides on a fresh observation
+	return false
+}
+
+func (d *Daemon) updateOff(why string) {
+	if why != "" && why != d.upd.off {
+		d.log.Info("auto update is off", "why", why)
+	}
+	d.upd.off = why
+}
+
+func (d *Daemon) update(ctx context.Context, p updateParams) (updateReply, error) {
+	if p.To != "" && !valid(p.To) {
+		return updateReply{}, fmt.Errorf("%q is not a dokky version", p.To)
+	}
+	d.upd.mu.Lock()
+	defer d.upd.mu.Unlock()
+	v, ok, err := d.install(ctx, cmp.Or(p.To, "latest"))
+	if err != nil {
+		return updateReply{}, err
+	}
+	s := d.settings()
+	switch {
+	case p.To != "":
+		s = store.Settings{PinnedVersion: p.To}
+	case s.PinnedVersion != "":
+		s = store.Settings{AutoUpdate: true}
+	}
+	return updateReply{Version: v, Updated: ok}, d.setSettings(s)
+}
+
+// caller holds upd.mu; "latest" never installs an older or equal version
+func (d *Daemon) install(ctx context.Context, version string) (string, bool, error) {
+	r, err := Latest(ctx, http.DefaultClient, version, runtime.GOOS+"-"+runtime.GOARCH)
+	if err != nil {
+		return "", false, err
+	}
+	if version == "latest" {
+		cur := buildinfo.Version
+		if v := installedVersion(d.upd.paths.State); newer(v, cur) {
+			cur = v
+		}
+		if !newer(r.Version, cur) {
+			return cur, false, nil
+		}
+	}
+	if err := Install(ctx, r, d.upd.paths); err != nil {
+		return "", false, err
+	}
+	d.log.Info("installed dokky", "version", r.Version)
+	return r.Version, true, nil
+}

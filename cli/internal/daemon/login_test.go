@@ -678,6 +678,7 @@ func requireWiped(t *testing.T, d *Daemon, f *fakeEngine, dir string) {
 	require.Nil(t, got.Account)
 	require.Len(t, got.Services, 1)
 	require.Equal(t, "n1", got.Services[0].ID)
+	require.True(t, got.Settings.AutoUpdate)
 }
 
 func TestLogoutWaitsForUploads(t *testing.T) {

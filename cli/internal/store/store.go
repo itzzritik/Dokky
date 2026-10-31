@@ -65,7 +65,7 @@ func (s *Store) unlock() error {
 func (s *Store) Load() (Data, error) {
 	raw, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Data{Local: map[string]LocalMount{}}, nil
+		return Fresh(), nil
 	}
 	if err != nil {
 		return Data{}, err
