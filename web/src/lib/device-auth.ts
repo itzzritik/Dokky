@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import { ObjectId } from "mongodb";
-import { gte, valid } from "semver";
+import { valid } from "semver";
 import type { z } from "zod";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
@@ -154,15 +154,7 @@ export async function authDevice(
   if (device.revokedAt) {
     return apiError(401, "device_revoked", "this device was revoked");
   }
-  const min = process.env.DOKKY_MIN_VERSION;
   const version = req.headers.get("x-dokky-version") ?? "";
-  if (min && !(valid(version) && gte(version, min))) {
-    return apiError(
-      426,
-      "upgrade_required",
-      `dokky ${min} or newer is required`
-    );
-  }
   const cutoff = new Date(now.getTime() - SEEN_EVERY_MS);
   if (device.lastSeenAt <= cutoff) {
     await devices().updateOne(

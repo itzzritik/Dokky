@@ -23,7 +23,6 @@ const (
 var (
 	ErrRevoked      = errors.New("device revoked")
 	ErrUnauthorized = errors.New("unauthorized")
-	ErrUpgrade      = errors.New("upgrade required")
 	ErrNameTaken    = errors.New("name already taken")
 	ErrNotFound     = errors.New("not found")
 )
@@ -160,8 +159,6 @@ func failure(resp *http.Response, data []byte) error {
 		return fmt.Errorf("%w: %s", ErrRevoked, msg)
 	case resp.StatusCode == http.StatusUnauthorized:
 		return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
-	case resp.StatusCode == http.StatusUpgradeRequired:
-		return fmt.Errorf("%w: %s", ErrUpgrade, msg)
 	case resp.StatusCode == http.StatusConflict && code == "conflict":
 		return &ConflictError{Current: env.Current}
 	case resp.StatusCode == http.StatusConflict && code == "name_taken":

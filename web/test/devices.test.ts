@@ -21,7 +21,6 @@ beforeAll(async () => {
   (globalThis as { mongo?: unknown }).mongo = undefined;
   server = await MongoMemoryServer.create();
   process.env.MONGODB_URI = server.getUri();
-  process.env.DOKKY_MIN_VERSION = "";
   await ensureIndexes();
 }, 120_000);
 

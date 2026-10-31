@@ -15,7 +15,6 @@ import { db, ensureIndexes, mongo } from "@/lib/db";
 import { aadFor, decrypt } from "@/lib/secrets";
 
 const k1 = randomBytes(32).toString("base64");
-const k2 = randomBytes(32).toString("base64");
 
 let server: MongoMemoryServer;
 
@@ -23,9 +22,7 @@ beforeAll(async () => {
   (globalThis as { mongo?: unknown }).mongo = undefined;
   server = await MongoMemoryServer.create();
   process.env.MONGODB_URI = server.getUri();
-  process.env.DOKKY_MIN_VERSION = "";
-  process.env.DOKKY_SECRET_KEYS = JSON.stringify({ "1": k1 });
-  process.env.DOKKY_SECRET_KEY_CURRENT = "1";
+  process.env.DOKKY_SECRET_KEY = k1;
   await ensureIndexes();
 }, 120_000);
 
@@ -202,8 +199,7 @@ test("create shows up in the snapshot with secrets decrypted and stored as boxes
     .findOne({ _id: id as never });
   expect(raw).toMatchObject({ userId: user.userId, version: 1 });
   expect(raw?.updatedAt).toBeInstanceOf(Date);
-  expect(Object.keys(raw?.secrets.pass).sort()).toEqual(["c", "n", "v"]);
-  expect(raw?.secrets.pass.v).toBe(1);
+  expect(Object.keys(raw?.secrets.pass).sort()).toEqual(["c", "n"]);
   expect(decrypt(raw?.secrets.pass, aadFor(user.userId, id, "pass"))).toBe(
     "hunter2"
   );
@@ -415,33 +411,25 @@ test("token write-back keeps the later expiry both ways", async () => {
   expect(await tokenOf()).toBe("t2");
   expect(await rev(user)).toBe(afterNew);
 
-  process.env.DOKKY_SECRET_KEYS = JSON.stringify({ "1": k1, "2": k2 });
-  process.env.DOKKY_SECRET_KEY_CURRENT = "2";
-  try {
-    const later = await writeToken(user, id, {
-      field: "token",
-      value: "t3",
-      expiry: "2026-11-01T03:00:00.123456789Z",
-    });
-    expect(await later.json()).toEqual({ kept: "new" });
-    expect(await rev(user)).toBe(afterNew + 1);
-    const snap = await snapshot(user);
-    expect(snap.services[0].secrets).toEqual({ pass: "hunter2", token: "t3" });
-    expect(snap.services[0].version).toBe(3);
+  const later = await writeToken(user, id, {
+    field: "token",
+    value: "t3",
+    expiry: "2026-11-01T03:00:00.123456789Z",
+  });
+  expect(await later.json()).toEqual({ kept: "new" });
+  expect(await rev(user)).toBe(afterNew + 1);
+  const snap = await snapshot(user);
+  expect(snap.services[0].secrets).toEqual({ pass: "hunter2", token: "t3" });
+  expect(snap.services[0].version).toBe(3);
 
-    const raw = await db()
-      .collection("services")
-      .findOne({ _id: id as never });
-    expect(raw?.secrets.token.v).toBe(2);
-    expect(raw?.secrets.pass.v).toBe(1);
-    expect(raw?.tokenExpiry).toEqual({
-      token: new Date("2026-11-01T03:00:00.123Z"),
-    });
-    expect(JSON.stringify(raw)).not.toContain("t3");
-  } finally {
-    process.env.DOKKY_SECRET_KEYS = JSON.stringify({ "1": k1 });
-    process.env.DOKKY_SECRET_KEY_CURRENT = "1";
-  }
+  const raw = await db()
+    .collection("services")
+    .findOne({ _id: id as never });
+  expect(Object.keys(raw?.secrets.token).sort()).toEqual(["c", "n"]);
+  expect(raw?.tokenExpiry).toEqual({
+    token: new Date("2026-11-01T03:00:00.123Z"),
+  });
+  expect(JSON.stringify(raw)).not.toContain("t3");
 
   const fresh = await writeToken(user, id, {
     field: "refresh_token",

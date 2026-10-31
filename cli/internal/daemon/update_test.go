@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +19,6 @@ import (
 
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/store"
-	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 	"github.com/stretchr/testify/require"
 )
 
@@ -314,7 +312,6 @@ func TestAutoUpdateOff(t *testing.T) {
 			d, _ := updateDaemon(t, "0.1.0")
 			reg := newRegistry(t, "0.2.0", false)
 			off(t, d)
-			d.note(fmt.Errorf("%w: x", dsync.ErrUpgrade))
 			require.False(t, d.autoUpdate(t.Context(), t0))
 			require.Zero(t, reg.hits.Load())
 			requireOldBinaryKept(t, d.upd.paths)
@@ -411,7 +408,7 @@ func TestNewerVersionFileRestartsWhenIdle(t *testing.T) {
 	require.True(t, d.autoUpdate(t.Context(), idle))
 }
 
-func TestChecksOnStartEverySixHoursAndOnUpgrade(t *testing.T) {
+func TestChecksOnStartAndEverySixHours(t *testing.T) {
 	d, _ := updateDaemon(t, "0.1.0")
 	reg := newRegistry(t, "0.1.0", false)
 	for range checkTicks {
@@ -420,8 +417,4 @@ func TestChecksOnStartEverySixHoursAndOnUpgrade(t *testing.T) {
 	require.EqualValues(t, 1, reg.hits.Load())
 	d.autoUpdate(t.Context(), t0)
 	require.EqualValues(t, 2, reg.hits.Load())
-
-	d.note(fmt.Errorf("%w: needs 0.2.0", dsync.ErrUpgrade))
-	d.autoUpdate(t.Context(), t0)
-	require.EqualValues(t, 3, reg.hits.Load())
 }

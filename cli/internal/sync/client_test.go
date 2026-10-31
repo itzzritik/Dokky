@@ -132,7 +132,6 @@ func TestErrorMapping(t *testing.T) {
 	}{
 		{"revoked", 401, "device_revoked", ErrRevoked},
 		{"unauthorized", 401, "unauthorized", ErrUnauthorized},
-		{"upgrade", 426, "upgrade_required", ErrUpgrade},
 		{"name taken", 409, "name_taken", ErrNameTaken},
 		{"not found", 404, "not_found", ErrNotFound},
 	}

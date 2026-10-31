@@ -159,9 +159,6 @@ func (d *Daemon) note(err error) bool {
 	case errors.Is(err, dsync.ErrRevoked):
 		d.log.Warn("this device was removed from the account, wiping it")
 		return true
-	case errors.Is(err, dsync.ErrUpgrade):
-		d.log.Warn("the dokky server needs a newer version, checking for one", "err", err)
-		d.upd.upgrade.Store(true)
 	default:
 		d.log.Warn("dokky server", "err", err)
 	}
@@ -179,8 +176,6 @@ func coded(err error) error {
 		return &codedError{"revoked", "this device was removed from your dokky account, so dokky wiped it"}
 	case errors.Is(err, dsync.ErrUnauthorized):
 		return &codedError{"signed_out", "signed out on the server: run dokky logout, then dokky login"}
-	case errors.Is(err, dsync.ErrUpgrade):
-		return &codedError{"upgrade_required", "the dokky server needs a newer dokky"}
 	case errors.Is(err, dsync.ErrNameTaken):
 		return &codedError{"name_taken", "that name is already used in your dokky account"}
 	case dsync.Offline(err):

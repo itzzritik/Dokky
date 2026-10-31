@@ -51,11 +51,7 @@ const next = spawn(
       AUTH_GITHUB_SECRET: "e2e",
       AUTH_URL: api,
       AUTH_TRUST_HOST: "true",
-      DOKKY_SECRET_KEYS: JSON.stringify({
-        "1": randomBytes(32).toString("base64"),
-      }),
-      DOKKY_SECRET_KEY_CURRENT: "1",
-      DOKKY_MIN_VERSION: "",
+      DOKKY_SECRET_KEY: randomBytes(32).toString("base64"),
       NEXT_TELEMETRY_DISABLED: "1",
     },
     stdin: "ignore",

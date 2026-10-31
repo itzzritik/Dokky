@@ -17,7 +17,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -61,7 +60,6 @@ type updater struct {
 	mu      sync.Mutex
 	paths   Paths
 	blocked string // decided at start: after a swap, Linux reports the running exe as dokky.old
-	upgrade atomic.Bool
 	ticks   int
 	off     string
 }
@@ -286,7 +284,7 @@ func autoOff(s store.Settings) string {
 // true: restart onto the newer installed dokky now
 func (d *Daemon) autoUpdate(ctx context.Context, now time.Time) bool {
 	u := &d.upd
-	due := u.upgrade.Swap(false) || u.ticks%checkTicks == 0
+	due := u.ticks%checkTicks == 0
 	u.ticks++
 	if u.blocked != "" {
 		d.updateOff(u.blocked)

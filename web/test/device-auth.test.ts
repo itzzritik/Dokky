@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { db, ensureIndexes, mongo } from "@/lib/db";
@@ -16,10 +16,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await mongo().close();
   await server.stop();
-});
-
-beforeEach(() => {
-  process.env.DOKKY_MIN_VERSION = "";
 });
 
 const t0 = new Date("2026-10-31T10:00:00Z");
@@ -101,39 +97,14 @@ test("a revoked device gets device_revoked", async () => {
   expect(body.error.code).toBe("device_revoked");
 });
 
-test("revoked wins over an old version", async () => {
-  process.env.DOKKY_MIN_VERSION = "1.0.0";
-  const { token } = await seed({ revokedAt: minutes(1) });
-  const { body } = await errorOf(
-    await authDevice(bearer(token, "0.1.0"), minutes(2))
-  );
-  expect(body.error.code).toBe("device_revoked");
-});
-
-test("a version below DOKKY_MIN_VERSION gets 426", async () => {
+test("an old or missing version is never refused", async () => {
   const { token } = await seed();
-  process.env.DOKKY_MIN_VERSION = "0.2.0";
-  for (const version of ["0.1.9", "0.2.0-rc.1", "", "garbage"]) {
+  for (const version of ["0.0.1", "", "garbage"]) {
     // biome-ignore lint/performance/noAwaitInLoops: one case at a time
-    const { status, body } = await errorOf(
-      await authDevice(bearer(token, version), minutes(1))
-    );
-    expect(status).toBe(426);
-    expect(body.error.code).toBe("upgrade_required");
-  }
-  const noHeader = request({ authorization: `Bearer ${token}` });
-  expect((await errorOf(await authDevice(noHeader))).status).toBe(426);
-
-  const allowed = await Promise.all(
-    ["0.2.0", "0.10.0", "v1.0.0"].map((v) =>
-      authDevice(bearer(token, v), minutes(1))
-    )
-  );
-  for (const result of allowed) {
+    const result = await authDevice(bearer(token, version), minutes(1));
     expect(result).not.toBeInstanceOf(Response);
   }
-
-  process.env.DOKKY_MIN_VERSION = "";
+  const noHeader = request({ authorization: `Bearer ${token}` });
   expect(await authDevice(noHeader)).not.toBeInstanceOf(Response);
 });
 
