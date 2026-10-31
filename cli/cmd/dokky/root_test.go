@@ -8,6 +8,9 @@ import (
 )
 
 func TestVersionFlag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("PATH", "/usr/bin:/bin")
 	var out bytes.Buffer
 	cmd := newRootCmd()
 	cmd.SetOut(&out)
