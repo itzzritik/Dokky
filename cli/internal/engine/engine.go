@@ -40,7 +40,12 @@ type Engine struct {
 	mounted  map[string]liveMount
 }
 
-type liveMount struct{ fs, point, serviceID string }
+type liveMount struct {
+	fs, point, serviceID string
+	onUnmount            func()
+}
+
+var takeUnmountHook = func(*Engine) func() { return nil }
 
 type MountStats struct {
 	Name                             string
@@ -119,7 +124,7 @@ func (e *Engine) Mount(m store.Mount, mountPoint string) (string, error) {
 		return "", err
 	}
 	e.mu.Lock()
-	e.mounted[m.Name] = liveMount{fs: fsName, point: out.MountPoint, serviceID: m.ServiceID}
+	e.mounted[m.Name] = liveMount{fs: fsName, point: out.MountPoint, serviceID: m.ServiceID, onUnmount: takeUnmountHook(e)}
 	e.mu.Unlock()
 	return out.MountPoint, nil
 }

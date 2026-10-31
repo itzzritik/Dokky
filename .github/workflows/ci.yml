@@ -24,6 +24,33 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            tags: e2e
+          - os: ubuntu-latest
+            tags: e2e
+          - os: windows-latest
+            tags: e2e cmount
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y fuse3
+      - if: matrix.os == 'windows-latest'
+        run: choco install winfsp -y
+      - run: go test -tags "${{ matrix.tags }}" ./e2e -count=1 -timeout 30m
+
   lint:
     runs-on: ubuntu-latest
     steps:
