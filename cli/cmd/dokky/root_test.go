@@ -43,9 +43,9 @@ func cliHome(t *testing.T) {
 	t.Setenv("LocalAppData", filepath.Join(home, "AppData", "Local"))
 }
 
-func TestCallWithoutDaemon(t *testing.T) {
+func TestCallWithoutDaemonOrBinary(t *testing.T) {
 	cliHome(t)
-	require.ErrorIs(t, call("status", nil, nil), errNotRunning)
+	require.ErrorContains(t, call("status", nil, nil), "npm i -g dokky")
 }
 
 func TestCallRestartsOnProtocolMismatch(t *testing.T) {
