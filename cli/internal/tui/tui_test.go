@@ -311,3 +311,46 @@ func TestServiceSaveConflictEndsFlow(t *testing.T) {
 	require.Len(t, f.called("sync.now"), 2, "the newer copy is pulled right away")
 	require.Len(t, f.called("service.list"), 3, "on open, on the tab and after the conflict")
 }
+
+func TestFeaturedFirst(t *testing.T) {
+	var ps []engine.Provider
+	for _, ty := range []string{"b2", "mega", "sftp", "alias", "drive", "webdav", "smb", "dropbox", "onedrive"} {
+		ps = append(ps, engine.Provider{Type: ty, Description: ty + " desc"})
+	}
+	var got []string
+	for _, p := range featuredFirst(ps) {
+		got = append(got, p.Type)
+	}
+	require.Equal(t, append(append([]string{}, engine.Featured...), "b2", "alias"), got)
+
+	f := newFake(daemon.StatusReply{})
+	f.replies["providers"] = ps
+	m := press(start(f), "tab", "a")
+	v := view(m)
+	last := -1
+	for _, ty := range engine.Featured {
+		i := strings.Index(v, "("+ty+")")
+		require.Greater(t, i, last, ty)
+		last = i
+		require.Contains(t, v[i:], ": ")
+	}
+	require.Contains(t, v, "Files in your Google account")
+	m = press(m, "/", "b2")
+	v = view(m)
+	require.Contains(t, v, "(b2)")
+	require.NotContains(t, v, "(smb)")
+}
+
+func TestDriveClientIDIsAdvancedWithOwnClientHelp(t *testing.T) {
+	f := newFake(daemon.StatusReply{})
+	f.replies["providers"] = []engine.Provider{{Type: "drive", Description: "Google Drive", Options: []engine.Option{
+		{Name: "client_id", Help: "Google Application Client Id", Type: "string"},
+		{Name: "client_secret", Help: "OAuth Client Secret.", Type: "string", Secret: true},
+	}}}
+	m := press(start(f), "tab", "a", "enter")
+	v := view(m)
+	require.NotContains(t, v, "client id")
+	require.Contains(t, v, "Show advanced options?")
+	require.Contains(t, ownClientHelp, "being retired during 2026")
+	require.Contains(t, ownClientHelp, "https://rclone.org/drive/#making-your-own-client-id")
+}

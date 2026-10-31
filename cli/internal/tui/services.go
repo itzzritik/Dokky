@@ -257,12 +257,36 @@ func (a *app) afterProviders() tea.Cmd {
 	s := &a.svc
 	var opts []huh.Option[string]
 	for _, p := range featuredFirst(s.providers) {
-		opts = append(opts, huh.NewOption(fmt.Sprintf("%s (%s)", p.Description, p.Type), p.Type))
+		label := fmt.Sprintf("%s (%s)", p.Description, p.Type)
+		if h := featuredHelp[p.Type]; h != "" {
+			label += ": " + h
+		}
+		opts = append(opts, huh.NewOption(label, p.Type))
 	}
 	sel := huh.NewSelect[string]().Title("Service type").Description("Type / to search every type").
 		Options(opts...).Value(&s.flow.typ).Height(max(a.height-12, 5))
 	s.form, s.mode = a.newForm(huh.NewGroup(sel)), svcPickType
 	return s.form.Init()
+}
+
+var featuredHelp = map[string]string{
+	"drive":    "Files in your Google account",
+	"smb":      "A shared folder on a NAS or Windows PC",
+	"webdav":   "Nextcloud, ownCloud and other WebDAV servers",
+	"sftp":     "Any server you can reach over SSH",
+	"onedrive": "Files in your Microsoft account",
+	"dropbox":  "Files in your Dropbox account",
+	"mega":     "Files in your Mega account",
+}
+
+const ownClientHelp = "Use your own Google client ID (recommended). rclone's shared Google Drive client ID is being retired during 2026. How to make one: https://rclone.org/drive/#making-your-own-client-id"
+
+func driveOwnClient(o engine.Option) engine.Option {
+	if o.Name == "client_id" || o.Name == "client_secret" {
+		o.Advanced, o.Required = true, false
+		o.Help = ownClientHelp
+	}
+	return o
 }
 
 func featuredFirst(ps []engine.Provider) []engine.Provider {
@@ -294,6 +318,9 @@ func (a *app) openOptions() tea.Cmd {
 		for _, o := range f.provider.Options {
 			if o.Hide {
 				continue
+			}
+			if f.typ == "drive" {
+				o = driveOwnClient(o)
 			}
 			fl := &field{opt: o, s: o.Default}
 			if f.base != nil {
