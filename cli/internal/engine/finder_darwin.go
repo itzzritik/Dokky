@@ -26,6 +26,7 @@ import (
 	"github.com/rclone/rclone/vfs"
 	gonfs "github.com/willscott/go-nfs"
 	"github.com/willscott/go-nfs/file"
+	"golang.org/x/sys/unix"
 )
 
 //go:embed assets/dokky.icns
@@ -80,12 +81,13 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 		if gone.Load() {
 			return nil
 		}
-		out, err := exec.Command("diskutil", "umount", "force", mountpoint).CombinedOutput()
+		// not diskutil: it reads the volume, and macOS then asks for network volume access on dokky's behalf
+		err := unix.Unmount(mountpoint, unix.MNT_FORCE)
 		gone.Store(err == nil)
 		_ = l.Close()
 		VFS.Shutdown()
 		if err != nil {
-			return fmt.Errorf("%s: failed to unmount NFS volume: %w", bytes.TrimSpace(out), err)
+			return fmt.Errorf("failed to unmount NFS volume: %w", err)
 		}
 		return nil
 	}
