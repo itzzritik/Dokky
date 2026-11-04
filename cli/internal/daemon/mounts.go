@@ -126,7 +126,8 @@ func (d *Daemon) mountLocked(m store.Mount) error {
 	}
 	point := d.mountPoint(m)
 	for id, other := range d.states {
-		if id != m.ID && other.name != "" && other.point == point {
+		// "*" lets Windows pick a free drive letter for each mount
+		if id != m.ID && other.name != "" && other.point == point && point != "*" {
 			d.mu.Unlock()
 			return fmt.Errorf("mount point %s is used by %s", point, other.name)
 		}

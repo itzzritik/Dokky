@@ -113,8 +113,14 @@ func startAPI(t *testing.T) (api, helper string) {
 	go func() {
 		defer close(ready)
 		sc := bufio.NewScanner(stdout)
-		if sc.Scan() {
-			ready <- bytes.Clone(sc.Bytes())
+		for sc.Scan() {
+			// a fresh machine first prints mongodb-memory-server's download progress
+			if line := sc.Bytes(); bytes.HasPrefix(line, []byte("{")) {
+				ready <- bytes.Clone(line)
+				break
+			}
+		}
+		for sc.Scan() {
 		}
 	}()
 	t.Cleanup(func() {

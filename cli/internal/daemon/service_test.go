@@ -93,7 +93,7 @@ func TestRefreshServiceFileOnlyWhenStale(t *testing.T) {
 	restart, _ = refreshServiceFile(bin)
 	require.False(t, restart)
 	current, installed = false, false
-	refreshServiceFile(bin)
+	_, _ = refreshServiceFile(bin)
 	installed = true
 	_, _ = refreshServiceFile(filepath.Join(t.TempDir(), "other"))
 	require.Equal(t, 1, reloads, "not installed, or not running the installed binary")

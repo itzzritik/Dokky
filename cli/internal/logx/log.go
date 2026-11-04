@@ -23,6 +23,7 @@ const (
 
 var (
 	debug = os.Getenv("DOKKY_DEBUG") != ""
+	file  *lumberjack.Logger
 
 	mu      sync.RWMutex
 	values  []string
@@ -34,6 +35,9 @@ var (
 
 func New(path string) *slog.Logger {
 	w := &lumberjack.Logger{Filename: path, MaxSize: 10, MaxBackups: 3}
+	mu.Lock()
+	file = w
+	mu.Unlock()
 	level, rlevel := slog.LevelInfo, fs.LogLevelNotice
 	if debug {
 		level, rlevel = slog.LevelDebug, fs.LogLevelDebug
@@ -45,6 +49,16 @@ func New(path string) *slog.Logger {
 	l := slog.New(h)
 	slog.SetDefault(l)
 	return l
+}
+
+func Close() error {
+	mu.RLock()
+	f := file
+	mu.RUnlock()
+	if f == nil {
+		return nil
+	}
+	return f.Close()
 }
 
 func SetSecrets(vs []string) {

@@ -870,6 +870,7 @@ func TestLoginTokenNeverInLogsOrErrors(t *testing.T) {
 		logx.SetSecrets(nil)
 	})
 	path := filepath.Join(t.TempDir(), "dokky.log")
+	t.Cleanup(func() { _ = logx.Close() })
 
 	api := newFakeAPI(t, "approved")
 	api.fail["nas"] = "rejected Bearer " + testToken

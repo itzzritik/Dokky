@@ -27,6 +27,7 @@ func newTestLogger(t *testing.T) (*slog.Logger, string) {
 		SetSecrets(nil)
 	})
 	path := filepath.Join(t.TempDir(), "dokky.log")
+	t.Cleanup(func() { _ = Close() })
 	return New(path), path
 }
 

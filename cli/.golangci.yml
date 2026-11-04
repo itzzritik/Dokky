@@ -1,0 +1,21 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - os.Remove
+        - os.RemoveAll
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*github.com/itzzritik/dokky/cli/internal/ipc.Client).Close
+        - golang.org/x/sys/windows.UnlockFileEx
+        - (golang.org/x/sys/windows/registry.Key).Close
+  exclusions:
+    rules:
+      - linters: [errcheck]
+        source: '<-(served|done):?$'

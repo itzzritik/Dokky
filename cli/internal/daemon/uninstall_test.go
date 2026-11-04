@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	npmRoot = filepath.Join(string(filepath.Separator), "usr", "local", "lib", "node_modules")
+	npmRoot = filepath.Join(filepath.VolumeName(os.TempDir())+string(filepath.Separator), "usr", "local", "lib", "node_modules")
 	npmPkg  = filepath.Join(npmRoot, "dokky")
 )
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -253,7 +254,9 @@ func TestMountMarksMountedAndSaves(t *testing.T) {
 	require.Equal(t, stateMounted, state)
 	require.True(t, load(t, st).Local["m1"].Mounted)
 	require.Equal(t, d.defaultPoint("media"), f.mounted["media"])
-	require.DirExists(t, d.defaultPoint("media"))
+	if runtime.GOOS != "windows" {
+		require.DirExists(t, d.defaultPoint("media"))
+	}
 
 	require.Error(t, d.mount("nope"))
 	require.Error(t, d.mount("Bad Name"))
@@ -326,10 +329,11 @@ func TestForeignMountIsNeverForced(t *testing.T) {
 func TestSetLocalRefusesWhileMounted(t *testing.T) {
 	d, _, st := newTestDaemon(t, sample())
 	require.NoError(t, d.mount("media"))
-	require.ErrorContains(t, d.setLocal("m1", "/elsewhere"), "unmount")
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	require.ErrorContains(t, d.setLocal("m1", other), "unmount")
 	require.NoError(t, d.unmount("media"))
-	require.NoError(t, d.setLocal("m1", "/elsewhere"))
-	require.Equal(t, "/elsewhere", load(t, st).Local["m1"].MountPoint)
+	require.NoError(t, d.setLocal("m1", other))
+	require.Equal(t, other, load(t, st).Local["m1"].MountPoint)
 	require.Error(t, d.setLocal("m1", "relative"))
 }
 
