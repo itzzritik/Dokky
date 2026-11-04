@@ -26,6 +26,14 @@ func newRootCmd() *cobra.Command {
 			if err := ensurePath(); err != nil {
 				fmt.Fprintln(os.Stderr, "dokky: could not update PATH:", err)
 			}
+			if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+				return nil
+			}
+			if state, err := platform.StateDir(); err == nil {
+				if err := platform.EnsureFinderHost(state); err != nil {
+					fmt.Fprintln(os.Stderr, "dokky: drives will show as localhost in Finder:", err)
+				}
+			}
 			return nil
 		},
 		Args:         cobra.NoArgs,

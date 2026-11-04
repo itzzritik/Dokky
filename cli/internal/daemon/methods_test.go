@@ -109,6 +109,7 @@ func TestServicePutUpdatesRedaction(t *testing.T) {
 		logx.SetSecrets(nil)
 	})
 	path := filepath.Join(t.TempDir(), "dokky.log")
+	t.Cleanup(func() { _ = logx.Close() })
 	d.log = logx.New(path)
 
 	svc := store.Service{ID: "s2", Name: "box", Type: "sftp", Options: map[string]string{"host": "nas.local", "pass": "first-pass"}}

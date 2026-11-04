@@ -86,3 +86,15 @@ func TestNoConfigFileWritten(t *testing.T) {
 	}))
 	require.Empty(t, files)
 }
+
+func TestPutServiceAddsS3Defaults(t *testing.T) {
+	mc := newMemConfig(nil)
+	mc.PutService(store.Service{ID: "s3", Type: "s3", Options: map[string]string{"provider": "Other", "chunk_size": "16M"}}, isPass)
+
+	for k, want := range map[string]string{"upload_cutoff": "8M", "upload_concurrency": "32", "chunk_size": "16M", "directory_markers": "true", "use_server_modtime": "true"} {
+		got, _ := mc.GetValue("s3", k)
+		require.Equal(t, want, got, k)
+	}
+	_, ok := mc.GetValue("svc1", "upload_cutoff")
+	require.False(t, ok)
+}

@@ -185,9 +185,9 @@ func TestNoFallbackWhenDisallowed(t *testing.T) {
 func TestDefaultVFSValues(t *testing.T) {
 	require.Equal(t, VFS{
 		CacheMode:         "full",
-		DirCacheTime:      "30s",
-		ReadAhead:         "2G",
-		ReadChunkStreams:  4,
+		DirCacheTime:      "5m",
+		ReadAhead:         "16M",
+		ReadChunkStreams:  0,
 		CacheMaxSize:      "50G",
 		CacheMaxAge:       "5m",
 		CachePollInterval: "10s",

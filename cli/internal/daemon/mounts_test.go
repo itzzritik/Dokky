@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +27,8 @@ func TestMain(m *testing.M) {
 }
 
 type fakeEngine struct {
+	notes       []string
+	cleaned     []string
 	mountEngine // methods the fake leaves out panic if called
 	mu          sync.Mutex
 	mounted     map[string]string
@@ -149,6 +153,19 @@ func (f *fakeEngine) Stats() ([]engine.MountStats, error) {
 	return out, nil
 }
 
+func (f *fakeEngine) CleanupUploads(serviceID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleaned = append(f.cleaned, serviceID)
+	return nil
+}
+
+func (f *fakeEngine) cleanups() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.cleaned)
+}
+
 func (f *fakeEngine) TotalBytes() (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -197,8 +214,20 @@ func newTestDaemon(t *testing.T, data store.Data) (*Daemon, *fakeEngine, *store.
 	f := newFakeEngine()
 	d := newDaemon(f, st, data, t.TempDir(), dir, slog.New(slog.DiscardHandler))
 	d.isMounted, d.forceUnmount = f.isMounted, f.forceUnmount
+	d.notify = func(_, body string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.notes = append(f.notes, body)
+		return nil
+	}
 	d.upd.paths.State = dir
 	return d, f, st
+}
+
+func (f *fakeEngine) notices() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.notes)
 }
 
 func load(t *testing.T, st *store.Store) store.Data {
@@ -225,7 +254,9 @@ func TestMountMarksMountedAndSaves(t *testing.T) {
 	require.Equal(t, stateMounted, state)
 	require.True(t, load(t, st).Local["m1"].Mounted)
 	require.Equal(t, d.defaultPoint("media"), f.mounted["media"])
-	require.DirExists(t, d.defaultPoint("media"))
+	if runtime.GOOS != "windows" {
+		require.DirExists(t, d.defaultPoint("media"))
+	}
 
 	require.Error(t, d.mount("nope"))
 	require.Error(t, d.mount("Bad Name"))
@@ -290,7 +321,7 @@ func TestForeignMountIsNeverForced(t *testing.T) {
 
 	require.ErrorContains(t, d.mount("media"), "already in use")
 	require.NoError(t, d.unmount("media"))
-	require.NoError(t, d.deleteMount(context.Background(), "m1"))
+	require.NoError(t, d.deleteMount(context.Background(), "m1", false))
 	require.Empty(t, f.forced)
 	require.DirExists(t, other)
 }
@@ -298,10 +329,11 @@ func TestForeignMountIsNeverForced(t *testing.T) {
 func TestSetLocalRefusesWhileMounted(t *testing.T) {
 	d, _, st := newTestDaemon(t, sample())
 	require.NoError(t, d.mount("media"))
-	require.ErrorContains(t, d.setLocal("m1", "/elsewhere"), "unmount")
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	require.ErrorContains(t, d.setLocal("m1", other), "unmount")
 	require.NoError(t, d.unmount("media"))
-	require.NoError(t, d.setLocal("m1", "/elsewhere"))
-	require.Equal(t, "/elsewhere", load(t, st).Local["m1"].MountPoint)
+	require.NoError(t, d.setLocal("m1", other))
+	require.Equal(t, other, load(t, st).Local["m1"].MountPoint)
 	require.Error(t, d.setLocal("m1", "relative"))
 }
 
@@ -414,12 +446,24 @@ func TestRemountRightAfterUnmountWaits(t *testing.T) {
 func TestTickReapsEjectedMount(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
 	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("docs"))
 	require.NoError(t, f.Unmount("media"))
+	require.NoError(t, f.Unmount("docs"))
 	d.tick(context.Background())
-	state, _ := stateOf(d, "m1")
-	require.Equal(t, stateUnmounted, state)
-	require.False(t, load(t, st).Local["m1"].Mounted)
+	for _, id := range []string{"m1", "m2"} {
+		state, _ := stateOf(d, id)
+		require.Equal(t, stateUnmounted, state)
+		require.False(t, load(t, st).Local[id].Mounted)
+	}
+	require.Eventually(t, func() bool { return len(f.notices()) == 1 }, time.Second, 5*time.Millisecond)
+	require.Contains(t, f.notices()[0], "Docs, Media")
+	require.Contains(t, f.notices()[0], "Open dokky to mount")
+
 	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.unmount("media"))
+	d.tick(context.Background())
+	time.Sleep(20 * time.Millisecond)
+	require.Len(t, f.notices(), 1, "unmounting from dokky is not an eject")
 }
 
 func TestServiceDeleteUnmountsItsMounts(t *testing.T) {
@@ -479,4 +523,22 @@ func TestMountPutCacheMaxAge(t *testing.T) {
 	require.NoError(t, d.mount("media"))
 	require.False(t, d.mountStatus("media").RemountToApply)
 	require.ErrorContains(t, call(t, d, "mount.get", idParams{ID: "nope"}, nil), "no mount")
+}
+
+func TestCleansS3UploadsDaily(t *testing.T) {
+	data := sample()
+	data.Services = append(data.Services, store.Service{ID: "s3", Name: "nas3", Type: "s3"})
+	d, f, _ := newTestDaemon(t, data)
+	t0 := time.Now()
+
+	d.cleanupUploads(t0)
+	require.Eventually(t, func() bool { return len(f.cleanups()) == 1 }, time.Second, 5*time.Millisecond)
+	require.Equal(t, []string{"s3"}, f.cleanups(), "only S3 services")
+
+	d.cleanupUploads(t0.Add(23 * time.Hour))
+	time.Sleep(20 * time.Millisecond)
+	require.Len(t, f.cleanups(), 1, "at most once a day")
+
+	d.cleanupUploads(t0.Add(25 * time.Hour))
+	require.Eventually(t, func() bool { return len(f.cleanups()) == 2 }, time.Second, 5*time.Millisecond)
 }

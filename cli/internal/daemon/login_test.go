@@ -550,6 +550,26 @@ func TestUnsentUploadsByMount(t *testing.T) {
 	require.Empty(t, got)
 }
 
+func TestDeleteMountRefusesUnsentUploads(t *testing.T) {
+	data := sample()
+	data.Mounts[1].RemotePath = "/Work/docs"
+	d, _, _ := newTestDaemon(t, data)
+	writeMeta(t, d, "s1/Work/docs/report.pdf", true)
+
+	err := d.deleteMount(context.Background(), "m2", false)
+	var ce *codedError
+	require.ErrorAs(t, err, &ce)
+	require.Equal(t, "unsent", ce.Code())
+	require.ErrorContains(t, err, "1 files on docs are not uploaded yet")
+	_, ok := d.findMount(byID("m2"))
+	require.True(t, ok)
+
+	require.NoError(t, d.deleteMount(context.Background(), "m1", false), "media has nothing unsent")
+	require.NoError(t, d.deleteMount(context.Background(), "m2", true))
+	_, ok = d.findMount(byID("m2"))
+	require.False(t, ok)
+}
+
 func TestLogoutRefusesPausedUploads(t *testing.T) {
 	api := newFakeAPI(t, "approved")
 	data := loggedIn(api.srv.URL)
@@ -850,6 +870,7 @@ func TestLoginTokenNeverInLogsOrErrors(t *testing.T) {
 		logx.SetSecrets(nil)
 	})
 	path := filepath.Join(t.TempDir(), "dokky.log")
+	t.Cleanup(func() { _ = logx.Close() })
 
 	api := newFakeAPI(t, "approved")
 	api.fail["nas"] = "rejected Bearer " + testToken

@@ -21,14 +21,21 @@ func TestValidName(t *testing.T) {
 }
 
 func TestDefaultMountPoint(t *testing.T) {
-	require.Equal(t, filepath.Join("/h", "dokky", "nas"), DefaultMountPoint("/h", "nas", "darwin"))
-	require.Equal(t, filepath.Join("/h", "dokky", "nas"), DefaultMountPoint("/h", "nas", "linux"))
+	require.Equal(t, filepath.Join("/h", "dokky", "Nas"), DefaultMountPoint("/h", "nas", "darwin"))
+	require.Equal(t, filepath.Join("/h", "dokky", "Google Drive"), DefaultMountPoint("/h", "google-drive", "linux"))
+	require.Equal(t, "Jarvis", Label("jarvis"))
+	require.Equal(t, "My 2 Nas", Label("my-2-nas"))
 	require.Equal(t, "*", DefaultMountPoint(`C:\Users\r`, "nas", "windows"))
 }
 
 func TestPrepareMountPointCreates(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "dokky", "nas")
 	require.NoError(t, PrepareMountPoint(p))
+	if runtime.GOOS == "windows" {
+		require.DirExists(t, filepath.Dir(p))
+		require.NoDirExists(t, p, "WinFsp creates the mount folder itself")
+		return
+	}
 	st, err := os.Stat(p)
 	require.NoError(t, err)
 	require.True(t, st.IsDir())

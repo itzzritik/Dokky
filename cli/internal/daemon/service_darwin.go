@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -104,3 +105,17 @@ func unregisterService() error {
 }
 
 func deleteAfterExit([]string, string) error { return nil }
+
+// launchd kills the job's process group on bootout, so the reload runs in its own session
+func refreshService(bin string) (bool, error) {
+	path, err := plistPath()
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(path, []byte(RenderService(bin)), 0o644); err != nil {
+		return false, err
+	}
+	cmd := exec.Command("/bin/sh", "-c", `sleep 1; launchctl bootout "$1"; launchctl bootstrap "$2" "$3"`, "sh", domain()+"/"+launchdLabel, domain(), path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return false, cmd.Start()
+}

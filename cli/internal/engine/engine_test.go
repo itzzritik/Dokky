@@ -39,7 +39,12 @@ func TestStartStop(t *testing.T) {
 	t.Cleanup(e.Stop)
 	require.Same(t, e.mem, config.Data())
 	require.Equal(t, filepath.Join(dir, "rclone.conf"), config.GetConfigPath())
-	require.Equal(t, 4, fs.GetConfig(context.Background()).Transfers)
+	ci := fs.GetConfig(context.Background())
+	require.Equal(t, 4, ci.Transfers)
+	require.True(t, ci.DisableHTTP2, "each stream needs its own TCP connection")
+	require.Equal(t, fs.Duration(30*time.Second), ci.Timeout)
+	require.Equal(t, fs.Duration(10*time.Second), ci.ConnectTimeout)
+	require.Equal(t, fs.SizeSuffix(512*fs.Mebi), ci.MaxBufferMemory)
 
 	_, err = Start(t.TempDir(), nil)
 	require.ErrorContains(t, err, "already running")

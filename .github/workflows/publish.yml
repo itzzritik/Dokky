@@ -74,7 +74,8 @@ jobs:
         run: |
           EXT=""; TAGS=""
           if [ "$GOOS" = windows ]; then EXT=".exe"; TAGS="cmount"; fi
-          go build -trimpath -tags "$TAGS" \
+          OVERLAY=$(GOOS= GOARCH= GOFLAGS= go run _patches/overlay.go)
+          go build -trimpath "$OVERLAY" -tags "$TAGS" \
             -ldflags "-s -w -X github.com/itzzritik/dokky/cli/internal/buildinfo.Version=$VERSION" \
             -o "../dokky-$GOOS-$GOARCH$EXT" ./cmd/dokky
 

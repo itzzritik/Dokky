@@ -42,7 +42,11 @@ type Engine struct {
 	stopped  bool
 	mu       sync.Mutex
 	mounted  map[string]liveMount
+	ejected  chan struct{}
 }
+
+// fires when the OS unmounts a mount behind dokky's back, e.g. a Finder eject
+func (e *Engine) Ejected() <-chan struct{} { return e.ejected }
 
 type liveMount struct {
 	fs, point, serviceID string
@@ -93,10 +97,17 @@ func Start(cacheDir string, onToken func(serviceID, token string)) (e *Engine, e
 	if err := config.SetCacheDir(cacheDir); err != nil {
 		return nil, err
 	}
-	if err := rpc("options/set", map[string]any{"main": map[string]any{"Transfers": 4}}, nil); err != nil {
+	main := map[string]any{
+		"Transfers":       4,
+		"DisableHTTP2":    true, // h2 squeezes parallel streams into one TCP connection
+		"Timeout":         "30s",
+		"ConnectTimeout":  "10s",
+		"MaxBufferMemory": "512M",
+	}
+	if err := rpc("options/set", map[string]any{"main": main}, nil); err != nil {
 		return nil, err
 	}
-	return &Engine{cacheDir: cacheDir, mem: mem, mounted: map[string]liveMount{}}, nil
+	return &Engine{cacheDir: cacheDir, mem: mem, mounted: map[string]liveMount{}, ejected: make(chan struct{}, 1)}, nil
 }
 
 func (e *Engine) PutService(s store.Service) error {
@@ -377,4 +388,8 @@ func rpc(method string, in, out any) error {
 		return nil
 	}
 	return json.Unmarshal([]byte(res), out)
+}
+
+func (e *Engine) CleanupUploads(serviceID string) error {
+	return rpc("backend/command", map[string]any{"command": "cleanup", "fs": serviceID + ":", "opt": map[string]string{"max-age": "24h"}}, nil)
 }

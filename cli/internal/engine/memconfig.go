@@ -21,8 +21,16 @@ func newMemConfig(onToken func(serviceID, token string)) *memConfig {
 	return &memConfig{data: map[string]map[string]string{}, onToken: onToken}
 }
 
+// parallel parts keep a lossy or high-latency link full; listing modtimes avoid one HEAD per file
+var backendDefaults = map[string]map[string]string{
+	"s3": {"upload_cutoff": "8M", "upload_concurrency": "32", "chunk_size": "5M", "directory_markers": "true", "use_server_modtime": "true"},
+}
+
 func (m *memConfig) PutService(s store.Service, isPassword func(typ, key string) bool) {
-	sec := map[string]string{}
+	sec := maps.Clone(backendDefaults[s.Type])
+	if sec == nil {
+		sec = map[string]string{}
+	}
 	for k, v := range s.Options {
 		sec[k] = v
 	}

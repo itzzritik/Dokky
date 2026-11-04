@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	npmRoot = filepath.Join(string(filepath.Separator), "usr", "local", "lib", "node_modules")
+	root    = filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
+	npmRoot = filepath.Join(root, "usr", "local", "lib", "node_modules")
 	npmPkg  = filepath.Join(npmRoot, "dokky")
 )
 
@@ -62,7 +63,7 @@ func TestCheckLauncherRunResetsTimer(t *testing.T) {
 
 	t.Run("new record", func(t *testing.T) {
 		var w InstallWatch
-		otherRoot := filepath.Join(string(filepath.Separator), "opt", "node", "lib", "node_modules")
+		otherRoot := filepath.Join(root, "opt", "node", "lib", "node_modules")
 		more := []string{npmPkg, filepath.Join(otherRoot, "dokky")}
 		bothDown := existsIn(npmRoot, otherRoot)
 		require.Equal(t, Keep, w.Check(t0, recs, down))
@@ -85,7 +86,7 @@ func TestCheckNodeRemovedDropsRecordNeverWipes(t *testing.T) {
 
 func TestCheckOneRecordStillPresentKeeps(t *testing.T) {
 	var w InstallWatch
-	otherRoot := filepath.Join(string(filepath.Separator), "home", "me", ".bun", "install", "global", "node_modules")
+	otherRoot := filepath.Join(root, "home", "me", ".bun", "install", "global", "node_modules")
 	otherPkg := filepath.Join(otherRoot, "dokky")
 	recs, exists := []string{npmPkg, otherPkg}, existsIn(npmRoot, otherRoot, otherPkg)
 	require.Equal(t, Keep, w.Check(t0, recs, exists))
@@ -103,7 +104,7 @@ func TestCheckOneRecordStillPresentKeeps(t *testing.T) {
 
 func TestCheckRemovalReappearingKeepsRecord(t *testing.T) {
 	var w InstallWatch
-	otherRoot := filepath.Join(string(filepath.Separator), "opt", "node", "lib", "node_modules")
+	otherRoot := filepath.Join(root, "opt", "node", "lib", "node_modules")
 	recs := []string{npmPkg, filepath.Join(otherRoot, "dokky")}
 	oneGone, both := existsIn(npmRoot, otherRoot, recs[1]), existsIn(npmRoot, npmPkg, otherRoot, recs[1])
 	require.Equal(t, Keep, w.Check(t0, recs, oneGone))
@@ -132,7 +133,7 @@ func TestCheckNoRecordsNeverWipes(t *testing.T) {
 
 func TestCheckPnpmUpdateKeeps(t *testing.T) {
 	var w InstallWatch
-	root := filepath.Join(string(filepath.Separator), "home", "me", ".local", "share", "pnpm", "global", "5", "node_modules")
+	root := filepath.Join(root, "home", "me", ".local", "share", "pnpm", "global", "5", "node_modules")
 	old := filepath.Join(root, ".pnpm", "dokky@1.0.0", "node_modules", "dokky")
 	link := filepath.Join(root, "dokky")
 	updated := existsIn(root, link)

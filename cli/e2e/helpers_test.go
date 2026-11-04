@@ -173,7 +173,9 @@ func names(t *testing.T, dir string) []string {
 	require.NoError(t, err)
 	out := make([]string, 0, len(entries))
 	for _, en := range entries {
-		out = append(out, en.Name())
+		if n := en.Name(); n != ".VolumeIcon.icns" && n != "._." {
+			out = append(out, n)
+		}
 	}
 	return out
 }

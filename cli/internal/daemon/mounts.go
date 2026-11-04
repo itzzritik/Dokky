@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/engine"
@@ -48,6 +49,7 @@ type mountEngine interface {
 	TotalBytes() (int64, error)
 	StopJobs() error
 	RemovePartials(ctx context.Context, m store.Mount, names []string) error
+	CleanupUploads(serviceID string) error
 }
 
 type mountState struct {
@@ -124,7 +126,8 @@ func (d *Daemon) mountLocked(m store.Mount) error {
 	}
 	point := d.mountPoint(m)
 	for id, other := range d.states {
-		if id != m.ID && other.name != "" && other.point == point {
+		// "*" lets Windows pick a free drive letter for each mount
+		if id != m.ID && other.name != "" && other.point == point && point != "*" {
 			d.mu.Unlock()
 			return fmt.Errorf("mount point %s is used by %s", point, other.name)
 		}
@@ -294,10 +297,10 @@ func (d *Daemon) refreshStats() error {
 	}
 	d.mu.Lock()
 	d.stats = live
-	var gone []string
+	var gone, names []string
 	for id, st := range d.states {
 		if _, ok := live[st.name]; st.state == stateMounted && !ok {
-			gone = append(gone, st.point)
+			gone, names = append(gone, st.point), append(names, engine.Label(st.name))
 			*st = mountState{state: stateUnmounted}
 			d.markUnmounted(id)
 		}
@@ -308,6 +311,14 @@ func (d *Daemon) refreshStats() error {
 		}
 	}
 	d.mu.Unlock()
+	if len(names) > 0 {
+		slices.Sort(names)
+		go func() {
+			if err := d.notify("dokky", strings.Join(names, ", ")+" ejected. Open dokky to mount again."); err != nil {
+				d.log.Warn("notify", "err", err)
+			}
+		}()
+	}
 	for _, p := range gone {
 		engine.CleanupMountPoint(p)
 	}
@@ -420,4 +431,26 @@ func run(name string, args ...string) error {
 		return fmt.Errorf("%s: %w: %s", name, err, bytes.TrimSpace(out))
 	}
 	return nil
+}
+
+const cleanupEvery = 24 * time.Hour
+
+// cancelled multipart uploads can leave their parts on the server; sweep them like an S3 lifecycle rule
+func (d *Daemon) cleanupUploads(now time.Time) {
+	d.mu.Lock()
+	var due []string
+	for _, s := range d.data.Services {
+		if s.Type == "s3" && now.Sub(d.cleaned[s.ID]) >= cleanupEvery {
+			d.cleaned[s.ID] = now
+			due = append(due, s.ID)
+		}
+	}
+	d.mu.Unlock()
+	for _, id := range due {
+		go func() {
+			if err := d.eng.CleanupUploads(id); err != nil {
+				d.log.Warn("clean up unfinished uploads", "service", id, "err", err)
+			}
+		}()
+	}
 }

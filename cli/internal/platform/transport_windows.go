@@ -3,8 +3,12 @@
 package platform
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -12,12 +16,14 @@ import (
 )
 
 // only this user (or an admin) can own a pipe as their SID
-func SocketAddr(string) string {
-	sid, err := currentSID()
-	if err != nil {
-		return `\\.\pipe\dokky`
+// pipes are machine-wide, so the state folder is part of the name
+func SocketAddr(stateDir string) string {
+	h := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(stateDir))))
+	name := `\\.\pipe\dokky-` + hex.EncodeToString(h[:4])
+	if sid, err := currentSID(); err == nil {
+		name += "-" + sid.String()
 	}
-	return `\\.\pipe\dokky-` + sid.String()
+	return name
 }
 
 func Listen(addr string) (net.Listener, error) {

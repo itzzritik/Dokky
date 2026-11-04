@@ -9,3 +9,5 @@ node_modules/
 /web/next-env.d.ts
 *.tsbuildinfo
 .vercel/
+/cli/vendor/
+/cli/_patches/overlay.json
