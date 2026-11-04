@@ -1,19 +1,24 @@
 package platform
 
 import (
+	"bytes"
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"slices"
 )
 
 const FinderHost = "Dokky"
 
-const finderHostScript = `do shell script "printf '\\n127.0.0.1 Dokky # dokky\\n' >> /etc/hosts" with administrator privileges with prompt "dokky wants to show your drives as Dokky in Finder."`
+const (
+	finderHostLine   = "127.0.0.1 Dokky # dokky"
+	finderHostScript = `do shell script "printf '\\n127.0.0.1 Dokky # dokky\\n' >> /etc/hosts" with administrator privileges with prompt "dokky wants to show your drives as Dokky in Finder."`
+	removeHostScript = `do shell script "sed -i '' '/ # dokky$/d' /etc/hosts" with administrator privileges with prompt "dokky was uninstalled and wants to remove its Dokky name from Finder."`
+)
 
 var (
+	hostsFile  = "/etc/hosts"
 	lookupHost = net.LookupHost
 	askAdmin   = func(script string) error { return exec.Command("osascript", "-e", script).Run() }
 )
@@ -23,20 +28,21 @@ func FinderHostReady() bool {
 	return err == nil && slices.Contains(addrs, "127.0.0.1")
 }
 
-// asks once on macOS; a refusal is remembered and mounts fall back to localhost
-func EnsureFinderHost(stateDir string) error {
+// asks on every interactive launch while missing, so a hand-removed line comes back
+func EnsureFinderHost() error {
 	if runtime.GOOS != "darwin" || FinderHostReady() {
 		return nil
 	}
-	asked := filepath.Join(stateDir, "finder-host-asked")
-	if _, err := os.Stat(asked); err == nil {
+	return askAdmin(finderHostScript)
+}
+
+func RemoveFinderHost() error {
+	if runtime.GOOS != "darwin" {
 		return nil
 	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	b, err := os.ReadFile(hostsFile)
+	if err != nil || !bytes.Contains(b, []byte(finderHostLine)) {
 		return err
 	}
-	if err := os.WriteFile(asked, nil, 0o600); err != nil {
-		return err
-	}
-	return askAdmin(finderHostScript)
+	return askAdmin(removeHostScript)
 }

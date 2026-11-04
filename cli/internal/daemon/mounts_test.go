@@ -23,6 +23,7 @@ import (
 func TestMain(m *testing.M) {
 	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelCritical
 	pollEvery, goneTimeout, remountSettle, retryBase, uploadWait = time.Millisecond, 50*time.Millisecond, 0, 0, time.Millisecond
+	removeFinderHost = func() error { return nil }
 	os.Exit(m.Run())
 }
 
