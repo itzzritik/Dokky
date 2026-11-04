@@ -2,7 +2,6 @@ package platform
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,22 +22,21 @@ func fakeHost(t *testing.T, addrs []string) *[]string {
 	return &asked
 }
 
-func TestEnsureFinderHostAsksOnce(t *testing.T) {
+func TestEnsureFinderHostAsksWhileMissing(t *testing.T) {
 	asked := fakeHost(t, nil)
-	state := filepath.Join(t.TempDir(), "state")
 
-	require.NoError(t, EnsureFinderHost(state))
+	require.NoError(t, EnsureFinderHost())
 	require.Len(t, *asked, 1)
 	require.Contains(t, (*asked)[0], "127.0.0.1 Dokky # dokky")
 	require.Contains(t, (*asked)[0], "with administrator privileges")
 
-	require.NoError(t, EnsureFinderHost(state))
-	require.Len(t, *asked, 1, "a cancelled prompt is not repeated")
+	require.NoError(t, EnsureFinderHost())
+	require.Len(t, *asked, 2, "a removed line is asked for again")
 }
 
 func TestEnsureFinderHostSkipsWhenResolved(t *testing.T) {
 	asked := fakeHost(t, []string{"127.0.0.1"})
 	require.True(t, FinderHostReady())
-	require.NoError(t, EnsureFinderHost(t.TempDir()))
+	require.NoError(t, EnsureFinderHost())
 	require.Empty(t, *asked)
 }

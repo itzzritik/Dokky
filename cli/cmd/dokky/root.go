@@ -20,19 +20,19 @@ func newRootCmd() *cobra.Command {
 		Version: buildinfo.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			switch cmd.Name() {
-			case "daemon", "selftest", "doctor":
+			case "daemon", "selftest":
 				return nil
-			}
-			if err := ensurePath(); err != nil {
-				fmt.Fprintln(os.Stderr, "dokky: could not update PATH:", err)
+			case "doctor":
+			default:
+				if err := ensurePath(); err != nil {
+					fmt.Fprintln(os.Stderr, "dokky: could not update PATH:", err)
+				}
 			}
 			if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 				return nil
 			}
-			if state, err := platform.StateDir(); err == nil {
-				if err := platform.EnsureFinderHost(state); err != nil {
-					fmt.Fprintln(os.Stderr, "dokky: drives will show as localhost in Finder:", err)
-				}
+			if err := platform.EnsureFinderHost(); err != nil {
+				fmt.Fprintln(os.Stderr, "dokky: drives will show as localhost in Finder:", err)
 			}
 			return nil
 		},

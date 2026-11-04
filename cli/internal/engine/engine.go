@@ -137,6 +137,7 @@ func (e *Engine) Mount(m store.Mount, mountPoint string) (string, error) {
 	}
 	e.clearFsCache(m.ServiceID)
 	fsName := m.ServiceID + ":" + m.RemotePath
+	useServerSpace(context.Background(), fsName)
 	var out struct{ MountPoint string }
 	if err := rpc("mount/mount", MountParams(fsName, mountPoint, m.Name, m.VFS, runtime.GOOS), &out); err != nil {
 		return "", err

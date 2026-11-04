@@ -26,6 +26,8 @@ const (
 	installsFile   = "installs.json"
 )
 
+var removeFinderHost = platform.RemoveFinderHost
+
 type Decision int
 
 const (
@@ -286,6 +288,9 @@ func DeepClean(d *Daemon) {
 
 	if err := d.unregister(); err != nil {
 		d.log.Warn("unregister the dokky service", "err", err)
+	}
+	if err := removeFinderHost(); err != nil {
+		d.log.Warn("remove the Dokky name from /etc/hosts", "err", err)
 	}
 	if d.ownsPath(p) {
 		if err := d.removePath(d.home, p.State); err != nil {
