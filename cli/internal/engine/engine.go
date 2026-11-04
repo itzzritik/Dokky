@@ -157,18 +157,20 @@ func (e *Engine) unmount(name string) error {
 	if err := e.prune(); err != nil {
 		return err
 	}
+	// out of e.mounted first, so the eject watcher doesn't take our own unmount for a Finder eject
 	e.mu.Lock()
 	lm, ok := e.mounted[name]
+	delete(e.mounted, name)
 	e.mu.Unlock()
 	if !ok {
 		return nil
 	}
 	if err := rpc("mount/unmount", map[string]any{"mountPoint": lm.point}, nil); err != nil {
+		e.mu.Lock()
+		e.mounted[name] = lm
+		e.mu.Unlock()
 		return err
 	}
-	e.mu.Lock()
-	delete(e.mounted, name)
-	e.mu.Unlock()
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"maps"
@@ -56,7 +57,13 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 		return nil, nil, "", err
 	}
 	errs := make(chan error, 2)
-	go func() { errs <- gonfs.Serve(l, newIconHandler(h)) }()
+	go func() {
+		err := gonfs.Serve(l, newIconHandler(h))
+		if errors.Is(err, net.ErrClosed) {
+			err = nil
+		}
+		errs <- err
+	}()
 	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 	// locallocks: macOS only reads AppleDouble attributes (the mount icon) under a lock, and the server has no lock service
 	args := []string{"-o", "port=" + port, "-o", "mountport=" + port, "-o", "tcp", "-o", "locallocks"}
@@ -68,12 +75,13 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 		_ = l.Close()
 		return nil, nil, "", fmt.Errorf("%s: failed to mount NFS volume: %w", bytes.TrimSpace(out), err)
 	}
-	var ejected atomic.Bool
+	var gone atomic.Bool
 	unmount := func() error {
-		if ejected.Load() {
+		if gone.Load() {
 			return nil
 		}
 		out, err := exec.Command("diskutil", "umount", "force", mountpoint).CombinedOutput()
+		gone.Store(err == nil)
 		_ = l.Close()
 		VFS.Shutdown()
 		if err != nil {
@@ -82,7 +90,8 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 		return nil
 	}
 	nfs.OnUnmountFunc = func() {
-		ejected.Store(true)
+		gone.Store(true)
+		_ = l.Close()
 		errs <- nil
 		VFS.Shutdown()
 	}
