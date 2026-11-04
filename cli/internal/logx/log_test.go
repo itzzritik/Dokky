@@ -139,3 +139,15 @@ func TestRedactExtraLongestFirst(t *testing.T) {
 	t.Cleanup(func() { SetSecrets(nil) })
 	require.Equal(t, "login *** refused for ***", Redact("login ritik@123 refused for ritik", "ritik", "ritik@123"))
 }
+
+func TestDropsFinderNoise(t *testing.T) {
+	_, path := newTestLogger(t)
+	fs.Errorf("nfs", "Error Creating: permission denied")
+	fs.Errorf("nfs", "failing create to indicate lack of support for 'exclusive' mode.")
+	fs.Errorf("nfs", "Error Creating: no space left on device")
+
+	out := readLog(t, path)
+	require.NotContains(t, out, "permission denied", "Finder's refused ._ files")
+	require.NotContains(t, out, "exclusive")
+	require.Contains(t, out, "no space left", "other create errors stay")
+}

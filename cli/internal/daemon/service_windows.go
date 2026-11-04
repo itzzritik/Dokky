@@ -142,3 +142,5 @@ func deleteAfterExit(left []string, state string) error {
 	}
 	return cmd.Process.Release()
 }
+
+func refreshService(string) (bool, error) { return false, nil }

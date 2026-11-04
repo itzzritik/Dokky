@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -39,6 +40,8 @@ func renderLaunchAgent(bin string) string {
     </dict>
     <key>ThrottleInterval</key>
     <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
     <key>ExitTimeOut</key>
     <integer>60</integer>
     <key>StandardOutPath</key>
@@ -119,4 +122,27 @@ func windowsTaskName(username string) string {
 		username = username[i+1:]
 	}
 	return "dokky-" + username
+}
+
+var (
+	serviceInstalled = ServiceInstalled
+	serviceCurrent   = ServiceCurrent
+	reloadService    = refreshService
+)
+
+// an update can ship a new service file, but launchd and systemd only read it when the job is reloaded
+func refreshServiceFile(bin string) (restart bool, err error) {
+	if !serviceInstalled() || serviceCurrent(bin) {
+		return false, nil
+	}
+	exe, err := executable()
+	if err != nil {
+		return false, nil
+	}
+	a, aerr := os.Stat(exe)
+	b, berr := os.Stat(bin)
+	if aerr != nil || berr != nil || !os.SameFile(a, b) {
+		return false, nil
+	}
+	return reloadService(bin)
 }

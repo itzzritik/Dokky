@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,6 +25,7 @@ func TestRenderLaunchAgent(t *testing.T) {
 		"<key>RunAtLoad</key>",
 		"<key>SuccessfulExit</key>\n        <false/>",
 		"<key>ThrottleInterval</key>\n    <integer>10</integer>",
+		"<key>ProcessType</key>\n    <string>Interactive</string>",
 		"<key>ExitTimeOut</key>\n    <integer>60</integer>",
 		"<key>StandardOutPath</key>\n    <string>/dev/null</string>",
 		"<key>StandardErrorPath</key>\n    <string>/dev/null</string>",
@@ -68,4 +71,30 @@ func TestServiceNames(t *testing.T) {
 	require.Equal(t, "dokky.service", systemdUnit)
 	require.Equal(t, `dokky-ritik`, windowsTaskName(`PC\ritik`))
 	require.Equal(t, `dokky-ritik`, windowsTaskName(`ritik`))
+}
+
+func TestRefreshServiceFileOnlyWhenStale(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "dokky")
+	require.NoError(t, os.WriteFile(bin, nil, 0o755))
+	installed, current, reloads := true, false, 0
+	oldI, oldC, oldR, oldE := serviceInstalled, serviceCurrent, reloadService, executable
+	serviceInstalled = func() bool { return installed }
+	serviceCurrent = func(string) bool { return current }
+	reloadService = func(string) (bool, error) { reloads++; return true, nil }
+	executable = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { serviceInstalled, serviceCurrent, reloadService, executable = oldI, oldC, oldR, oldE })
+
+	restart, err := refreshServiceFile(bin)
+	require.NoError(t, err)
+	require.True(t, restart)
+	require.Equal(t, 1, reloads)
+
+	current = true
+	restart, _ = refreshServiceFile(bin)
+	require.False(t, restart)
+	current, installed = false, false
+	refreshServiceFile(bin)
+	installed = true
+	_, _ = refreshServiceFile(filepath.Join(t.TempDir(), "other"))
+	require.Equal(t, 1, reloads, "not installed, or not running the installed binary")
 }

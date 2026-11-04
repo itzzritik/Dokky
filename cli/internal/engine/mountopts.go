@@ -20,11 +20,12 @@ func MountParams(fsName, mountPoint, volName string, v store.VFS, goos string) m
 	p := map[string]any{
 		"fs":                       fsName,
 		"mountPoint":               mountPoint,
-		"volname":                  volName,
+		"volname":                  Label(volName),
 		"vfs_cache_mode":           v.CacheMode,
 		"dir_cache_time":           v.DirCacheTime,
 		"vfs_read_ahead":           v.ReadAhead,
 		"vfs_read_chunk_streams":   v.ReadChunkStreams,
+		"vfs_read_chunk_size":      "2M",
 		"vfs_cache_max_size":       v.CacheMaxSize,
 		"vfs_cache_max_age":        v.CacheMaxAge,
 		"vfs_cache_poll_interval":  v.CachePollInterval,
@@ -33,7 +34,7 @@ func MountParams(fsName, mountPoint, volName string, v store.VFS, goos string) m
 	}
 	switch goos {
 	case "darwin":
-		p["mountType"] = "nfsmount"
+		p["mountType"] = "dokky"
 		p["mountOpt"] = map[string]any{"ExtraOptions": []string{"rsize=1048576", "wsize=1048576", "readahead=16"}}
 	case "windows":
 		p["mountType"] = "cmount"

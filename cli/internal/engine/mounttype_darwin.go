@@ -3,7 +3,6 @@ package engine
 import (
 	"time"
 
-	_ "github.com/rclone/rclone/cmd/nfsmount"
 	"github.com/rclone/rclone/cmd/serve/nfs"
 	"golang.org/x/sys/unix"
 )
@@ -38,6 +37,12 @@ func (e *Engine) reap(points map[string]bool) bool {
 	e.mu.Unlock()
 	for _, h := range hooks {
 		h()
+	}
+	if len(hooks) > 0 {
+		select {
+		case e.ejected <- struct{}{}:
+		default:
+		}
 	}
 	return len(hooks) > 0
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
@@ -21,6 +22,8 @@ const (
 )
 
 var (
+	debug = os.Getenv("DOKKY_DEBUG") != ""
+
 	mu      sync.RWMutex
 	values  []string
 	secrets map[string]struct{}
@@ -31,9 +34,13 @@ var (
 
 func New(path string) *slog.Logger {
 	w := &lumberjack.Logger{Filename: path, MaxSize: 10, MaxBackups: 3}
-	h := &redactHandler{inner: slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})}
+	level, rlevel := slog.LevelInfo, fs.LogLevelNotice
+	if debug {
+		level, rlevel = slog.LevelDebug, fs.LogLevelDebug
+	}
+	h := &redactHandler{inner: slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})}
 
-	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelNotice
+	fs.GetConfig(context.Background()).LogLevel = rlevel
 	fs.SetLogger(&noticeHandler{h})
 	l := slog.New(h)
 	slog.SetDefault(l)
@@ -143,7 +150,19 @@ func (h *redactHandler) WithGroup(name string) slog.Handler {
 type noticeHandler struct{ slog.Handler }
 
 func (h *noticeHandler) Enabled(ctx context.Context, l slog.Level) bool {
-	return l >= fs.SlogLevelNotice && h.Handler.Enabled(ctx, l)
+	return (debug || l >= fs.SlogLevelNotice) && h.Handler.Enabled(ctx, l)
+}
+
+// macOS retries these on every Finder copy; they are expected and drown real errors
+var noise = []string{"Error Creating: permission denied", "failing create to indicate lack of support for 'exclusive' mode"}
+
+func (h *noticeHandler) Handle(ctx context.Context, r slog.Record) error {
+	for _, n := range noise {
+		if strings.HasPrefix(r.Message, n) {
+			return nil
+		}
+	}
+	return h.Handler.Handle(ctx, r)
 }
 
 func (h *noticeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

@@ -83,3 +83,14 @@ func unregisterService() error {
 }
 
 func deleteAfterExit([]string, string) error { return nil }
+
+func refreshService(bin string) (bool, error) {
+	path, err := unitPath()
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(path, []byte(RenderService(bin)), 0o644); err != nil {
+		return false, err
+	}
+	return true, systemctl("daemon-reload")
+}

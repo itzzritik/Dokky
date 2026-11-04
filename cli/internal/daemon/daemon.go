@@ -91,6 +91,7 @@ type Daemon struct {
 	// serialises changes; status only TryLocks it
 	opMu        sync.Mutex
 	unmountedAt map[string]time.Time
+	cleaned     map[string]time.Time
 	edits       map[string]string // configure id → the saved service whose secrets it was given
 
 	// guards data and states; never held across an engine call or an external command
@@ -158,6 +159,12 @@ func Run(ctx context.Context, p Paths) (err error) {
 			log.Error("daemon stopped", "err", err)
 		}
 	}()
+	if restart, rerr := refreshServiceFile(p.Bin); rerr != nil {
+		log.Warn("refresh service file", "err", rerr)
+	} else if restart {
+		log.Info("service file updated, restarting")
+		return ErrRestart
+	}
 	st, err := store.Open(p.State, store.SystemKeyring(p.State))
 	if err != nil {
 		return err
@@ -223,6 +230,9 @@ func Run(ctx context.Context, p Paths) (err error) {
 		case serr := <-served:
 			serving = false
 			return fmt.Errorf("ipc server stopped: %v", serr)
+		case <-eng.Ejected():
+			_ = d.refresh()
+			d.publish()
 		case <-tick.C:
 			d.tick(ctx)
 			if d.autoUpdate(ctx, time.Now()) {
@@ -238,7 +248,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log, loop: dsync.Loop{Log: log},
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
 		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
-		unmountedAt: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
+		unmountedAt: map[string]time.Time{}, cleaned: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 	}
 }
 
@@ -261,6 +271,7 @@ func (d *Daemon) tick(ctx context.Context) {
 	statsErr := d.refresh()
 	d.opMu.Unlock()
 	d.observeIdle(time.Now(), statsErr)
+	d.cleanupUploads(time.Now())
 	d.remountFlagged()
 	d.publish()
 }
@@ -289,6 +300,11 @@ type nameParams struct {
 
 type idParams struct {
 	ID string `json:"id"`
+}
+
+type deleteParams struct {
+	ID    string `json:"id"`
+	Force bool   `json:"force"`
 }
 
 type localParams struct {
@@ -360,7 +376,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			}
 			return m, nil
 		}),
-		"mount.delete":      decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.deleteMount(ctx, p.ID) }),
+		"mount.delete":      decodeCtx(func(ctx context.Context, p deleteParams) (any, error) { return nil, d.deleteMount(ctx, p.ID, p.Force) }),
 		"mount.setLocal":    decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
 		"providers":         func(context.Context, json.RawMessage) (any, error) { return engine.Providers() },
 		"service.configure": decodeCtx(d.configure),
@@ -594,13 +610,18 @@ func (d *Daemon) upsertMount(m store.Mount) error {
 	return nil
 }
 
-func (d *Daemon) deleteMount(ctx context.Context, id string) error {
+func (d *Daemon) deleteMount(ctx context.Context, id string, force bool) error {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
+	m, ok := d.findMount(byID(id))
+	if ok && !force {
+		if err := d.refuseUnsentOf(m); err != nil {
+			return err
+		}
+	}
 	if err := d.serverFirst(func(c *dsync.Client) error { return notFoundOK(c.DeleteMount(ctx, id)) }); err != nil {
 		return err
 	}
-	m, ok := d.findMount(byID(id))
 	if !ok {
 		return nil
 	}

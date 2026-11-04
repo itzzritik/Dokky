@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 )
 
 const (
@@ -29,7 +30,18 @@ func DefaultMountPoint(home, name, goos string) string {
 	if goos == "windows" {
 		return "*"
 	}
-	return filepath.Join(home, mountRootDir, name)
+	return filepath.Join(home, mountRootDir, Label(name))
+}
+
+// Finder shows the mount folder's name, so google-drive appears as Google Drive
+func Label(name string) string {
+	words := strings.Split(name, "-")
+	for i, w := range words {
+		if w != "" {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func isWindowsTarget(path string) bool {

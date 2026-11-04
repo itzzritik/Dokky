@@ -72,6 +72,7 @@ func TestUnicodeAndLongNames(t *testing.T) {
 	}
 	require.ElementsMatch(t, want, names(t, dir))
 	require.ElementsMatch(t, want, names(t, mp))
+	require.NoFileExists(t, filepath.Join(dir, ".VolumeIcon.icns"), "the mount icon never reaches the remote")
 }
 
 func TestNoFreezeOnSlowBackend(t *testing.T) {

@@ -262,6 +262,20 @@ func (d *Daemon) refuseUnsent(ms []store.Mount, then string) error {
 	return fmt.Errorf("%d files on %s are not uploaded yet: mount %s %s", n, names, names, then)
 }
 
+func (d *Daemon) refuseUnsentOf(m store.Mount) error {
+	d.mu.Lock()
+	ms := slices.Clone(d.data.Mounts)
+	d.mu.Unlock()
+	counts, err := d.unsentFiles(ms)
+	if err != nil {
+		return fmt.Errorf("could not check for unsent uploads: %w", err)
+	}
+	if n := counts[m.Name]; n > 0 {
+		return &codedError{"unsent", fmt.Sprintf("%d files on %s are not uploaded yet; deleting drops them. Mount %s to let them finish.", n, m.Name, m.Name)}
+	}
+	return nil
+}
+
 // an unmount pauses uploads: rclone keeps each file Dirty in vfsMeta and resumes it on the next mount
 func (d *Daemon) unsentFiles(ms []store.Mount) (map[string]int, error) {
 	root := filepath.Join(d.cacheDir, "vfsMeta")

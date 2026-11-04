@@ -16,14 +16,14 @@ jobs:
     defaults:
       run:
         working-directory: cli
-    env:
-      GOFLAGS: ${{ matrix.os == 'windows-latest' && '-tags=cmount' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
+      - run: echo "GOFLAGS=${{ matrix.os == 'windows-latest' && '-tags=cmount' || '' }} $(GOFLAGS= go run _patches/overlay.go)" >> "$GITHUB_ENV"
+        shell: bash
       - run: go vet ./...
       - run: go test ./...
 
@@ -59,6 +59,8 @@ jobs:
         working-directory: web
       - if: matrix.os == 'windows-latest'
         run: choco install winfsp -y
+      - run: echo "GOFLAGS=$(GOFLAGS= go run _patches/overlay.go)" >> "$GITHUB_ENV"
+        shell: bash
       - run: go test -tags "${{ matrix.tags }}" ./e2e -count=1 -timeout 30m
 
   lint:
@@ -69,6 +71,8 @@ jobs:
         with:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
+      - run: echo "GOFLAGS=$(GOFLAGS= go run _patches/overlay.go)" >> "$GITHUB_ENV"
+        working-directory: cli
       - uses: golangci/golangci-lint-action@v9
         with:
           working-directory: cli

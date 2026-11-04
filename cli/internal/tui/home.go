@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
+	"github.com/itzzritik/dokky/cli/internal/ipc"
 )
 
 type home struct {
@@ -14,6 +16,12 @@ type home struct {
 	pending  map[string]string
 	add      *addMount
 	deleting *daemon.MountStatus
+	unsent   string
+}
+
+type unsentMsg struct {
+	m   daemon.MountStatus
+	msg string
 }
 
 type mountDoneMsg struct {
@@ -28,10 +36,11 @@ func (a *app) homeKey(k tea.KeyPressMsg) tea.Cmd {
 	if m := a.home.deleting; m != nil {
 		switch k.String() {
 		case "y":
-			a.home.deleting = nil
-			return a.do("mount.delete", map[string]string{"id": m.ID}, a.refreshStatus())
+			force := a.home.unsent != ""
+			a.home.deleting, a.home.unsent = nil, ""
+			return a.deleteMount(*m, force)
 		case "n", "esc":
-			a.home.deleting = nil
+			a.home.deleting, a.home.unsent = nil, ""
 		}
 		return nil
 	}
@@ -75,7 +84,31 @@ func (a *app) toggleMount(name string, mount bool) tea.Cmd {
 	}
 }
 
+func (a *app) deleteMount(m daemon.MountStatus, force bool) tea.Cmd {
+	params := map[string]any{"id": m.ID}
+	if force {
+		params["force"] = true
+	}
+	return func() tea.Msg {
+		ctx, cancel := a.callCtx()
+		defer cancel()
+		err := a.d.Call(ctx, "mount.delete", params, nil)
+		var ie *ipc.Error
+		if errors.As(err, &ie) && ie.Code == "unsent" {
+			return unsentMsg{m, ie.Message}
+		}
+		if err != nil {
+			return errMsg{err}
+		}
+		return a.refreshStatus()()
+	}
+}
+
 func (a *app) homeMsg(msg tea.Msg) tea.Cmd {
+	if u, ok := msg.(unsentMsg); ok {
+		a.home.deleting, a.home.unsent = &u.m, u.msg
+		return nil
+	}
 	if m, ok := msg.(mountDoneMsg); ok {
 		delete(a.home.pending, m.name)
 		if m.err != nil {
@@ -94,6 +127,10 @@ func (a *app) homeView() (string, string) {
 		return a.addView()
 	}
 	var b strings.Builder
+	if m := a.home.deleting; m != nil && a.home.unsent != "" {
+		fmt.Fprintf(&b, "Delete %s anyway?\n\n%s\n", m.Name, a.home.unsent)
+		return b.String(), "y delete and drop them · n keep"
+	}
 	if m := a.home.deleting; m != nil {
 		fmt.Fprintf(&b, "Delete %s?\n\n", m.Name)
 		if m.State == "mounted" {

@@ -382,6 +382,26 @@ func TestHomeDeleteMountConfirms(t *testing.T) {
 	require.NotContains(t, view(m), "Delete docs?")
 }
 
+func TestHomeDeleteMountWarnsUnsent(t *testing.T) {
+	f := newFake(daemon.StatusReply{Mounts: []daemon.MountStatus{{ID: "m2", Name: "docs", State: "unmounted"}}})
+	f.errs = map[string]error{"mount.delete": &ipc.Error{Code: "unsent", Message: "4 files on docs are not uploaded yet"}}
+	m := press(start(f), "d", "y")
+	v := view(m)
+	require.Contains(t, v, "Delete docs anyway?")
+	require.Contains(t, v, "4 files on docs are not uploaded yet")
+
+	m = press(m, "n")
+	require.NotContains(t, view(m), "anyway")
+	require.Len(t, f.called("mount.delete"), 1)
+
+	m = press(m, "d", "y")
+	f.mu.Lock()
+	f.errs = nil
+	f.mu.Unlock()
+	press(m, "y")
+	require.Equal(t, []string{`{"id":"m2"}`, `{"id":"m2"}`, `{"force":true,"id":"m2"}`}, f.called("mount.delete"))
+}
+
 func TestSettingsChangesCacheMaxAge(t *testing.T) {
 	f := newFake(daemon.StatusReply{Mounts: []daemon.MountStatus{
 		{ID: "m1", Name: "media", State: "mounted", CacheMaxAge: "5m", RemountToApply: true},
