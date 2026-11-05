@@ -336,6 +336,24 @@ func (d *Daemon) updateCheck(ctx context.Context) (checkReply, error) {
 	return checkReply{Latest: r.Version, Newer: Newer(r.Version, cur)}, nil
 }
 
+type installReply struct {
+	Version string `json:"version"` // the installed dokky, newer or not
+}
+
+// the TUI's own update: install the newest with npm and leave the restart to it, so it can say so first
+func (d *Daemon) installNow(ctx context.Context) (installReply, error) {
+	u := &d.upd
+	if u.blocked != "" {
+		return installReply{}, nil
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if _, _, err := d.install(ctx, "latest"); err != nil {
+		return installReply{}, err
+	}
+	return installReply{Version: installedVersion(u.paths.State)}, nil
+}
+
 type openReply struct {
 	Restarting bool   `json:"restarting"`
 	Version    string `json:"version"`

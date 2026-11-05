@@ -118,6 +118,10 @@ func (a *App) account() string {
 	switch {
 	case acct.Pending:
 		return spin(ui.Paint("Signing in", p.Accent, nil, false))
+	case st.Updating == "Update ready":
+		return ui.L(nil).B(ui.G.Check, p.Accent).Sp(1).T("Update ready", p.Muted).String()
+	case st.Updating != "":
+		return spin(ui.Paint(st.Updating, p.Muted, nil, false))
 	case st.Fixing:
 		return spin(ui.Paint("Fixing", p.Muted, nil, false))
 	case st.Act.Down > 0 || st.Act.Up > 0:

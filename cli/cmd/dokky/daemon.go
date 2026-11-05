@@ -8,12 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
 
-	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
@@ -81,46 +79,7 @@ func awaitDaemon(ok func() bool) {
 	}
 }
 
-// before the TUI: the daemon fetches a newer dokky and restarts onto it, so nothing changes under the open TUI; true once it has
-func updateOnOpen(running string, note io.Writer) bool {
-	var r struct {
-		Restarting bool   `json:"restarting"`
-		Version    string `json:"version"`
-	}
-	if running == "" || os.Getenv(updatedEnv) != "" {
-		return false
-	}
-	done := make(chan error, 1)
-	go func() { done <- callOnce("update.restart", nil, &r) }()
-	var err error
-	select {
-	case err = <-done:
-	case <-time.After(slowStartNote):
-		fmt.Fprintln(note, "checking for a new dokky...")
-		err = <-done
-	}
-	if err != nil || !r.Restarting {
-		return false
-	}
-	fmt.Fprintln(note, "updating dokky to "+r.Version+"...")
-	awaitDaemon(func() bool {
-		var s api.State
-		return callOnce(api.MState, nil, &s) == nil && s.Version != running
-	})
-	return true
-}
-
 const updatedEnv = "DOKKY_UPDATED"
-
-// the installed dokky was just replaced under this process: run the new one in its place
-func relaunch() {
-	bin := daemon.DefaultPaths().Bin
-	self, err := os.Executable()
-	if err != nil || filepath.Clean(self) != filepath.Clean(bin) {
-		return
-	}
-	_ = syscall.Exec(bin, os.Args, append(os.Environ(), updatedEnv+"=1"))
-}
 
 // runs dokky again in this terminal: in place where the OS allows it, else as a child whose exit is this one's
 func reopen() error {

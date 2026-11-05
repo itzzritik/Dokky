@@ -90,7 +90,7 @@ func (a *App) onConnected(m connected) tea.Cmd {
 	}
 	a.st.C, a.events, a.stop = m.c, m.events, m.stop
 	a.st.Epoch++
-	a.st.Connected, a.starting, a.dialing = true, false, false
+	a.st.Connected, a.starting, a.dialing, a.everConnected = true, false, false, true
 	a.veil, a.failed, a.backoff, a.heard, a.lostAt = false, false, 0, a.st.Now, time.Time{}
 	a.st.Act, a.st.Catalog = m.act, m.cat
 	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks(), a.listen(quietFor))
@@ -107,6 +107,12 @@ func (a *App) onLost(m lost) tea.Cmd {
 	}
 	if a.st.Connected {
 		a.lostAt = a.st.Now
+	}
+	// dokky opens at once; when its service isn't up yet, the TUI starts it once on its own
+	if !a.everConnected && !a.autoStarted && notRunning(m.err) {
+		a.autoStarted = true
+		a.st.Connected, a.veil = false, false
+		return a.startDaemon()
 	}
 	a.st.Connected, a.veil = false, false
 	a.failed = a.lostAt.IsZero() || a.st.Now.Sub(a.lostAt) >= graceFor

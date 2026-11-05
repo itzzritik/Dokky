@@ -73,6 +73,13 @@ func (d *Daemon) mount(id string) error {
 	if !ok {
 		return fmt.Errorf("no drive with id %q", id)
 	}
+	// the drive shows connecting from the press, not only once the remote has answered
+	d.mu.Lock()
+	if st := d.state(m.ID); st.state != stateMounted {
+		st.state, st.err = stateMounting, ""
+	}
+	d.mu.Unlock()
+	d.publish()
 	if err := d.probe(m); err != nil {
 		return err
 	}
@@ -395,7 +402,7 @@ func (d *Daemon) markUnmounted(id string) {
 }
 
 func (d *Daemon) defaultPoint(name string) string {
-	return engine.DefaultMountPoint(d.home, name, runtime.GOOS)
+	return engine.DefaultMountPoint(d.home, engine.Title(name), runtime.GOOS)
 }
 
 func (d *Daemon) mountPoint(m store.Mount) string {

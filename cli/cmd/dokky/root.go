@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
@@ -32,23 +31,12 @@ func newRootCmd() *cobra.Command {
 					fmt.Fprintln(os.Stderr, "dokky: could not update PATH:", err)
 				}
 			}
-			if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-				return nil
-			}
-			if err := platform.EnsureFinderHost(); err != nil {
-				fmt.Fprintln(os.Stderr, "dokky: drives will show as localhost in Finder:", err)
-			}
 			return nil
 		},
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// starts or restarts the daemon when it can; the TUI shows its own screen when it cannot
-			var s api.State
-			_ = call(api.MState, nil, &s)
-			if updateOnOpen(s.Version, os.Stderr) {
-				relaunch()
-			}
+			// nothing waits before the TUI: it starts the service, updates and fixes problems in the background
 			err := tui.Run(cmd.Context(), tui.Deps{Reopened: os.Getenv(updatedEnv) != "", Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
 			if errors.Is(err, tui.ErrReopen) {
 				return reopen()

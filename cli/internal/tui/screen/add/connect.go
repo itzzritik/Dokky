@@ -20,7 +20,6 @@ type runner struct {
 	cancel   context.CancelFunc
 	done     *api.Drive
 	failed   string
-	btn      int
 }
 
 func (r *runner) working() bool { return r.req != 0 }
@@ -67,40 +66,17 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 		d := m.Val.(api.Drive)
 		r.done = &d
 		a.from, a.movedAt = a.progress(st), st.Now
-		r.btn = 0
-		if d.State == api.Connected {
-			r.btn = 1
-		}
 	case tea.KeyPressMsg:
-		btns := a.connectButtons()
-		switch m.String() {
-		case "left", "right":
-			if r.done != nil && len(btns) == 2 {
-				r.btn = 1 - r.btn
-			}
-		case "enter":
+		if m.String() == "enter" {
 			switch {
 			case r.failed != "":
 				return a.press("retry", st)
 			case r.done != nil:
-				return a.press(btns[min(r.btn, len(btns)-1)].ID, st)
+				return a.finish(r.done.State == api.Connected)
 			}
 		}
 	}
 	return nil
-}
-
-func (a *Add) connectButtons() []ui.Btn {
-	r := &a.run
-	switch {
-	case r.failed != "":
-		return []ui.Btn{{ID: "back", Label: "Back"}, {ID: "retry", Label: "Try again", Primary: true}}
-	case r.done != nil && r.done.State == api.Connected:
-		return []ui.Btn{{ID: "done", Label: "Done"}, {ID: "finder", Label: "Open in " + core.FileManager(), Primary: true}}
-	case r.done != nil:
-		return []ui.Btn{{ID: "done", Label: "Done", Primary: true}}
-	}
-	return []ui.Btn{{ID: "cancel", Label: "Cancel"}}
 }
 
 func (a *Add) finish(open bool) tea.Cmd {

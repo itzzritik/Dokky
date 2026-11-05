@@ -43,6 +43,18 @@ func SafeFolder(name, goos string) string {
 	return s
 }
 
+// "google drive" becomes "Google Drive"; a word with any capital ("iCloud", "NAS") stays as written
+func Title(name string) string {
+	words := strings.Split(name, " ")
+	for i, w := range words {
+		if w != "" && w == strings.ToLower(w) {
+			r, n := utf8.DecodeRuneInString(w)
+			words[i] = string(unicode.ToUpper(r)) + w[n:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
 func DefaultMountPoint(home, name, goos string) string {
 	if goos == "windows" {
 		return "*"
