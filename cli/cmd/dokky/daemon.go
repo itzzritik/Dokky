@@ -142,8 +142,11 @@ func reopen() error {
 	return err
 }
 
-// the service starts again from the installed dokky, set up first if it isn't
+// the service starts again from the installed dokky, set up first if it isn't; never stopped when nothing could start it again
 func restartService() error {
+	if bin := daemon.DefaultPaths().Bin; !isFile(bin) {
+		return fmt.Errorf("dokky is not installed at %s, install it with: npm i -g dokky", bin)
+	}
 	_ = callOnce("daemon.restart", nil, nil)
 	time.Sleep(time.Second)
 	return startDaemon(io.Discard)
@@ -208,4 +211,9 @@ func startDaemon(note io.Writer) error {
 		}
 	}
 	return errors.New("dokky daemon did not start in time, check: dokky daemon")
+}
+
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
 }

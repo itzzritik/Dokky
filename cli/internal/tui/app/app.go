@@ -29,21 +29,22 @@ type unveil struct{}
 const veilFor = 300 * time.Millisecond
 
 type App struct {
-	reopen  bool
-	st      *core.State
-	deps    core.Deps
-	tabs    []core.Screen
-	active  int
-	gate    core.Screen
-	windows []core.Screen
-	toast   *ui.Toast
-	pending []core.Toast
-	start   time.Time
-	ticking bool
-	hits    ui.Hits
-	caret   *image.Point // the typed-in field's caret, for the terminal's bar cursor
-	events  <-chan client.Event
-	stop    context.CancelFunc
+	reopen      bool
+	fixedOnOpen bool
+	st          *core.State
+	deps        core.Deps
+	tabs        []core.Screen
+	active      int
+	gate        core.Screen
+	windows     []core.Screen
+	toast       *ui.Toast
+	pending     []core.Toast
+	start       time.Time
+	ticking     bool
+	hits        ui.Hits
+	caret       *image.Point // the typed-in field's caret, for the terminal's bar cursor
+	events      <-chan client.Event
+	stop        context.CancelFunc
 
 	// blank until the first dial answers or veilFor passes
 	veil, failed      bool
@@ -130,6 +131,15 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.runChecks()
 	case checked:
 		a.st.Checks, a.st.Checked, a.st.Checking = m.checks, a.st.Now, false
+		// like dokky fix, every time dokky opens
+		if !a.fixedOnOpen {
+			a.fixedOnOpen = true
+			return a.fixAll(true)
+		}
+	case core.FixAll:
+		return a.fixAll(m.Auto)
+	case fixed:
+		return a.onFixed(m)
 	case core.DriveDone:
 		a.st.Busy.Done(m.ID)
 		if m.Err != nil {

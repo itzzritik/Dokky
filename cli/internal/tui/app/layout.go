@@ -118,6 +118,8 @@ func (a *App) account() string {
 	switch {
 	case acct.Pending:
 		return spin(ui.Paint("Signing in", p.Accent, nil, false))
+	case st.Fixing:
+		return spin(ui.Paint("Fixing", p.Muted, nil, false))
 	case st.Act.Down > 0 || st.Act.Up > 0:
 		return spin(ui.L(nil).T(ui.G.Down+" "+core.Speed(st.Act.Down), p.Muted).Sp(2).T(ui.G.Up+" "+core.Speed(st.Act.Up), p.Muted).String())
 	case uploads > 0:

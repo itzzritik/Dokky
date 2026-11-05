@@ -49,7 +49,7 @@ func newRootCmd() *cobra.Command {
 			if updateOnOpen(s.Version, os.Stderr) {
 				relaunch()
 			}
-			err := tui.Run(cmd.Context(), tui.Deps{Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
+			err := tui.Run(cmd.Context(), tui.Deps{Reopened: os.Getenv(updatedEnv) != "", Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
 			if errors.Is(err, tui.ErrReopen) {
 				return reopen()
 			}
@@ -57,7 +57,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate("dokky {{.Version}}\n")
-	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd(), newDoctorCmd(), newLoginCmd(), newLogoutCmd(), newSelftestCmd(), newUpdateCmd())
+	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd(), newDoctorCmd(), newLoginCmd(), newLogoutCmd(), newSelftestCmd(), newUpdateCmd(), newFixCmd())
 	return cmd
 }
 

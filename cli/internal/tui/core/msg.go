@@ -43,6 +43,9 @@ type NeedDriver struct{}
 // quit and open dokky again in this terminal, onto whatever was just installed
 type Reopen struct{}
 
+// repair every problem that can be; Auto is the pass dokky runs by itself when it opens
+type FixAll struct{ Auto bool }
+
 type Req uint64
 
 var reqs atomic.Uint64
