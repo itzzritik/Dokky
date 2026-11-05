@@ -18,6 +18,7 @@ type Gate struct {
 	mark *brand.Mark
 	sel  int
 	req  core.Req
+	err  string
 }
 
 func New(now time.Time) *Gate { return &Gate{mark: brand.NewMark(now)} }
@@ -38,8 +39,8 @@ func (g *Gate) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			return g, g.choose(st)
 		}
 	case core.Reply:
-		if m.Req == g.req && m.Err != nil {
-			return g, core.Fail(m.Err)
+		if m.Req == g.req {
+			g.err = core.Report(m.Err)
 		}
 	}
 	return g, nil
@@ -73,12 +74,16 @@ func (g *Gate) View(st *core.State, w, h int) *lipgloss.Layer {
 		b.Add(x, y+10, ui.Button("btn:"+string(rune('0'+i)), c, i == 0, false, g.sel == i))
 		x += ui.ButtonWidth(c) + 2
 	}
-	center(y+12, ui.Paint("You can sign in later from Settings.", p.Faint, nil, false))
+	if g.err != "" {
+		center(y+12, ui.Paint(core.Fit(g.err, w-4), p.Coral, nil, false))
+	} else {
+		center(y+12, ui.Paint("You can sign in later from Settings.", p.Faint, nil, false))
+	}
 	return b.Layer()
 }
 
 func (g *Gate) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}, {Key: "q", Label: "quit"}}
+	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}}
 }
 
 func (g *Gate) Animating(st *core.State) bool { return g.mark.Animating(st.Now) }

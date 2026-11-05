@@ -57,7 +57,7 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 		r.req, r.cancel = 0, nil
 		if m.Err != nil {
 			if !errors.Is(m.Err, context.Canceled) {
-				r.failed = core.Safe(m.Err.Error())
+				r.failed = core.Report(m.Err)
 			}
 			return nil
 		}
@@ -152,7 +152,7 @@ func (a *Add) viewConnect(st *core.State, win *ui.Window) int {
 		case i == n && r.failed != "":
 			l.B(ui.G.Cross, p.Coral).Sp(1).T(s[0], p.Coral)
 		case i == n && r.working():
-			l.B(ui.Spin(st.T), p.Accent).Sp(1).T(s[0], p.Muted)
+			l.B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(s[0], p.Muted)
 		default:
 			l.Sp(2).T(s[0], p.Faint)
 		}

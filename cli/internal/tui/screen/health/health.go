@@ -215,7 +215,7 @@ func row(st *core.State, c core.Check, w int, on bool) string {
 	return ui.RowLine(w, on, nil, func(bg color.Color, iw int) string {
 		g, s := tone(c.Tone)
 		if c.Tone == core.Busy {
-			g = ui.Spin(st.T)
+			g, s.Fg = ui.Spin(st.T), ui.SpinFg(st.T)
 		}
 		name := ui.L(bg).B(g, s.Fg).Sp(1)
 		if on {
@@ -246,28 +246,16 @@ func banner(st *core.State, cs []core.Check, w, h int) []string {
 		right := ui.L(nil)
 		switch {
 		case st.Checking:
-			right.T(ui.Spin(st.T)+" Checking", p.Muted)
+			right.B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Checking", p.Muted)
 		case !st.Checked.IsZero():
 			right.T("Checked "+core.Ago(st.Checked, st.Now), p.Muted)
 		}
 		lines[mid] = text.Right(w-1, right)
 		return lines
 	}
-	c, glyph := p.Buoy, ui.G.Bang
-	if bad {
-		c, glyph = p.Coral, ui.G.Cross
-	}
-	bg := ui.Mix(p.Bg, c, .12)
 	verb := " need attention."
 	if n == 1 {
 		verb = " needs attention."
 	}
-	for i := range lines {
-		l := ui.L(bg).Raw(ui.Paint(ui.G.Bar, c, bg, false))
-		if i == mid {
-			l.Sp(2).B(glyph, c).Sp(1).T(core.Count(n, "problem")+verb, p.Text)
-		}
-		lines[i] = l.Pad(w)
-	}
-	return lines
+	return ui.Banner(w, h, bad, core.Count(n, "problem")+verb, "", "")
 }

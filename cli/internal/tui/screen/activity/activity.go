@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"image/color"
 	"path"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
@@ -78,7 +80,7 @@ func (s *Activity) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				c, id, name := st.C, e.t.DriveID, e.t.Name
 				return s, func() tea.Msg {
 					if err := c.Retry(context.Background(), id, name); err != nil {
-						return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+						return core.Toast{Text: core.Report(err), Bad: true}
 					}
 					return core.Toast{Text: "Trying " + core.Safe(name) + " again"}
 				}
@@ -131,26 +133,96 @@ func (s *Activity) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	b.Lines(2, 2, ui.Graph(w-3, graphRows, total, ui.Phase(a.History, st.Now)))
 
+	lw := w
+	if st.W >= 120 {
+		lw = w * 11 / 20
+	}
 	var lines []ui.ListLine
 	head := func(t string, c color.Color) ui.ListLine {
 		return ui.ListLine{Text: ui.L(nil).Sp(2).T(t, c).String(), Item: -1}
 	}
 	lines = append(lines, head("Now", p.Muted))
 	for i, e := range now {
-		lines = append(lines, ui.ListLine{Text: s.row(st, e, i, w), Item: i, ID: "row:" + strconv.Itoa(i)})
+		lines = append(lines, ui.ListLine{Text: s.row(st, e, i, lw), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}
 	if len(now) == 0 {
 		lines = append(lines, head("Nothing is moving.", p.Faint))
 	}
 	lines = append(lines, ui.ListLine{Item: -1}, head("Earlier", p.Muted))
 	for i, e := range earlier {
-		lines = append(lines, ui.ListLine{Text: s.row(st, e, len(now)+i, w), Item: len(now) + i, ID: "row:" + strconv.Itoa(len(now)+i)})
+		lines = append(lines, ui.ListLine{Text: s.row(st, e, len(now)+i, lw), Item: len(now) + i, ID: "row:" + strconv.Itoa(len(now)+i)})
 	}
 	if len(earlier) == 0 {
 		lines = append(lines, head("Nothing has moved yet.", p.Faint))
 	}
 	ui.List(b, graphRows+3, h-(graphRows+3), &s.top, s.sel, lines)
+	if lw < w {
+		s.detail(b, st, lw+1, graphRows+3, w-lw-1, h-(graphRows+3))
+	}
 	return b.Layer()
+}
+
+// the selected transfer in full, right of the list
+func (s *Activity) detail(b *ui.Box, st *core.State, x, y, w, h int) {
+	p := ui.P()
+	rule := make([]string, h)
+	for i := range rule {
+		rule[i] = ui.Paint(ui.G.V, p.Line, nil, false)
+	}
+	b.Lines(x, y, rule)
+	e, ok := s.current(st)
+	if !ok {
+		return
+	}
+	t, dw := e.t, w-2
+	b.Put(x+2, y+1, ui.Paint(core.Fit(path.Base(t.Name), dw), p.Text, nil, true))
+	var rows [][2]string
+	field := func(k, v string) { rows = append(rows, [2]string{k, v}) }
+	if dir := path.Dir(t.Name); dir != "." {
+		field("Folder", dir)
+	}
+	if d, ok := st.Drive(t.DriveID); ok {
+		field("Drive", d.Name)
+	}
+	verb, past := "Downloading", "Downloaded"
+	if t.Up {
+		verb, past = "Uploading", "Uploaded"
+	}
+	status, sc := past+" "+core.Ago(t.At, st.Now), p.Kelp
+	switch {
+	case !e.earlier && t.Waiting:
+		status, sc = "Waiting", p.Muted
+	case !e.earlier:
+		status, sc = verb, p.Accent
+		if t.Size > 0 {
+			status += " " + strconv.Itoa(int(float64(t.Done)/float64(t.Size)*100)) + "%"
+		}
+	case t.Error != "":
+		status, sc = "Could not "+strings.ToLower(verb[:len(verb)-3]), p.Coral
+	}
+	size := core.Size(t.Size)
+	if !e.earlier && !t.Waiting && t.Size > 0 {
+		size = core.Size(t.Done) + " of " + size
+	}
+	field("Size", size)
+	if !e.earlier && !t.Waiting && t.ETA > 0 {
+		field("Left", core.In(t.ETA))
+	}
+	if d := t.RetryAt.Sub(st.Now); d > 0 {
+		field("Retry", "in "+core.In(d))
+	}
+	row := y + 3
+	b.Put(x+2, row, ui.L(nil).Raw(ui.L(nil).T("Status", p.Faint).Pad(9)).T(status, sc).String())
+	for _, r := range rows {
+		row++
+		b.Put(x+2, row, ui.L(nil).Raw(ui.L(nil).T(r[0], p.Faint).Pad(9)).T(core.Fit(r[1], dw-9), p.Text).String())
+	}
+	if t.Error != "" && row+2 < y+h {
+		msg := strings.Split(ansi.Wordwrap(core.Report(errors.New(t.Error)), dw, ""), "\n")
+		for i, l := range msg[:min(len(msg), y+h-row-2)] {
+			b.Put(x+2, row+2+i, ui.Paint(l, p.Coral, nil, false))
+		}
+	}
 }
 
 func (s *Activity) row(st *core.State, e entry, i, w int) string {

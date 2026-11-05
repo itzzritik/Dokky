@@ -17,8 +17,7 @@ func (a *App) click(m tea.Mouse) tea.Cmd {
 	case id == "":
 		return nil
 	case id == "toast":
-		a.toast = nil
-		return nil
+		return a.dropToast()
 	case strings.HasPrefix(id, "key:"):
 		if k := core.Press(strings.TrimPrefix(id, "key:")); k.Code != 0 {
 			return a.key(k)

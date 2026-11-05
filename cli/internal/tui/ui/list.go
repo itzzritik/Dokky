@@ -104,3 +104,31 @@ func Card(id string, w int, selected bool, fill, under color.Color, rows func(bg
 	lines = append(lines, edge(G.Bottom))
 	return lipgloss.NewLayer(strings.Join(lines, "\n")).ID(id)
 }
+
+// a tinted band, coral when something is broken, else buoy; the fix key sits on the right
+func Banner(w, h int, bad bool, text, key, action string) []string {
+	p := P()
+	c, glyph := p.Buoy, G.Bang
+	if bad {
+		c, glyph = p.Coral, G.Cross
+	}
+	bg := Mix(p.Bg, c, .12)
+	right := L(bg)
+	if key != "" {
+		right.Raw(Keycap(key))
+		if action != "" && w >= 60 {
+			right.Sp(1).B(action, p.Text)
+		}
+		right.Sp(2)
+	}
+	lines := make([]string, h)
+	for i := range lines {
+		l := L(bg).Raw(Paint(G.Bar, c, bg, false))
+		if i != h/2 {
+			lines[i] = l.Pad(w)
+			continue
+		}
+		lines[i] = l.Sp(2).B(glyph, c).Sp(1).T(text, p.Text).Right(w, right)
+	}
+	return lines
+}

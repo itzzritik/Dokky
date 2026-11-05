@@ -232,6 +232,27 @@ func (c *Client) SetSettings(ctx context.Context, s api.Settings) error {
 	return c.call(ctx, quick, "settings.set", s, nil)
 }
 
+// a newer dokky on npm, "" when there is none or this one can't update itself
+func (c *Client) UpdateCheck(ctx context.Context) (string, error) {
+	r, err := get[struct {
+		Latest string `json:"latest"`
+		Newer  bool   `json:"newer"`
+	}](c, ctx, slow, "update.check", nil)
+	if !r.Newer {
+		return "", err
+	}
+	return r.Latest, err
+}
+
+// installs the latest dokky; the daemon restarts onto it when updated
+func (c *Client) Update(ctx context.Context) (string, bool, error) {
+	r, err := get[struct {
+		Version string `json:"version"`
+		Updated bool   `json:"updated"`
+	}](c, ctx, long, "update", nil)
+	return r.Version, r.Updated, err
+}
+
 func (c *Client) Events(ctx context.Context) (<-chan Event, error) {
 	conn, err := ipc.Connect(c.state)
 	if err != nil {

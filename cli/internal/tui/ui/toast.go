@@ -8,6 +8,7 @@ import (
 
 const (
 	toastFor   = 3 * time.Second
+	badFor     = 6 * time.Second
 	toastSlide = 200 * time.Millisecond
 )
 
@@ -17,7 +18,14 @@ type Toast struct {
 	At   time.Time
 }
 
-func (t Toast) Live(now time.Time) bool { return t.Bad || now.Sub(t.At) < toastFor }
+func (t Toast) For() time.Duration {
+	if t.Bad {
+		return badFor
+	}
+	return toastFor
+}
+
+func (t Toast) Live(now time.Time) bool { return now.Sub(t.At) < t.For() }
 
 func (t Toast) Moving(now time.Time) bool { return Easing(t.At, now, toastSlide) }
 

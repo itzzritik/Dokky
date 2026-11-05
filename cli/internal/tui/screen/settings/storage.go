@@ -51,7 +51,7 @@ func (s *storage) press(st *core.State) tea.Cmd {
 			c := st.C
 			return tea.Batch(core.Say("Clearing cached files"), func() tea.Msg {
 				if err := c.ClearCache(context.Background()); err != nil {
-					return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+					return core.Toast{Text: core.Report(err), Bad: true}
 				}
 				return core.Toast{Text: "Cached files cleared"}
 			})

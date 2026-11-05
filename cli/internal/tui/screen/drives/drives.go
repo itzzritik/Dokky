@@ -137,7 +137,7 @@ func remove(d api.Drive) tea.Cmd {
 			cl, id, name := st.C, d.ID, core.Safe(d.Name)
 			return func() tea.Msg {
 				if err := cl.RemoveDrive(context.Background(), api.DriveRemove{ID: id, ForgetAccount: forget}); err != nil {
-					return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+					return core.Toast{Text: core.Report(err), Bad: true}
 				}
 				return core.Toast{Text: name + " removed"}
 			}

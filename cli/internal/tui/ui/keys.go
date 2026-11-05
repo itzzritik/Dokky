@@ -7,39 +7,83 @@ import (
 
 func Keycap(k string) string { return Paint(" "+k+" ", P().Text, P().Cap, true) }
 
-func hint(a core.Action) string {
-	label := P().Muted
-	if a.Danger {
-		label = P().Coral
+func hint(a core.Action, label bool) string {
+	key, fg := Keycap(a.Key), P().Muted
+	switch {
+	case a.Accent:
+		key, fg = Paint(" "+a.Key+" ", P().OnAccent, P().Accent, true), P().Accent
+	case a.Danger:
+		fg = P().Coral
 	}
-	return Keycap(a.Key) + " " + Paint(a.Label, label, nil, false)
+	if !label {
+		return key
+	}
+	return key + " " + Paint(a.Label, fg, nil, false)
 }
 
-// hints that do not fit are left out from the middle, keeping the last one (quit)
-func Footer(w int, acts []core.Action, version string) *lipgloss.Layer {
-	b := NewBox()
-	right := w - 3 - Width(version)
-	b.Put(right, 0, Paint(version, P().Faint, nil, false))
-	room := right - 2 - 3
-	keep := acts
-	for len(keep) > 1 {
-		n := 0
-		for _, a := range keep {
-			n += Width(hint(a)) + 3
-		}
-		if n <= room {
-			break
-		}
-		keep = append(keep[:len(keep)-2:len(keep)-2], keep[len(keep)-1])
+func HintsWidth(acts []core.Action, labels bool) int {
+	w, gap := 0, 2
+	if labels {
+		gap = 3
 	}
-	x := 3
-	for _, a := range keep {
-		h := hint(a)
-		if x+Width(h) > right-2 {
-			break
+	for i, a := range acts {
+		if i > 0 {
+			w += gap
 		}
-		b.Hit(x, 0, "key:"+a.Key, h)
-		x += Width(h) + 3
+		w += Width(hint(a, labels))
+	}
+	return w
+}
+
+// screen keys left, global keys right; labels go before keys do, and right shrinks to its first key plus accents
+func Footer(w int, left, right []core.Action, version string) *lipgloss.Layer {
+	avail := w - 6
+	more := right
+	if len(right) > 1 {
+		more = right[:1:1]
+		for _, a := range right[1:] {
+			if a.Accent {
+				more = append(more, a)
+			}
+		}
+	}
+	type cand struct {
+		l, r   []core.Action
+		ll, rl bool
+	}
+	cands := []cand{{left, right, true, true}, {left, more, true, true}, {left, more, true, false}}
+	for n := len(left); n >= 0; n-- {
+		cands = append(cands, cand{left[:n], more, false, false})
+	}
+	b := NewBox()
+	put := func(x int, acts []core.Action, label bool) {
+		gap := 2
+		if label {
+			gap = 3
+		}
+		for _, a := range acts {
+			h := hint(a, label)
+			b.Hit(x, 0, "key:"+a.Key, h)
+			x += Width(h) + gap
+		}
+	}
+	for _, c := range cands {
+		lw, rw := HintsWidth(c.l, c.ll), HintsWidth(c.r, c.rl)
+		used := lw + rw
+		if lw > 0 && rw > 0 {
+			used += 3
+		}
+		if used > avail {
+			continue
+		}
+		rx := w - 3 - rw
+		if vw := Width(version); c.ll && c.rl && used+3+vw <= avail {
+			b.Put(w-3-vw, 0, Paint(version, P().Faint, nil, false))
+			rx -= vw + 3
+		}
+		put(3, c.l, c.ll)
+		put(rx, c.r, c.rl)
+		break
 	}
 	return b.Layer()
 }

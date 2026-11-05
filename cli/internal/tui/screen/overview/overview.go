@@ -3,7 +3,6 @@ package overview
 import (
 	"image/color"
 	"strconv"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -106,6 +105,12 @@ func (o *Overview) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			if !st.Snap.Account.LoggedIn {
 				return o, gate.Open(st)
 			}
+		case "r":
+			var cmds []tea.Cmd
+			for _, d := range needy(st) {
+				cmds = append(cmds, core.RunPrimary(st, d))
+			}
+			return o, tea.Batch(cmds...)
 		}
 	}
 	return o, nil
@@ -135,6 +140,9 @@ func (o *Overview) Actions(st *core.State) []core.Action {
 	if len(st.Snap.Drives) > 0 {
 		acts = append(acts, core.Action{Key: "a", Label: "add drive"})
 	}
+	if len(needy(st)) > 0 {
+		acts = append(acts, core.Action{Key: "r", Label: "reconnect"})
+	}
 	if !st.Snap.Account.LoggedIn {
 		acts = append(acts, core.Action{Key: "s", Label: "sign in"})
 	}
@@ -159,30 +167,30 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	p := ui.P()
 	b := ui.NewBox()
-	on, uploads, needs := 0, 0, 0
-	for _, d := range st.Snap.Drives {
-		uploads += d.Uploads
-		switch d.State {
-		case api.Connected:
-			on++
-		case api.Failed, api.Reconnect:
-			needs++
-		}
-	}
-	b.Put(0, 0, ui.Paint(strconv.Itoa(on)+" of "+strconv.Itoa(len(st.Snap.Drives))+" drives connected", p.Text, nil, true))
-	var says []string
-	if uploads > 0 {
-		says = append(says, strconv.Itoa(uploads)+" uploading.")
-	}
-	if needs > 0 {
-		says = append(says, strconv.Itoa(needs)+" needs you.")
-	}
-	if len(says) == 0 {
-		says = append(says, "All quiet.")
-	}
-	b.Put(0, 1, ui.Paint(strings.Join(says, " "), p.Muted, nil, false))
 	y := 3
-	if h >= 3+panelH+1+1+2*cardH {
+	if needs := needy(st); len(needs) > 0 {
+		bh := 1
+		if h >= 21 {
+			bh = 3
+		}
+		b.Lines(0, 0, banner(needs, w, bh))
+		y = bh + 1
+	} else {
+		on, uploads := 0, 0
+		for _, d := range st.Snap.Drives {
+			uploads += d.Uploads
+			if d.State == api.Connected {
+				on++
+			}
+		}
+		b.Put(0, 0, ui.Paint(strconv.Itoa(on)+" of "+strconv.Itoa(len(st.Snap.Drives))+" drives connected", p.Text, nil, true))
+		says := "All quiet."
+		if uploads > 0 {
+			says = strconv.Itoa(uploads) + " uploading."
+		}
+		b.Put(0, 1, ui.Paint(says, p.Muted, nil, false))
+	}
+	if h >= y+panelH+1+1+2*cardH {
 		aw := w
 		if st.Wide {
 			aw = w - spaceW - 2
@@ -205,6 +213,32 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 		b.Add(0, y+1+(i-o.top)*cardH, card(st, items[i], w, i == o.sel))
 	}
 	return b.Layer()
+}
+
+// drives that can't connect or wait for a reconnect
+func needy(st *core.State) []api.Drive {
+	var out []api.Drive
+	for _, d := range st.Snap.Drives {
+		if d.State == api.Failed || d.State == api.Reconnect {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func banner(needs []api.Drive, w, h int) []string {
+	bad := false
+	for _, d := range needs {
+		bad = bad || d.State == api.Failed
+	}
+	text := core.Count(len(needs), "drive") + " need you"
+	if len(needs) == 1 {
+		text = needs[0].Name + " can't connect"
+		if !bad {
+			text = needs[0].Name + " needs a reconnect"
+		}
+	}
+	return ui.Banner(w, h, bad, text, "r", "reconnect")
 }
 
 // a drive as a solid card: name and status, then what it is and what it is doing

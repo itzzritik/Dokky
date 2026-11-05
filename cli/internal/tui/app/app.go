@@ -21,9 +21,11 @@ import (
 
 var tabNames = []string{"Overview", "Drives", "Activity", "Health", "Settings"}
 
-type toastGone struct{ at time.Time }
-
 type checked struct{ checks []core.Check }
+
+type unveil struct{}
+
+const veilFor = 300 * time.Millisecond
 
 type App struct {
 	st      *core.State
@@ -33,13 +35,19 @@ type App struct {
 	gate    core.Screen
 	windows []core.Screen
 	toast   *ui.Toast
+	pending []core.Toast
 	start   time.Time
 	ticking bool
 	hits    ui.Hits
 	events  <-chan client.Event
 	stop    context.CancelFunc
 
+	// blank until the first dial answers or veilFor passes
+	veil, failed      bool
 	dialing, starting bool
+	updateChecked     bool
+	backoff           time.Duration
+	heard             time.Time // last event from the daemon
 }
 
 func New(deps core.Deps) *App {
@@ -49,10 +57,13 @@ func New(deps core.Deps) *App {
 		deps:  deps,
 		tabs:  []core.Screen{overview.New(now), drives.New(), activity.New(), health.New(), settings.New()},
 		start: now,
+		veil:  true,
 	}
 }
 
-func (a *App) Init() tea.Cmd { return tea.Batch(tea.RequestBackgroundColor, dial()) }
+func (a *App) Init() tea.Cmd {
+	return tea.Batch(tea.RequestBackgroundColor, dial(), tea.Tick(veilFor, func(time.Time) tea.Msg { return unveil{} }))
+}
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.st.Now = time.Now()
@@ -71,6 +82,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		ui.SetTerminal(m.Color)
 	case tea.WindowSizeMsg:
 		a.st.W, a.st.H, a.st.Wide = m.Width, m.Height, m.Width >= 100
+	case unveil:
+		a.veil = false
 	case ui.TickMsg:
 		a.ticking = false
 		if a.animating() {
@@ -92,6 +105,12 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return dial()
 	case event:
 		return a.onEvent(m)
+	case latest:
+		a.onLatest(m)
+	case quiet:
+		return a.onQuiet(m)
+	case refreshed:
+		return a.onRefreshed(m)
 	case core.Reply:
 		if m.Epoch != a.st.Epoch {
 			return nil
@@ -113,14 +132,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			return core.Fail(m.Err)
 		}
 	case core.Toast:
-		a.toast = &ui.Toast{Text: m.Text, Bad: m.Bad, At: a.st.Now}
-		if !m.Bad {
-			at := a.st.Now
-			return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastGone{at} })
-		}
+		return a.post(m)
 	case toastGone:
 		if a.toast != nil && a.toast.At.Equal(m.at) {
-			a.toast = nil
+			return a.dropToast()
 		}
 	case core.OpenWindow:
 		if _, ok := m.Screen.(*gate.Clashes); ok && a.hasClashWindow() {
@@ -131,8 +146,13 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		if i := slices.Index(a.windows, m.Screen); i >= 0 {
 			a.windows = slices.Delete(a.windows, i, i+1)
 		}
+		return a.nextToast()
 	case core.SwitchTab:
 		return a.setTab(m.Tab)
+	case menuRun:
+		if a.top() == m.owner {
+			return a.key(core.Press(m.key))
+		}
 	case tea.KeyPressMsg:
 		return a.key(m)
 	case tea.PasteMsg:
@@ -163,7 +183,7 @@ func (a *App) setSnap(s api.State) tea.Cmd {
 	if len(s.Clashes) > 0 && s.Account.Pending && !a.hasClashWindow() {
 		a.windows = append(a.windows, gate.NewClashes(s.Clashes))
 	}
-	return nil
+	return tea.Batch(a.nextToast(), a.checkUpdate())
 }
 
 func wantGate(st *core.State) bool {
@@ -235,12 +255,17 @@ func (a *App) capturing() bool {
 }
 
 func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
+	var next tea.Cmd
+	if a.toast != nil && a.toast.Bad {
+		next = a.dropToast()
+	}
+	return tea.Batch(next, a.press(k))
+}
+
+func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 	s := strings.ToLower(k.String())
 	if s == "ctrl+c" {
 		return a.quit()
-	}
-	if a.toast != nil && a.toast.Bad {
-		a.toast = nil
 	}
 	switch {
 	case a.small():
@@ -248,23 +273,35 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 			return a.quit()
 		}
 		return nil
-	case !a.st.Connected:
+	case !a.st.Connected && len(a.windows) == 0:
 		switch s {
 		case "q", "esc":
 			return a.quit()
 		case "enter":
-			return a.startDaemon()
+			if a.failed {
+				return a.startDaemon()
+			}
 		}
 		return nil
 	case len(a.windows) > 0 || a.gate != nil || a.capturing():
 		if s == "q" && len(a.windows) == 0 && !a.capturing() {
 			return a.quit()
 		}
+		if _, open := a.top().(*menu); s == "m" && len(a.windows) > 0 && !open && !a.capturing() {
+			return a.openMenu()
+		}
 		return a.updateTop(k)
 	}
 	switch s {
 	case "q":
 		return a.quit()
+	case "m":
+		return a.openMenu()
+	case "u":
+		if a.updateReady() {
+			a.windows = append(a.windows, &update{btn: 1})
+			return nil
+		}
 	case "1", "2", "3", "4", "5":
 		return a.setTab(int(s[0] - '1'))
 	case "left":
@@ -319,7 +356,7 @@ func (a *App) animating() bool {
 		return true
 	}
 	if !a.st.Connected {
-		return a.starting && !ui.Reduced()
+		return !a.veil && (a.starting || !a.failed) && !ui.Reduced()
 	}
 	if a.busy() && !ui.Reduced() {
 		return true

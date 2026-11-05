@@ -126,6 +126,8 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	return nil
 }
 
+func (s *Devices) Capturing() bool { return s.rename != nil }
+
 func (s *Devices) press(id string, st *core.State) tea.Cmd {
 	if id == "close" {
 		return core.Close(s)
@@ -147,7 +149,7 @@ func (s *Devices) press(id string, st *core.State) tea.Cmd {
 		c := st.C
 		return tea.Sequence(func() tea.Msg {
 			if err := c.RenameDevice(context.Background(), d.ID, name); err != nil {
-				return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+				return core.Toast{Text: core.Report(err), Bad: true}
 			}
 			return core.Toast{Text: "Renamed"}
 		}, s.load(st))
@@ -169,7 +171,7 @@ func SignOut() tea.Cmd {
 			return func() tea.Msg {
 				warn, err := c.Logout(context.Background(), false)
 				if err != nil {
-					return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+					return core.Toast{Text: core.Report(err), Bad: true}
 				}
 				return core.Toast{Text: core.Safe(cmpOr(warn, "Signed out"))}
 			}
@@ -193,7 +195,7 @@ func (s *Devices) remove(d api.Device) tea.Cmd {
 			c, id := st.C, d.ID
 			return tea.Sequence(func() tea.Msg {
 				if err := c.RevokeDevice(context.Background(), id); err != nil {
-					return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+					return core.Toast{Text: core.Report(err), Bad: true}
 				}
 				return core.Toast{Text: "Removed"}
 			}, s.load(st))
@@ -235,7 +237,7 @@ func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	body := ui.NewBox()
 	rows := 1
 	if s.list == nil {
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T("Loading", p.Muted).Pad(cw))
+		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Loading", p.Muted).Pad(cw))
 	} else {
 		s.sel = max(0, min(s.sel, len(s.list)-1))
 		fit := max(1, (win.Room(maxH)+1)/3)

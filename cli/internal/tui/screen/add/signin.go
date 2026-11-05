@@ -308,7 +308,7 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 	case s.loadReq:
 		s.loadReq = 0
 		if m.Err != nil {
-			s.err = core.Safe(m.Err.Error())
+			s.err = core.Report(m.Err)
 			return nil
 		}
 		l := m.Val.(loaded)
@@ -325,7 +325,7 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 		s.req, s.cancel = 0, nil
 		if m.Err != nil {
 			if !errors.Is(m.Err, context.Canceled) {
-				s.err = core.Safe(m.Err.Error())
+				s.err = core.Report(m.Err)
 			}
 			return nil
 		}
@@ -339,7 +339,7 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 			s.cfgID, s.question = r.ID, nil
 			return s.configure(st, nil, r.Step.State, "true")
 		case r.Step.Option != nil:
-			s.cfgID, s.qState, s.qErr = r.ID, r.Step.State, core.Safe(r.Step.Error)
+			s.cfgID, s.qState, s.qErr = r.ID, r.Step.State, core.Report(errors.New(r.Step.Error))
 			s.question, s.focus = newField(*r.Step.Option, nil), 0
 		default:
 			s.err = "Setup stopped without asking anything. Try again."
@@ -347,7 +347,7 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 	case s.saveReq:
 		s.saveReq = 0
 		if m.Err != nil {
-			s.err = core.Safe(m.Err.Error())
+			s.err = core.Report(m.Err)
 			return nil
 		}
 		a.goTo(name, st)
@@ -383,7 +383,7 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int) int {
 		}
 	}
 	waiting := func(text string) int {
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T(text, p.Muted).Pad(cw))
+		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(text, p.Muted).Pad(cw))
 		if s.authURL != "" {
 			body.Put(0, 2, win.Text(s.authURL, p.Faint))
 			return 3
@@ -446,7 +446,7 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int) int {
 		rows += 2
 	}
 	if s.req != 0 {
-		body.Put(0, rows+1, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T("Checking", p.Muted).Pad(cw))
+		body.Put(0, rows+1, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Checking", p.Muted).Pad(cw))
 		rows += 2
 	}
 	win.Body = body

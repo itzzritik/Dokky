@@ -46,6 +46,7 @@ type State struct {
 	Checks    []Check
 	Checked   time.Time
 	Checking  bool
+	Latest    string // a newer dokky to update to
 }
 
 func (s *State) Drive(id string) (api.Drive, bool) {
