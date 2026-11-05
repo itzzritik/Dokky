@@ -49,7 +49,11 @@ func newRootCmd() *cobra.Command {
 			if updateOnOpen(s.Version, os.Stderr) {
 				relaunch()
 			}
-			return tui.Run(cmd.Context(), tui.Deps{Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
+			err := tui.Run(cmd.Context(), tui.Deps{Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
+			if errors.Is(err, tui.ErrReopen) {
+				return reopen()
+			}
+			return err
 		},
 	}
 	cmd.SetVersionTemplate("dokky {{.Version}}\n")

@@ -1,6 +1,10 @@
 package ui
 
-import "charm.land/lipgloss/v2"
+import (
+	"image"
+
+	"charm.land/lipgloss/v2"
+)
 
 // drawn in order; Dim fades what is already drawn, Modal takes every click below it
 type Pass struct {
@@ -27,7 +31,8 @@ func (h Hits) At(x, y int) string {
 	return ""
 }
 
-func Compose(w, h int, passes ...Pass) (string, Hits) {
+// the screen, its click targets, and the caret of the field being typed in (nil when none shows)
+func Compose(w, h int, passes ...Pass) (string, Hits, *image.Point) {
 	c := lipgloss.NewCanvas(w, h)
 	var hits Hits
 	for _, p := range passes {
@@ -41,7 +46,26 @@ func Compose(w, h int, passes ...Pass) (string, Hits) {
 		c.Compose(comp)
 		hits = append(hits, hitPass{comp, p.Modal})
 	}
-	return c.Render(), hits
+	at := caret(c, w, h)
+	return c.Render(), hits, at
+}
+
+// a dimmed field lost its ink, so only the live one is found
+func caret(c *lipgloss.Canvas, w, h int) *image.Point {
+	r, g, b, _ := caretInk.RGBA()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			cell := c.CellAt(x, y)
+			if cell == nil || cell.Style.Fg == nil {
+				continue
+			}
+			if cr, cg, cb, _ := cell.Style.Fg.RGBA(); cr == r && cg == g && cb == b {
+				cell.Style.Fg = caretFg
+				return &image.Point{X: x, Y: y}
+			}
+		}
+	}
+	return nil
 }
 
 func dim(c *lipgloss.Canvas, w, h int) {

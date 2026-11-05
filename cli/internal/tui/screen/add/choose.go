@@ -1,6 +1,7 @@
 package add
 
 import (
+	"cmp"
 	"context"
 	"image/color"
 	"strconv"
@@ -42,9 +43,9 @@ func (p *picker) options(st *core.State) []option {
 	for i := range p.accounts {
 		acct := &p.accounts[i]
 		prov, _ := provider(st, acct.Type)
-		hint := "Your account"
+		hint := cmp.Or(prov.Name, acct.Type)
 		if acct.Drives > 0 {
-			hint = "Your account, " + core.Count(acct.Drives, "drive")
+			hint += ", " + core.Count(acct.Drives, "drive")
 		}
 		if match(acct.Name) || match(prov.Name) {
 			out = append(out, option{name: acct.Name, hint: hint, prov: prov, acct: acct})
@@ -107,25 +108,66 @@ func (a *Add) pickOption(st *core.State, o option) tea.Cmd {
 	return a.choose(st, o.prov, o.acct)
 }
 
+// a group heading, a gap, or an option
+type line struct {
+	head string
+	opt  int
+}
+
+// accounts already signed in and new services sit under their own headings, when there are both
+func grouped(opts []option) []line {
+	var out []line
+	mixed := len(opts) > 0 && opts[0].acct != nil && opts[len(opts)-1].acct == nil
+	for i, o := range opts {
+		switch {
+		case !mixed:
+		case i == 0:
+			out = append(out, line{head: "Your accounts", opt: -1})
+		case o.acct == nil && opts[i-1].acct != nil:
+			out = append(out, line{opt: -1}, line{head: "New account", opt: -1})
+		}
+		out = append(out, line{opt: i})
+	}
+	return out
+}
+
 func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 	pal := ui.P()
 	p := &a.pick
-	win.Title, win.Sub = "Where do your files live?", "Pick a service."
+	win.Title, win.Sub = "Add drive", "Where do your files live?"
 	cw := win.Inner()
 	body := ui.NewBox()
 	body.Add(0, 0, p.search.View("search", cw, true, pal.Surface))
 	opts := p.options(st)
-	room := max(3, min(10, win.Room(maxH)-2))
+	lines := grouped(opts)
+	room := max(3, min(14, win.Room(maxH)-2))
 	p.sel = max(0, min(p.sel, len(opts)-1))
-	if p.sel < p.top {
-		p.top = p.sel
+	at := 0
+	for j, l := range lines {
+		if l.opt == p.sel {
+			at = j
+		}
 	}
-	if p.sel >= p.top+room {
-		p.top = p.sel - room + 1
+	// a group's first option brings its heading into view
+	head := at
+	for head > 0 && lines[head-1].opt < 0 {
+		head--
+	}
+	if head < p.top {
+		p.top = head
+	}
+	if at >= p.top+room {
+		p.top = at - room + 1
 	}
 	rows := 0
-	for i := p.top; i < len(opts) && i < p.top+room; i++ {
-		o := opts[i]
+	for j := p.top; j < len(lines) && j < p.top+room; j++ {
+		l := lines[j]
+		if l.opt < 0 {
+			body.Put(0, 2+rows, ui.L(pal.Surface).Sp(2).T(l.head, pal.Faint).Pad(cw))
+			rows++
+			continue
+		}
+		i, o := l.opt, opts[l.opt]
 		body.Add(0, 2+rows, ui.Row("row:"+strconv.Itoa(i), cw, i == p.sel, pal.Surface, func(bg color.Color, iw int) string {
 			nc, hc := ui.Mix(pal.Muted, pal.Text, .6), pal.Faint
 			if i == p.sel {

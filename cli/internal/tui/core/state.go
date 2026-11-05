@@ -24,11 +24,14 @@ const (
 	Busy
 )
 
-// one line of the health page: what it means, the facts behind it and the fix
+// one line of the health page: what it means, the facts behind it, and either Fix all's repair or what only the person can do
 type Check struct {
 	Name, Status, Detail, Fix string
 	Facts                     [][2]string
 	Tone                      Tone
+	Auto                      string       // what Fix all does about it
+	Repair                    func() error // Fix all's work, off the update loop
+	Reopen                    bool         // dokky quits and opens again once repaired
 }
 
 type State struct {

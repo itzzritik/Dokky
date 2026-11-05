@@ -1,44 +1,50 @@
 package ui
 
 import (
-	"math"
 	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 )
 
-const tabsX = 14
+const compactX = 10
 
-// rows: blank, mark + tabs + chip, rule; tabs go compact ("‹ Overview ›  1/5") when narrow or crowded
-func Header(w int, t float64, tabs []string, active int, chip string) *lipgloss.Layer {
+// rows: blank, mark + tabs + chip, rule; tabs sit centred between the mark and the chip, compact ("‹ Overview ›  1/5") when crowded
+func Header(w int, tabs []string, active int, chip string) *lipgloss.Layer {
 	p := P()
 	b := NewBox()
-	var mark strings.Builder
-	for i, c := range "dokky" {
-		mark.WriteString(Paint(string(c), RampAt(.62+.3*math.Sin(t*1.4-float64(i)*.5)), nil, true))
-	}
-	b.Put(3, 1, mark.String())
+	brand := Paint("dokky", p.Accent, nil, true)
+	b.Put(2, 1, brand)
 	rule := make([]string, w)
 	for i := range rule {
-		rule[i] = Paint(G.H, p.Line, nil, false)
-	}
-	under := func(from, n int) {
-		for k := max(0, from); k < from+n && k < w; k++ {
-			rule[k] = Paint(G.Heavy, p.Accent, nil, false)
+		rule[i] = " "
+		if i >= 2 && i < w-2 {
+			rule[i] = Paint(G.H, p.Cap, nil, false)
 		}
 	}
-	gap := 4
-	if w >= 120 {
-		gap = 6
+	// the active tab's underline sweeps along the water ramp
+	under := func(from, n int) {
+		for i := 0; i < n; i++ {
+			if k := from + i; k >= 0 && k < w {
+				f := .5
+				if n > 1 {
+					f = float64(i) / float64(n-1)
+				}
+				rule[k] = Paint(G.Heavy, RampAt(.42+.38*f), nil, false)
+			}
+		}
+	}
+	gap := 2
+	if w >= 90 {
+		gap = 4
 	}
 	full := gap * (len(tabs) - 1)
 	for _, name := range tabs {
 		full += Width(name)
 	}
-	chipX := w - 3 - Width(chip)
-	x := tabsX
-	if w >= 90 && x+full+2 <= chipX {
+	chipX := w - 2 - Width(chip)
+	x := max(2+Width(brand)+2, min((w-full)/2, chipX-2-full))
+	if x+full <= chipX-2 {
 		for i, name := range tabs {
 			s := Paint(name, p.Muted, nil, false)
 			if i == active {
@@ -50,6 +56,7 @@ func Header(w int, t float64, tabs []string, active int, chip string) *lipgloss.
 		}
 		x -= gap
 	} else {
+		x = compactX
 		arrow := func(g string, to int) {
 			if to < 0 || to >= len(tabs) {
 				b.Put(x, 1, Paint(g, p.Line, nil, false))

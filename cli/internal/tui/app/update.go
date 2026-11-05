@@ -80,7 +80,7 @@ func (m *update) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		if !u.ok {
 			return m, tea.Batch(core.Close(m), core.Say("dokky is up to date"))
 		}
-		return m, tea.Batch(core.Close(m), core.Say("Updated to "+u.version+". Reopen dokky to use it."))
+		return m, core.Send(core.Reopen{})
 	}
 	return m, nil
 }

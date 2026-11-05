@@ -18,6 +18,12 @@ type Field struct {
 	Input       textinput.Model
 }
 
+// a focused field inks its caret cell with this; Compose finds it, gives the cell caretFg back and reports where the terminal's own blinking bar goes
+var (
+	caretInk = color.RGBA{1, 2, 3, 255}
+	caretFg  color.Color
+)
+
 func NewField(label, value, hint string, secret bool) *Field {
 	in := textinput.New()
 	in.Prompt = ""
@@ -41,7 +47,7 @@ func (f *Field) Type(msg tea.Msg) (tea.Cmd, bool) {
 	return nil, false
 }
 
-// label on the window fill, value on its own strip; the cursor is a solid cell
+// label on the window fill, value on its own strip; the caret is the terminal's cursor
 func (f *Field) View(id string, w int, focused bool, bg color.Color) *lipgloss.Layer {
 	p := P()
 	fb, bar := p.Field, " "
@@ -67,14 +73,17 @@ func (f *Field) View(id string, w int, focused bool, bg color.Color) *lipgloss.L
 	case len(val) == 0 && !focused:
 		in.T(f.Hint, p.Faint)
 	case len(val) == 0:
-		in.Raw(Paint(" ", fb, p.Text, false)).T(f.Hint, p.Faint)
+		hint := []rune(f.Hint + " ")
+		caretFg = p.Faint
+		in.Raw(Paint(string(hint[0]), caretInk, fb, false)).T(string(hint[1:]), p.Faint)
 	case focused:
 		end := min(len(val), start+iw)
 		in.T(string(val[start:pos]), p.Text)
+		caretFg = p.Text
 		if pos < len(val) {
-			in.Raw(Paint(string(val[pos]), fb, p.Text, false)).T(string(val[pos+1:end]), p.Text)
+			in.Raw(Paint(string(val[pos]), caretInk, fb, false)).T(string(val[pos+1:end]), p.Text)
 		} else {
-			in.Raw(Paint(" ", fb, p.Text, false))
+			in.Raw(Paint(" ", caretInk, fb, false))
 		}
 	default:
 		in.T(string(val[:min(len(val), iw)]), p.Text)

@@ -40,6 +40,9 @@ type RunChecks struct{}
 // the file system driver is missing; the app offers to install it
 type NeedDriver struct{}
 
+// quit and open dokky again in this terminal, onto whatever was just installed
+type Reopen struct{}
+
 type Req uint64
 
 var reqs atomic.Uint64
