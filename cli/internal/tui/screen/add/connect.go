@@ -59,6 +59,9 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 			if !errors.Is(m.Err, context.Canceled) {
 				r.failed = core.Report(m.Err)
 			}
+			if core.NoDriver(m.Err) {
+				return core.Send(core.NeedDriver{})
+			}
 			return nil
 		}
 		d := m.Val.(api.Drive)

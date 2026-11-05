@@ -16,11 +16,8 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-const (
-	sysW      = 18
-	seenW     = 13
-	activeFor = 10 * time.Minute
-)
+// the daemon talks to the server every 30 s and the server notes it at most every 5 min
+const activeFor = 10 * time.Minute
 
 // the devices on the account as a table, opened from Settings
 type Devices struct {
@@ -98,7 +95,7 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	case "down":
 		s.sel = min(len(s.list)-1, s.sel+1)
 	case "r":
-		s.rename = ui.NewField("", d.Name, "Device name", false)
+		s.rename = ui.NewField("", shown(d.Name), "Device name", false)
 		s.rename.Bare = true
 	case "d":
 		if d.Current {
@@ -114,7 +111,7 @@ func (s *Devices) Capturing() bool { return s.rename != nil }
 func (s *Devices) save(st *core.State) tea.Cmd {
 	name := strings.TrimSpace(s.rename.Value())
 	s.rename = nil
-	if s.sel >= len(s.list) || name == "" || name == s.list[s.sel].Name {
+	if s.sel >= len(s.list) || name == "" || name == shown(s.list[s.sel].Name) {
 		return nil
 	}
 	c, id := st.C, s.list[s.sel].ID
@@ -189,41 +186,30 @@ func osName(o string) string {
 	return o
 }
 
-// the name column takes what the system and last active columns leave; the system goes first on a narrow screen
-func columns(iw int) (nw, sw int) {
-	sw = sysW
-	if nw = iw - 2 - 2 - sw - 2 - seenW; nw < 14 {
-		sw, nw = 0, iw-2-2-seenW
-	}
-	return max(1, nw), sw
-}
+const cardH = 5
+
+// hostnames end in .local on macOS; the name people know doesn't
+func shown(name string) string { return strings.TrimSuffix(name, ".local") }
 
 func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(84, maxW), Title: "Your devices"}
+	win := &ui.Window{W: min(72, maxW), Title: "Your devices"}
 	cw := win.Inner()
-	iw := cw - 3
-	nw, sw := columns(iw)
 	body := ui.NewBox()
-	head := ui.L(p.Surface).Sp(2).Raw(ui.L(p.Surface).T("Device", p.Faint).Pad(nw - 2))
-	if sw > 0 {
-		head.Sp(2).Raw(ui.L(p.Surface).T("System", p.Faint).Pad(sw))
-	}
-	body.Put(0, 0, ui.L(p.Surface).Sp(2).Raw(head.Right(iw, ui.L(p.Surface).T("Last active", p.Faint))).Pad(cw))
-	body.Put(0, 1, ui.L(p.Surface).Sp(2).T(strings.Repeat(ui.G.H, iw), p.Line).Pad(cw))
-	rows := 3
+	rows := 1
 	switch {
 	case !st.Snap.Account.LoggedIn:
-		body.Put(0, 2, ui.L(p.Surface).Sp(2).T("Sign in to see your devices.", p.Muted).Pad(cw))
+		body.Put(0, 0, win.Text("Sign in to see your devices.", p.Muted))
 	case s.list == nil:
-		body.Put(0, 2, ui.L(p.Surface).Sp(2).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Loading", p.Muted).Pad(cw))
+		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Loading", p.Muted).Pad(cw))
 	default:
 		s.sel = max(0, min(s.sel, len(s.list)-1))
-		fit := max(1, win.Room(maxH)-2)
+		fit := max(1, (win.Room(maxH)+1)/cardH)
 		top := max(0, s.sel-fit+1)
 		for i := top; i < len(s.list) && i < top+fit; i++ {
-			body.Hit(0, 2+i-top, "row:"+s.list[i].ID, s.entry(st, s.list[i], cw, nw, sw, i == s.sel))
-			rows = 3 + i - top
+			y := (i - top) * cardH
+			body.Add(0, y, s.card(st, s.list[i], cw, i == s.sel))
+			rows = y + cardH - 1
 		}
 	}
 	win.Fit(rows, maxH)
@@ -231,32 +217,26 @@ func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	return win.Layer()
 }
 
-// one device on one line: a dot for this one, its name, what it runs and when it was last active
-func (s *Devices) entry(st *core.State, d api.Device, w, nw, sw int, on bool) string {
+// a device as a soft card: its name and when it was last active, then what it runs
+func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.Layer {
 	p := ui.P()
-	return ui.RowLine(w, on, p.Surface, func(bg color.Color, iw int) string {
-		l := ui.L(bg)
-		if d.Current {
-			l.B(ui.G.Here, p.Accent).Sp(1)
-		} else {
-			l.Sp(2)
-		}
+	return ui.Card("row:"+d.ID, w, on, ui.Mix(p.Surface, p.Text, .045), p.Surface, func(bg color.Color, iw int) []string {
+		name := ui.L(bg)
 		switch {
 		case on && s.rename != nil:
-			l.Raw(ui.L(bg).Raw(s.rename.View("rename", nw-2, true, bg).GetContent()).Pad(nw - 2))
-		case on:
-			l.B(core.Fit(d.Name, nw-2), p.Text)
+			name.Raw(ui.L(bg).Raw(s.rename.View("rename", iw-14, true, bg).GetContent()).Pad(iw - 14))
 		default:
-			l.T(core.Fit(d.Name, nw-2), p.Text)
-		}
-		row := ui.L(bg).Raw(l.Pad(nw))
-		if sw > 0 {
-			row.Sp(2).Raw(ui.L(bg).T(core.Fit(cmp.Or(d.OSName, osName(d.OS)), sw), p.Muted).Pad(sw))
+			name.B(core.Fit(shown(d.Name), iw-14), p.Text)
 		}
 		seen := ui.L(bg).T(core.Ago(d.LastSeenAt, st.Now), p.Faint)
 		if d.Current || st.Now.Sub(d.LastSeenAt) < activeFor {
 			seen = ui.L(bg).T("Active now", p.Kelp)
 		}
-		return row.Right(iw, seen)
+		about := ui.L(bg).T(cmp.Or(d.OSName, osName(d.OS)), p.Muted)
+		here := ui.L(bg)
+		if d.Current {
+			here.T("This device", p.Accent)
+		}
+		return []string{name.Right(iw, seen), about.Right(iw, here)}
 	})
 }

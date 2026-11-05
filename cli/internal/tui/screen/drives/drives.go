@@ -203,9 +203,10 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 	if s.finding || s.find.Value() != "" {
 		b.Add(0, 0, s.find.View("find", lw, s.finding, nil))
 	} else {
-		b.Put(2, 0, ui.L(nil).T("Your drives", p.Muted).Right(lw-3, ui.L(nil).T(strconv.Itoa(len(st.Snap.Drives)), p.Faint)))
+		b.Put(2, 0, ui.L(nil).B("All drives", p.Text).Right(lw-3, ui.L(nil).Raw(ui.Badge(strconv.Itoa(len(st.Snap.Drives)), nil))))
 	}
-	room := h - 2
+	b.Put(2, 1, ui.Paint(strings.Repeat(ui.G.H, max(0, lw-3)), ui.Mix(p.Bg, p.Text, .12), nil, false))
+	room := h - 3
 	if s.sel < s.top {
 		s.top = s.sel
 	}
@@ -214,7 +215,7 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	for i := s.top; i < len(list) && i < s.top+room; i++ {
 		x, on := list[i], i == s.sel
-		b.Add(0, 2+i-s.top, ui.Row("row:"+x.ID, lw, on, nil, func(bg color.Color, iw int) string {
+		b.Add(0, 3+i-s.top, ui.Row("row:"+x.ID, lw, on, nil, func(bg color.Color, iw int) string {
 			nc := ui.Mix(p.Muted, p.Text, .55)
 			l := ui.L(bg)
 			if on {
@@ -226,7 +227,7 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 		}))
 	}
 	if len(list) == 0 {
-		b.Put(2, 2, ui.Paint("No drive matches.", p.Faint, nil, false))
+		b.Put(2, 3, ui.Paint("No drive matches.", p.Faint, nil, false))
 	}
 	if st.Wide {
 		rule := make([]string, h)

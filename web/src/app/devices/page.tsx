@@ -33,7 +33,7 @@ export default async function DevicesPage() {
           <tbody>
             {rows.map((d) => (
               <tr className="border-t" key={String(d._id)}>
-                <td className="py-2">{d.name}</td>
+                <td className="py-2">{d.name.replace(/\.local$/u, "")}</td>
                 <td>
                   {d.osName || d.os} / {d.arch}
                 </td>

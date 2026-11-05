@@ -130,8 +130,15 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			if notRunning(m.Err) {
 				return a.onLost(lost{epoch: a.st.Epoch})
 			}
+			if core.NoDriver(m.Err) {
+				return offerDriver()
+			}
 			return core.Fail(m.Err)
 		}
+	case core.NeedDriver:
+		return offerDriver()
+	case driverDone:
+		return a.onDriverDone(m)
 	case core.Toast:
 		return a.post(m)
 	case toastGone:

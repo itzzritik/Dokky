@@ -37,6 +37,9 @@ type Reconnected struct{}
 // ask the app to run the health checks again
 type RunChecks struct{}
 
+// the file system driver is missing; the app offers to install it
+type NeedDriver struct{}
+
 type Req uint64
 
 var reqs atomic.Uint64
