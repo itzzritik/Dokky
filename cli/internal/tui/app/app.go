@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"image"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type unveil struct{}
 const veilFor = 300 * time.Millisecond
 
 type App struct {
+	reopen  bool
 	st      *core.State
 	deps    core.Deps
 	tabs    []core.Screen
@@ -39,6 +41,7 @@ type App struct {
 	start   time.Time
 	ticking bool
 	hits    ui.Hits
+	caret   *image.Point // the typed-in field's caret, for the terminal's bar cursor
 	events  <-chan client.Event
 	stop    context.CancelFunc
 
@@ -50,6 +53,9 @@ type App struct {
 	heard             time.Time // last event from the daemon
 	lostAt            time.Time // when a live connection dropped
 }
+
+// the TUI ended to open again
+func (a *App) Reopening() bool { return a.reopen }
 
 func New(deps core.Deps) *App {
 	now := time.Now()
@@ -135,6 +141,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			}
 			return core.Fail(m.Err)
 		}
+	case core.Reopen:
+		a.reopen = true
+		return tea.Quit
 	case core.NeedDriver:
 		return offerDriver()
 	case driverDone:

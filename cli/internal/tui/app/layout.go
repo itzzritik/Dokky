@@ -16,7 +16,11 @@ const (
 )
 
 func (a *App) View() tea.View {
+	a.caret = nil
 	v := tea.NewView(a.render())
+	if a.caret != nil {
+		v.Cursor = &tea.Cursor{Position: tea.Position{X: a.caret.X, Y: a.caret.Y}, Shape: tea.CursorBar, Blink: true}
+	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
@@ -49,7 +53,7 @@ func (a *App) render() string {
 		left = a.gate.Actions(a.st)
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
-			ui.Header(w, a.st.T, tabNames, a.active, a.account()),
+			ui.Header(w, tabNames, a.active, a.account()),
 			a.tabs[a.active].View(a.st, bw, bh).X(bodyX).Y(bodyY),
 		)
 		passes = append(passes, ui.Pass{Layer: base})
@@ -84,8 +88,8 @@ func (a *App) render() string {
 	if a.toast != nil && a.toast.Live(a.st.Now) && !a.waiting() {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
-	out, hits := ui.Compose(w, h, passes...)
-	a.hits = hits
+	out, hits, caret := ui.Compose(w, h, passes...)
+	a.hits, a.caret = hits, caret
 	return out
 }
 

@@ -58,11 +58,14 @@ func serviceCheck(env doctor.Env, by map[string]doctor.Check) tui.Check {
 	switch {
 	case !run.OK:
 		v = ""
-		c.Status, c.Tone, c.Fix = "Not running", tui.Bad, "Quit dokky and open it again to start it."
+		c.Status, c.Tone, c.Auto = "Not running", tui.Bad, "Fix all starts the background service."
 	case !same.OK:
-		c.Status, c.Tone, c.Fix = "Out of date", tui.Warn, "Quit dokky and open it again so both run the same version."
+		c.Status, c.Tone, c.Auto, c.Reopen = "Out of date", tui.Warn, "Fix all restarts dokky so both run the same version.", true
 	case !env.DaemonInstalled:
-		c.Status, c.Tone, c.Fix = "Off at login", tui.Warn, "Run dokky status in a terminal to set it up again."
+		c.Status, c.Tone, c.Auto = "Off at login", tui.Warn, "Fix all sets the background service to start at login."
+	}
+	if c.Auto != "" {
+		c.Repair = restartService
 	}
 	c.Facts = [][2]string{{"Version", v}, {"At login", login}, {"Log", core.Home(env.LogPath)}}
 	if run.OK && !same.OK {
@@ -104,7 +107,8 @@ func cacheCheck(env doctor.Env, s api.State, disk doctor.Check) tui.Check {
 	}
 	c.Facts = [][2]string{{"In use", used}, {"Free on disk", free}, {"Kept free", floor}, {"Folder", core.Home(s.CacheDir)}}
 	if disk.Warn {
-		c.Status, c.Tone, c.Fix = "Low on space", tui.Warn, upper(disk.Fix)+"."
+		c.Status, c.Tone = "Low on space", tui.Warn
+		c.Auto, c.Repair = "Fix all clears cached files. Files not uploaded yet stay.", func() error { return callOnce(api.MCacheClear, nil, nil) }
 	}
 	return c
 }
@@ -130,7 +134,8 @@ func finderCheck() tui.Check {
 	c := tui.Check{Name: "Finder name", Status: "Shows as " + platform.FinderHost, Detail: "Your drives show under " + platform.FinderHost + " in Finder, not localhost.", Tone: tui.Good,
 		Facts: [][2]string{{"Name", platform.FinderHost + " is 127.0.0.1"}, {"Set in", "/etc/hosts"}}}
 	if !platform.FinderHostReady() {
-		c.Status, c.Tone, c.Fix = "Shows as localhost", tui.Warn, "Open dokky in a terminal and allow the admin prompt."
+		c.Status, c.Tone = "Shows as localhost", tui.Warn
+		c.Auto, c.Repair = "Fix all adds the Dokky name. macOS asks for your password.", platform.EnsureFinderHost
 	}
 	return c
 }
@@ -141,13 +146,16 @@ func driverCheck(by map[string]doctor.Check) tui.Check {
 		// the same lookup mounting uses, so this can't pass while mounts fail
 		d, name = doctor.Check{OK: true}, "WinFsp"
 		if err := engine.CheckDriver(); err != nil {
-			d = doctor.Check{Detail: err.Error(), Fix: "Reconnect a drive and dokky offers to install it, or run: winget install -e --id WinFsp.WinFsp"}
+			d = doctor.Check{Detail: err.Error(), Fix: "Install it with: winget install -e --id WinFsp.WinFsp"}
 		}
 	}
 	c := tui.Check{Name: "File system driver", Status: "Installed", Detail: "Lets your drives show up as folders.", Tone: tui.Good, Facts: [][2]string{{"Driver", name}}}
 	if !d.OK {
 		c.Status, c.Tone, c.Fix = "Missing", tui.Bad, upper(d.Fix)
 		c.Facts = append(c.Facts, [2]string{"Error", d.Detail})
+		if runtime.GOOS == "windows" {
+			c.Auto, c.Repair = "Fix all installs WinFsp. Windows asks for permission.", platform.InstallWinFsp
+		}
 	}
 	return c
 }

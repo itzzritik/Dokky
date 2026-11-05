@@ -186,7 +186,7 @@ func osName(o string) string {
 	return o
 }
 
-const cardH = 5
+const cardH = 4
 
 // hostnames end in .local on macOS; the name people know doesn't
 func shown(name string) string { return strings.TrimSuffix(name, ".local") }
@@ -209,7 +209,7 @@ func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 		for i := top; i < len(s.list) && i < top+fit; i++ {
 			y := (i - top) * cardH
 			body.Add(0, y, s.card(st, s.list[i], cw, i == s.sel))
-			rows = y + cardH - 1
+			rows = y + cardH
 		}
 	}
 	win.Fit(rows, maxH)
@@ -217,7 +217,7 @@ func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	return win.Layer()
 }
 
-// a device as a soft card: its name and when it was last active, then what it runs
+// a device as a soft card: its name and one status, then what it runs; this one is always active, so it just says so
 func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.Layer {
 	p := ui.P()
 	return ui.Card("row:"+d.ID, w, on, ui.Mix(p.Surface, p.Text, .045), p.Surface, func(bg color.Color, iw int) []string {
@@ -229,14 +229,12 @@ func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.L
 			name.B(core.Fit(shown(d.Name), iw-14), p.Text)
 		}
 		seen := ui.L(bg).T(core.Ago(d.LastSeenAt, st.Now), p.Faint)
-		if d.Current || st.Now.Sub(d.LastSeenAt) < activeFor {
+		switch {
+		case d.Current:
+			seen = ui.L(bg).T("This device", p.Accent)
+		case st.Now.Sub(d.LastSeenAt) < activeFor:
 			seen = ui.L(bg).T("Active now", p.Kelp)
 		}
-		about := ui.L(bg).T(cmp.Or(d.OSName, osName(d.OS)), p.Muted)
-		here := ui.L(bg)
-		if d.Current {
-			here.T("This device", p.Accent)
-		}
-		return []string{name.Right(iw, seen), about.Right(iw, here)}
+		return []string{name.Right(iw, seen), ui.L(bg).T(cmp.Or(d.OSName, osName(d.OS)), p.Muted).Pad(iw)}
 	})
 }

@@ -1,8 +1,12 @@
 package health
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"image/color"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,8 +27,15 @@ const (
 )
 
 type Health struct {
-	sel   int
-	moved bool
+	sel    int
+	moved  bool
+	fixing bool
+}
+
+type fixed struct {
+	n      int
+	err    error
+	reopen bool
 }
 
 func New() *Health { return &Health{} }
@@ -46,18 +57,19 @@ func drives(st *core.State) core.Check {
 	}
 	on := 0
 	var failed, stale []string
+	var broken []api.Drive
 	for _, d := range st.Snap.Drives {
 		words := ui.DriveStatus(d, st.T).Words
 		switch d.State {
 		case api.Connected:
 			on++
 		case api.Failed:
-			failed = append(failed, d.Name)
+			failed, broken = append(failed, d.Name), append(broken, d)
 			if d.Error != "" {
 				words = d.Error
 			}
 		case api.Reconnect:
-			stale = append(stale, d.Name)
+			stale, broken = append(stale, d.Name), append(broken, d)
 		}
 		c.Facts = append(c.Facts, [2]string{d.Name, words})
 	}
@@ -65,10 +77,32 @@ func drives(st *core.State) core.Check {
 	switch {
 	case len(failed) > 0:
 		c.Tone, c.Status = core.Bad, strings.Join(failed, ", ")+" can't connect"
-		c.Fix = "Make sure the server is on and reachable, then press r on Overview to reconnect."
 	case len(stale) > 0:
 		c.Tone, c.Status = core.Warn, strings.Join(stale, ", ")+" needs a reconnect"
-		c.Fix = "Press r on Overview to reconnect and apply the new settings."
+	}
+	if len(broken) > 0 {
+		names := make([]string, len(broken))
+		for i, d := range broken {
+			names[i] = d.Name
+		}
+		cl := st.C
+		c.Auto = "Fix all reconnects " + strings.Join(names, ", ") + "."
+		c.Repair = func() error {
+			var errs []error
+			for _, d := range broken {
+				ctx := context.Background()
+				if d.State == api.Reconnect {
+					if _, err := cl.Disconnect(ctx, d.ID); err != nil {
+						errs = append(errs, err)
+						continue
+					}
+				}
+				if _, err := cl.Connect(ctx, d.ID); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", d.Name, err))
+				}
+			}
+			return errors.Join(errs...)
+		}
 	}
 	return c
 }
@@ -109,7 +143,15 @@ func uploads(st *core.State) core.Check {
 	case len(failed) > 0:
 		c.Tone, c.Status = core.Warn, strconv.Itoa(len(failed))+" failed"
 		c.Facts = append(c.Facts, [2]string{"Error", path.Base(failed[0].Name) + ": " + failed[0].Error})
-		c.Fix = "dokky tries again on its own. To try now, pick the file in Activity and press enter."
+		cl := st.C
+		c.Auto = "Fix all tries the failed uploads again."
+		c.Repair = func() error {
+			var errs []error
+			for _, t := range failed {
+				errs = append(errs, cl.Retry(context.Background(), t.DriveID, t.Name))
+			}
+			return errors.Join(errs...)
+		}
 	case moving+waiting > 0:
 		c.Tone, c.Status = core.Busy, strconv.Itoa(moving+waiting)+" to upload"
 	}
@@ -131,7 +173,7 @@ func sync(st *core.State) core.Check {
 	case a.SignedOut:
 		c.Status, c.Tone, c.Fix = "Signed out", core.Warn, "This computer was signed out of your account. Sign in again from Settings."
 	case a.Offline:
-		c.Status, c.Tone, c.Fix = "Offline", core.Warn, "dokky.ritik.me can't be reached. Your drives keep working and sync when it is back."
+		c.Status, c.Tone, c.Fix = "Offline", core.Warn, "Check your internet connection. Your drives keep working and sync when dokky.ritik.me is back."
 	default:
 		c.Status = "Synced " + core.Ago(a.LastSyncAt, st.Now)
 	}
@@ -155,6 +197,16 @@ func (h *Health) selected(cs []core.Check) int {
 }
 
 func (h *Health) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
+	if m, ok := msg.(fixed); ok {
+		h.fixing = false
+		switch {
+		case m.reopen && m.err == nil:
+			return h, core.Send(core.Reopen{})
+		case m.err != nil:
+			return h, tea.Batch(core.Fail(m.err), core.Send(core.RunChecks{}))
+		}
+		return h, tea.Batch(core.Say("Fixed "+core.Count(m.n, "problem")), core.Send(core.RunChecks{}))
+	}
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		if c, ok := msg.(core.Click); ok && strings.HasPrefix(c.ID, "check:") {
@@ -174,6 +226,8 @@ func (h *Health) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		h.sel, h.moved = min(len(cs)-1, h.selected(cs)+1), true
 	case "r":
 		return h, core.Send(core.RunChecks{})
+	case "f":
+		return h, h.fixAll(st)
 	case "c":
 		return h, tea.Batch(tea.SetClipboard(report(st, cs)), core.Say("Report copied"))
 	}
@@ -189,15 +243,22 @@ func report(st *core.State, cs []core.Check) string {
 		for _, f := range c.Facts {
 			b.WriteString("      " + f[0] + ": " + f[1] + "\n")
 		}
-		if c.Fix != "" {
-			b.WriteString("      To fix it: " + c.Fix + "\n")
+		switch {
+		case c.Auto != "":
+			b.WriteString("      " + c.Auto + "\n")
+		case c.Fix != "":
+			b.WriteString("      Needs you: " + c.Fix + "\n")
 		}
 	}
 	return b.String()
 }
 
 func (h *Health) Actions(st *core.State) []core.Action {
-	acts := []core.Action{{Key: "↑↓", Label: "move"}, {Key: "c", Label: "copy report"}}
+	acts := []core.Action{{Key: "↑↓", Label: "move"}}
+	if len(repairs(st)) > 0 && !h.fixing {
+		acts = append(acts, core.Action{Key: "f", Label: "fix all", Accent: true})
+	}
+	acts = append(acts, core.Action{Key: "c", Label: "copy report"})
 	if !st.Checking {
 		acts = append(acts, core.Action{Key: "r", Label: "check again"})
 	}
@@ -207,6 +268,9 @@ func (h *Health) Actions(st *core.State) []core.Action {
 func (h *Health) Animating(st *core.State) bool {
 	if ui.Reduced() {
 		return false
+	}
+	if h.fixing {
+		return true
 	}
 	for _, c := range checks(st) {
 		if c.Tone == core.Busy {
@@ -238,7 +302,7 @@ func (h *Health) View(st *core.State, w, ht int) *lipgloss.Layer {
 	if ht >= shortBox+bannerH {
 		bh = bannerH
 	}
-	b.Lines(0, 0, banner(st, cs, w, bh))
+	b.Lines(0, 0, h.banner(st, cs, w, bh))
 	y := bh + 1
 	room := ht - y
 	if room <= 0 {
@@ -302,8 +366,13 @@ func detail(st *core.State, c core.Check, w, limit int) []string {
 			out = append(out, ui.L(nil).Raw(ui.L(nil).T(k, p.Faint).Pad(kw)).T(l, vc).String())
 		}
 	}
-	if c.Fix != "" {
-		out = append(out, "", ui.Paint("To fix it", s.Fg, nil, true))
+	switch {
+	case c.Tone != core.Warn && c.Tone != core.Bad:
+	case c.Repair != nil:
+		out = append(out, "")
+		out = append(out, wrap(c.Auto, w, p.Accent)...)
+	case c.Fix != "":
+		out = append(out, "", ui.Paint("Needs you", s.Fg, nil, true))
 		out = append(out, wrap(c.Fix, w, p.Text)...)
 	}
 	return out[:min(len(out), max(0, limit))]
@@ -336,7 +405,7 @@ func row(st *core.State, c core.Check, w int, on bool) string {
 }
 
 // one tinted band when something needs you, a calm line when all is well
-func banner(st *core.State, cs []core.Check, w, h int) []string {
+func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
 	p := ui.P()
 	n, bad := 0, false
 	for _, c := range cs {
@@ -365,5 +434,47 @@ func banner(st *core.State, cs []core.Check, w, h int) []string {
 	if n == 1 {
 		verb = " needs attention."
 	}
-	return ui.Banner(w, h, bad, core.Count(n, "problem")+verb, "", "")
+	text, key, action := core.Count(n, "problem")+verb, "", ""
+	switch {
+	case hl.fixing:
+		text = ui.Spin(st.T) + " Fixing"
+	case len(repairs(st)) > 0:
+		key, action = "f", "fix all"
+	}
+	return ui.Banner(w, h, bad, text, key, action)
+}
+
+// the problems Fix all can repair: this computer's first, then drives and uploads, anything that reopens dokky last
+func repairs(st *core.State) []core.Check {
+	var now, last []core.Check
+	for _, c := range append(slices.Clone(st.Checks), drives(st), uploads(st)) {
+		switch {
+		case c.Repair == nil || c.Tone != core.Warn && c.Tone != core.Bad:
+		case c.Reopen:
+			last = append(last, c)
+		default:
+			now = append(now, c)
+		}
+	}
+	return append(now, last...)
+}
+
+func (h *Health) fixAll(st *core.State) tea.Cmd {
+	todo := repairs(st)
+	if h.fixing || len(todo) == 0 {
+		return nil
+	}
+	h.fixing = true
+	return func() tea.Msg {
+		var errs []error
+		reopen := false
+		for _, c := range todo {
+			if err := c.Repair(); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", c.Name, err))
+				continue
+			}
+			reopen = reopen || c.Reopen
+		}
+		return fixed{n: len(todo), err: errors.Join(errs...), reopen: reopen}
+	}
 }

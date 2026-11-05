@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -119,6 +120,33 @@ func relaunch() {
 		return
 	}
 	_ = syscall.Exec(bin, os.Args, append(os.Environ(), updatedEnv+"=1"))
+}
+
+// runs dokky again in this terminal: in place where the OS allows it, else as a child whose exit is this one's
+func reopen() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	env := append(os.Environ(), updatedEnv+"=1")
+	if runtime.GOOS != "windows" {
+		return syscall.Exec(exe, os.Args, env)
+	}
+	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, env
+	err = cmd.Run()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		os.Exit(ee.ExitCode())
+	}
+	return err
+}
+
+// the service starts again from the installed dokky, set up first if it isn't
+func restartService() error {
+	_ = callOnce("daemon.restart", nil, nil)
+	time.Sleep(time.Second)
+	return startDaemon(io.Discard)
 }
 
 func callOnce(method string, params, result any) error {
