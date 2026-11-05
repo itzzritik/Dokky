@@ -66,16 +66,16 @@ func SpaceMeter(w int, d api.Drive, t, grow float64, under color.Color) []string
 		if d.State == api.Connected {
 			why = "Not reported"
 		}
-		return Meter(w, 0, t, false, under, []Seg{{Text: "Free space unknown", Tone: 1}}, []Seg{{Text: why, Tone: 2}})
+		return Meter(w, 0, t, false, under, []Seg{{Text: "Free space unknown", Tone: 1}}, nil, []Seg{{Text: why, Tone: 2}})
 	}
 	used := 1 - float64(sp.Free)/float64(sp.Total)
-	left := []Seg{{Text: core.Size(int64(float64(sp.Total-sp.Free)*grow)) + " used"}, {Text: " of " + core.Size(sp.Total), Tone: 1},
-		{Text: "  " + strconv.Itoa(int(used*grow*100+.5)) + "%", Tone: 2}}
-	return Meter(w, used*grow, t, used > .9, under, left, []Seg{{Text: core.Size(sp.Free) + " free", Tone: 1}})
+	left := []Seg{{Text: core.Size(int64(float64(sp.Total-sp.Free) * grow))}, {Text: " of " + core.Size(sp.Total), Tone: 2}}
+	pct := []Seg{{Text: strconv.Itoa(int(used*grow*100+.5)) + "%", Tone: 1}}
+	return Meter(w, used*grow, t, used > .9, under, left, pct, []Seg{{Text: core.Size(sp.Free)}, {Text: " free", Tone: 2}})
 }
 
-// under is what the meter sits on, nil for the screen
-func Meter(w int, frac, t float64, warn bool, under color.Color, left, right []Seg) []string {
+// under is what the meter sits on, nil for the screen; mid rides the fill's edge
+func Meter(w int, frac, t float64, warn bool, under color.Color, left, mid, right []Seg) []string {
 	p := P()
 	out := make([]string, 3)
 	if w <= 0 {
@@ -139,9 +139,36 @@ func Meter(w int, frac, t float64, warn bool, under color.Color, left, right []S
 		}
 		return n
 	}
-	place(2, left)
-	if rw := width(right); w-2-rw >= 2+width(left)+3 {
-		place(w-2-rw, right)
+	// every label sits wholly inside the fill or wholly after it, never across the edge
+	inside := func(x, n int) bool { return x+n <= full-1 }
+	lw, mw, rw := width(left), width(mid), width(right)
+	lx := 2
+	if !inside(lx, lw) {
+		lx = max(lx, full+1)
+	}
+	rx := w - 2 - rw
+	if rx < full+1 && !inside(rx, rw) {
+		rx = full - 1 - rw
+	}
+	if rx < lx+lw+3 {
+		rx = w
+	}
+	mx := full - 1 - mw
+	if mx < lx+lw+3 {
+		mx = max(full+1, lx+lw+3)
+	}
+	if mw > 0 && mx+mw > min(rx-3, w-1) {
+		mw = 0
+		if mx = lx + lw + 2; mx+width(mid) <= min(rx-3, w-1) && (inside(lx, lw+2+width(mid)) || lx > full) {
+			mw = width(mid)
+		}
+	}
+	place(lx, left)
+	if mw > 0 {
+		place(mx, mid)
+	}
+	if rx < w {
+		place(rx, right)
 	}
 
 	for row := 0; row < 3; row++ {

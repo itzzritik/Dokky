@@ -76,7 +76,11 @@ func (a *App) render() string {
 			}
 		}
 	}
-	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, more, "v"+buildinfo.Version).Y(h - 2)})
+	version := "v" + buildinfo.Version
+	if strings.Contains(buildinfo.Version, "dev") {
+		version = "vDev"
+	}
+	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, more, version).Y(h - 2)})
 	if a.toast != nil && a.toast.Live(a.st.Now) && !a.waiting() {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}

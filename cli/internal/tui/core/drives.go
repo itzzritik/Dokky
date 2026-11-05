@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
+	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 )
 
@@ -39,6 +41,12 @@ func drive(st *State, id string, what int) tea.Cmd {
 		}
 		return DriveDone{ID: id, Err: err}
 	}
+}
+
+// WinFsp is missing on Windows
+func NoDriver(err error) bool {
+	var e *client.Error
+	return errors.As(err, &e) && e.Code == "no_driver"
 }
 
 func Connect(st *State, id string) tea.Cmd    { return drive(st, id, doConnect) }

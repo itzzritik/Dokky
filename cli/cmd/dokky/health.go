@@ -11,6 +11,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/doctor"
+	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/tui"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
@@ -137,7 +138,11 @@ func finderCheck() tui.Check {
 func driverCheck(by map[string]doctor.Check) tui.Check {
 	d, name := by["fuse3"], "FUSE 3"
 	if runtime.GOOS == "windows" {
-		d, name = by["winfsp"], "WinFsp"
+		// the same lookup mounting uses, so this can't pass while mounts fail
+		d, name = doctor.Check{OK: true}, "WinFsp"
+		if err := engine.CheckDriver(); err != nil {
+			d = doctor.Check{Detail: err.Error(), Fix: "Reconnect a drive and dokky offers to install it, or run: winget install -e --id WinFsp.WinFsp"}
+		}
 	}
 	c := tui.Check{Name: "File system driver", Status: "Installed", Detail: "Lets your drives show up as folders.", Tone: tui.Good, Facts: [][2]string{{"Driver", name}}}
 	if !d.OK {

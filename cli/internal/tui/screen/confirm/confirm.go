@@ -12,13 +12,19 @@ type Confirm struct {
 	Question, Line, Do string
 	Toggle             string // optional switch, off by default
 	Run                func(st *core.State, toggled bool) tea.Cmd
+	Positive           bool // nothing is lost: the button is primary and focused
 
 	on       bool
 	onToggle bool
 	active   int // 0 cancel, 1 do
 }
 
-func Open(c *Confirm) tea.Cmd { return core.Open(c) }
+func Open(c *Confirm) tea.Cmd {
+	if c.Positive {
+		c.active = 1
+	}
+	return core.Open(c)
+}
 
 func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch m := msg.(type) {
@@ -68,7 +74,7 @@ func (c *Confirm) press(st *core.State, i int) tea.Cmd {
 func (c *Confirm) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
 	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active,
-		Buttons: []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "do", Label: c.Do, Danger: true}}}
+		Buttons: []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "do", Label: c.Do, Danger: !c.Positive, Primary: c.Positive}}}
 	if c.onToggle {
 		win.Active = -1
 	}

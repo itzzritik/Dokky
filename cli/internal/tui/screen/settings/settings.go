@@ -34,12 +34,12 @@ type row struct {
 	kind                kind
 	tone                color.Color
 	frac                float64 // a switch's knob, 0 off to 1 on
+	apart               bool    // a gap above, no heading
 	run                 func(*core.State) tea.Cmd
 }
 
 type Settings struct {
 	sel, top int
-	syncing  bool
 	pending  *api.Settings
 	flipped  map[string]time.Time
 }
@@ -65,57 +65,40 @@ func (s *Settings) set(st *core.State, change func(*api.Settings)) tea.Cmd {
 
 type setDone struct{ err error }
 
+// sync runs every 30 seconds on its own, so it has no row
 func (s *Settings) rows(st *core.State) []row {
 	p := ui.P()
 	set, acct := s.current(st), st.Snap.Account
-	var rows []row
-	if acct.LoggedIn {
-		label := "Sync now"
-		if s.syncing {
-			label = "Syncing"
-		}
-		rows = append(rows, row{group: "Sync", label: label, kind: action, run: s.sync})
-	}
-	rows = append(rows,
+	rows := []row{
 		s.toggle(st, "General", "Notify when a drive disconnects", set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
+		// between the switches, so their pills don't touch
+		{label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
 		s.toggle(st, "", "Automatic updates", set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
-		row{group: "Storage", label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
-	)
+	}
 	if acct.LoggedIn {
 		rows = append(rows,
-			row{group: "Account", label: "Devices", value: "Your devices", kind: action, tone: p.Faint, run: devices.Open},
+			row{group: "Account", label: "Your devices", kind: action, run: devices.Open},
 			row{label: "Sign out", kind: action, run: func(*core.State) tea.Cmd { return devices.SignOut() }})
 	} else {
 		rows = append(rows, row{group: "Account", label: "Sign in", kind: action, run: gate.Open})
 	}
-	return append(rows, row{label: "Uninstall dokky", kind: danger, run: s.uninstall})
+	return append(rows, row{apart: true, label: "Uninstall dokky", kind: danger, run: s.uninstall})
 }
 
 // an on/off setting as a switch that slides when flipped
 func (s *Settings) toggle(st *core.State, group, label string, on bool, set func(*api.Settings, bool)) row {
-	frac, word := 0.0, "Off"
+	frac := 0.0
 	if on {
-		frac, word = 1, "On"
+		frac = 1
 	}
 	if at, ok := s.flipped[label]; ok {
 		frac = ui.Ease(1-frac, frac, at, st.Now, slide)
 	}
-	return row{group: group, label: label, value: word, kind: toggle, frac: frac, run: func(st *core.State) tea.Cmd {
+	return row{group: group, label: label, kind: toggle, frac: frac, run: func(st *core.State) tea.Cmd {
 		s.flipped[label] = st.Now
 		return s.set(st, func(v *api.Settings) { set(v, !on) })
 	}}
 }
-
-func (s *Settings) sync(st *core.State) tea.Cmd {
-	if s.syncing {
-		return nil
-	}
-	s.syncing = true
-	c := st.C
-	return func() tea.Msg { return synced{c.SyncNow(context.Background())} }
-}
-
-type synced struct{ err error }
 
 func (s *Settings) uninstall(st *core.State) tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
@@ -145,12 +128,6 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			s.pending = nil
 			return s, core.Fail(m.err)
 		}
-	case synced:
-		s.syncing = false
-		if m.err != nil {
-			return s, core.Fail(m.err)
-		}
-		return s, core.Say("Synced")
 	case core.Click:
 		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "row:")); err == nil && i < len(rows) {
 			s.sel = i
@@ -208,7 +185,7 @@ func (s *Settings) Animating(st *core.State) bool {
 			return true
 		}
 	}
-	return s.syncing
+	return false
 }
 
 func initials(name, email string) string {
@@ -263,10 +240,10 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	s.sel = max(0, min(s.sel, len(rows)-1))
 	var lines []ui.ListLine
 	for i, r := range rows {
+		if (r.group != "" || r.apart) && len(lines) > 0 {
+			lines = append(lines, ui.ListLine{Item: -1})
+		}
 		if r.group != "" {
-			if len(lines) > 0 {
-				lines = append(lines, ui.ListLine{Item: -1})
-			}
 			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Faint).String(), Item: -1})
 		}
 		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + strconv.Itoa(i)})
@@ -292,11 +269,7 @@ func (s *Settings) line(r row, on bool, w int) string {
 		right := ui.L(bg)
 		switch r.kind {
 		case toggle:
-			wc := p.Faint
-			if r.frac >= .5 {
-				wc = p.Accent
-			}
-			right.T(r.value, wc).Sp(2).Raw(ui.Switch(r.frac, bg))
+			right.Raw(ui.Switch(r.frac, bg))
 		case action, danger:
 			if r.value != "" {
 				right.T(r.value, cmpColor(r.tone, p.Muted)).Sp(2)

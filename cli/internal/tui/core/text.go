@@ -43,11 +43,11 @@ func Size(n int64) string {
 		v /= unit
 		i++
 	}
-	f := "%.0f %s"
+	num := fmt.Sprintf("%.0f", v)
 	if v < 10 {
-		f = "%.1f %s"
+		num = strings.TrimSuffix(fmt.Sprintf("%.1f", v), ".0")
 	}
-	return fmt.Sprintf(f, v, []string{"B", "KB", "MB", "GB", "TB", "PB"}[i])
+	return num + " " + []string{"B", "KB", "MB", "GB", "TB", "PB"}[i]
 }
 
 // "1 drive", "3 drives"

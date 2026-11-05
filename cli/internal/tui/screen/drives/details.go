@@ -35,32 +35,33 @@ func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int, grow float64) 
 	if d.CacheBytes > 0 {
 		cache = core.Size(d.CacheBytes)
 	}
-	added := ""
+	added, also := "", "Only this device"
 	if !d.AddedAt.IsZero() {
 		added = d.AddedAt.Local().Format("2 January 2006")
 	}
-	// every drive shows the same facts in the same places
-	facts := [][2]string{{"Account", d.Account}, {"Folder", core.Home(d.Folder)}, {"At login", at},
-		{"Added", added}, {"Cache", cache}, {"Also on", strings.Join(d.AlsoOn, ", ")}}
-	two := w >= 70
-	colW, per := w, len(facts)
-	if two {
-		colW, per = w/2, (len(facts)+1)/2
+	if len(d.AlsoOn) > 0 {
+		also = strings.Join(d.AlsoOn, ", ")
 	}
+	// every drive shows the same facts in the same places, each label over its value
+	facts := [][2]string{{"Account", d.Account}, {"Folder", core.Home(d.Folder)}, {"At login", at},
+		{"Added", added}, {"Cache", cache}, {"Also on", also}}
+	cols := 3
+	if w < 84 {
+		cols = 2
+	}
+	colW := w / cols
 	for i, f := range facts {
-		cx, cy := 0, 7+i
-		if two {
-			cx, cy = (i/per)*colW, 7+i%per
-		}
+		cx, cy := (i%cols)*colW, 7+(i/cols)*3
 		v, vc := f[1], p.Text
 		if v == "" {
 			v, vc = ui.G.Dash, p.Faint
 		}
-		if cy < h {
-			b.Put(x+cx, cy, ui.L(nil).Raw(ui.L(nil).T(f[0], p.Faint).Pad(11)).T(v, vc).Pad(colW-1))
+		if cy+1 < h {
+			b.Put(x+cx, cy, ui.Paint(f[0], p.Faint, nil, false))
+			b.Put(x+cx, cy+1, ui.Paint(core.Fit(v, colW-3), vc, nil, false))
 		}
 	}
-	ry := 7 + per + 1
+	ry := 7 + (len(facts)+cols-1)/cols*3
 	put(ry, ui.Paint("Recent", p.Muted, nil, false))
 	recent(st, b, d, x, ry+1, w, h)
 }

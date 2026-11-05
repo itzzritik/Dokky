@@ -164,6 +164,9 @@ func (d *Daemon) fail(m store.Mount, st *mountState, err error) {
 }
 
 func (d *Daemon) attach(m store.Mount, engineID, point string, ours bool) (string, error) {
+	if err := engine.CheckDriver(); err != nil {
+		return "", &codedError{"no_driver", err.Error()}
+	}
 	if err := d.clearEngine(engineID); err != nil {
 		return "", err
 	}
