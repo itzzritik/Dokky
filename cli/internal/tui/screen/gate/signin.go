@@ -137,7 +137,7 @@ func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
 	btns := s.buttons()
 	s.btn = max(0, min(s.btn, len(btns)-1))
-	win := &ui.Window{W: min(68, maxW), Title: "Finish in your browser", Sub: "Check that it shows this code.", Shimmer: st.T, Buttons: btns, Active: s.btn}
+	win := &ui.Window{W: min(68, maxW), Title: "Finish in your browser", Sub: "Check that it shows this code.", Buttons: btns, Active: s.btn}
 	body := ui.NewBox()
 	rows := 0
 	switch {

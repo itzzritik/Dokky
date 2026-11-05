@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"image/color"
+	"slices"
 	"strings"
 	"time"
 
@@ -54,6 +55,16 @@ func (s *Devices) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			return s, core.Fail(m.Err)
 		}
 		if list, ok := m.Val.([]api.Device); ok {
+			// this device first, the rest by when they were last active
+			slices.SortStableFunc(list, func(x, y api.Device) int {
+				if x.Current != y.Current {
+					if x.Current {
+						return -1
+					}
+					return 1
+				}
+				return y.LastSeenAt.Compare(x.LastSeenAt)
+			})
 			s.list = list
 		}
 	case core.Click:
@@ -193,7 +204,10 @@ func shown(name string) string { return strings.TrimSuffix(name, ".local") }
 
 func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(72, maxW), Title: "Your devices"}
+	win := &ui.Window{W: min(76, maxW), Title: "Your devices"}
+	if e := st.Snap.Account.Email; e != "" {
+		win.Sub = "Signed in as " + e
+	}
 	cw := win.Inner()
 	body := ui.NewBox()
 	rows := 1
@@ -217,24 +231,48 @@ func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	return win.Layer()
 }
 
-// a device as a soft card: its name and one status, then what it runs; this one is always active, so it just says so
+// "Apple Silicon" or "Intel" on a Mac, the chip's usual name elsewhere
+func chip(d api.Device) string {
+	switch {
+	case d.OS == "darwin" && d.Arch == "arm64":
+		return "Apple Silicon"
+	case d.OS == "darwin":
+		return "Intel"
+	case d.Arch == "amd64":
+		return "x64"
+	case d.Arch == "arm64":
+		return "ARM64"
+	}
+	return d.Arch
+}
+
+// a device as a soft card: its name and where it stands, then what it runs, its drives and its dokky
 func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.Layer {
 	p := ui.P()
 	return ui.Card("row:"+d.ID, w, on, ui.Mix(p.Surface, p.Text, .045), p.Surface, func(bg color.Color, iw int) []string {
 		name := ui.L(bg)
-		switch {
-		case on && s.rename != nil:
-			name.Raw(ui.L(bg).Raw(s.rename.View("rename", iw-14, true, bg).GetContent()).Pad(iw - 14))
-		default:
-			name.B(core.Fit(shown(d.Name), iw-14), p.Text)
+		if on && s.rename != nil {
+			name.Raw(ui.L(bg).Raw(s.rename.View("rename", iw-18, true, bg).GetContent()).Pad(iw - 18))
+		} else {
+			name.B(core.Fit(shown(d.Name), iw-18), p.Text)
 		}
-		seen := ui.L(bg).T(core.Ago(d.LastSeenAt, st.Now), p.Faint)
+		status := ui.L(bg)
 		switch {
 		case d.Current:
-			seen = ui.L(bg).T("This device", p.Accent)
+			status.B(ui.G.Here, p.Accent).Sp(1).T("This device", p.Accent)
 		case st.Now.Sub(d.LastSeenAt) < activeFor:
-			seen = ui.L(bg).T("Active now", p.Kelp)
+			status.B(ui.G.Here, p.Kelp).Sp(1).T("Active now", p.Kelp)
+		default:
+			status.T("Seen "+core.Ago(d.LastSeenAt, st.Now), p.Faint)
 		}
-		return []string{name.Right(iw, seen), ui.L(bg).T(cmp.Or(d.OSName, osName(d.OS)), p.Muted).Pad(iw)}
+		system := ui.L(bg).T(cmp.Or(d.OSName, osName(d.OS)), p.Muted)
+		if c := chip(d); c != "" {
+			system.Sp(2).T(c, p.Faint)
+		}
+		meta := ui.L(bg).T(core.Count(d.Drives, "drive"), p.Faint)
+		if d.Version != "" {
+			meta.Sp(3).T("dokky "+d.Version, p.Faint)
+		}
+		return []string{name.Right(iw, status), system.Right(iw, meta)}
 	})
 }

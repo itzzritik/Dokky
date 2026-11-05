@@ -65,7 +65,7 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 		}
 		d := m.Val.(api.Drive)
 		r.done = &d
-		a.from, a.movedAt = a.progress(st), st.Now
+		return core.Send(core.Recheck{})
 	case tea.KeyPressMsg:
 		if m.String() == "enter" {
 			switch {

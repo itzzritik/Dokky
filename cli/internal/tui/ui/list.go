@@ -98,7 +98,8 @@ func Card(id string, w int, selected bool, fill, under color.Color, rows func(bg
 		bar = Paint(G.Bar, p.Accent, bg, false)
 	}
 	lines := []string{edge(G.Top)}
-	for _, r := range rows(bg, w-4) {
+	// one cell on the right matches the half row above and below
+	for _, r := range rows(bg, w-3) {
 		lines = append(lines, L(bg).Raw(bar).Sp(1).Raw(r).Pad(w))
 	}
 	lines = append(lines, edge(G.Bottom))

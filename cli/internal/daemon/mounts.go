@@ -361,6 +361,35 @@ func (d *Daemon) remountFlagged() {
 	}
 }
 
+// a change pulled from another device waits on a live mount until nothing uploads, then remounts on its own
+func (d *Daemon) applyPulled() {
+	d.mu.Lock()
+	var due []string
+	for id, st := range d.states {
+		if s := d.stats[st.name]; st.state == stateMounted && st.remount && s.UploadsQueued+s.UploadsInProgress == 0 {
+			due = append(due, id)
+		}
+	}
+	d.mu.Unlock()
+	for _, id := range due {
+		d.mu.Lock()
+		flagged := d.data.Local[id].Mounted
+		d.mu.Unlock()
+		if d.unmount(id) != nil {
+			continue
+		}
+		err := d.mount(id)
+		d.mu.Lock()
+		// a failed mount stays flagged, so the next tick tries again
+		d.setMounted(id, flagged || err != nil)
+		if serr := d.save(); serr != nil {
+			d.log.Error("save store", "err", serr)
+		}
+		d.mu.Unlock()
+		d.publish()
+	}
+}
+
 func (d *Daemon) findMount(match func(store.Mount) bool) (store.Mount, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -154,7 +154,8 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 	}
 	acts = append(acts, core.Action{Key: "enter", Label: "edit"})
 	if p := core.Primary(d); p != "" {
-		acts = append(acts, core.Action{Key: "o", Label: p})
+		// a drive that isn't mounted: connecting is the next thing to do
+		acts = append(acts, core.Action{Key: "o", Label: p, Accent: p == "connect"})
 	}
 	if st.Wide {
 		acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})

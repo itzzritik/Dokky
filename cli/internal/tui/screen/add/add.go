@@ -3,7 +3,6 @@ package add
 import (
 	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -21,8 +20,6 @@ const (
 	connect
 )
 
-const easeFor = 400 * time.Millisecond
-
 // add a drive in four steps; edit reuses the sign-in and name steps
 type Add struct {
 	step step
@@ -33,10 +30,8 @@ type Add struct {
 	pick    picker
 	sign    signForm
 	named   nameForm
+	ed      editForm
 	run     runner
-
-	from, at float64
-	movedAt  time.Time
 }
 
 func Open(st *core.State, typ string) tea.Cmd {
@@ -57,7 +52,6 @@ func Edit(st *core.State, d api.Drive) tea.Cmd {
 	if a.prov.Type == "" {
 		a.prov = api.Provider{Type: d.ServiceType, Name: d.ServiceName}
 	}
-	a.named.fill(st, d)
 	return core.Open(a)
 }
 
@@ -87,34 +81,29 @@ func provider(st *core.State, typ string) (api.Provider, bool) {
 	return api.Provider{}, false
 }
 
-func (a *Add) goTo(s step, st *core.State) {
-	a.from, a.movedAt = a.progress(st), st.Now
-	a.step = s
-}
+func (a *Add) goTo(s step) { a.step = s }
 
-func (a *Add) progress(st *core.State) float64 {
-	if a.movedAt.IsZero() {
-		return a.target()
+// Service, Sign in, Details, Connect; sign-in is skipped when an account already signed in was picked
+func (a *Add) steps() []ui.Step {
+	out := []ui.Step{{Label: "Service"}, {Label: "Sign in"}, {Label: "Details"}, {Label: "Connect"}}
+	for i := range out {
+		switch s := step(i); {
+		case s == signin && a.account != nil && a.step > choose:
+			out[i].State = ui.StepSkipped
+		case s < a.step || s == connect && a.run.done != nil:
+			out[i].State = ui.StepDone
+		case s == a.step:
+			out[i].State = ui.StepNow
+		}
 	}
-	return ui.Ease(a.from, a.target(), a.movedAt, st.Now, easeFor)
-}
-
-func (a *Add) target() float64 {
-	if a.step == connect {
-		return (3 + float64(a.run.checked())/3) / 4
-	}
-	return float64(a.step+1) / 4
+	return out
 }
 
 func (a *Add) Capturing() bool { return true }
 
 func (a *Add) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	if p, ok := msg.(core.Progress); ok && a.step == connect {
-		before := a.run.checked()
 		a.run.progress = api.AddProgress(p)
-		if a.run.checked() != before {
-			a.from, a.movedAt = a.progress(st), st.Now
-		}
 		return a, nil
 	}
 	if r, ok := msg.(core.Reply); ok && r.Req == a.pick.req {
@@ -124,7 +113,8 @@ func (a *Add) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		}
 		return a, nil
 	}
-	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
+	// esc while typing a value only drops that edit
+	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" && (a.edit == nil || a.step != name || a.ed.field == nil) {
 		return a, a.back(st)
 	}
 	if c, ok := msg.(core.Click); ok {
@@ -147,21 +137,24 @@ func (a *Add) back(st *core.State) tea.Cmd {
 	switch {
 	case a.step == connect && a.run.working():
 		a.run.stop()
-		a.goTo(name, st)
+		a.goTo(name)
 	case a.step == connect && a.run.done != nil:
 		return core.Close(a)
 	case a.step == connect:
-		a.goTo(name, st)
+		a.goTo(name)
 	case a.step == signin && a.sign.working():
 		a.sign.stop()
 	case a.step == signin && a.edit != nil:
-		a.goTo(name, st)
-	case a.step == name && a.edit == nil && a.account == nil:
-		a.goTo(signin, st)
+		a.goTo(name)
+	// signed in already, so going back starts over instead of landing on a finished sign-in
+	case a.step == name && a.edit == nil:
+		a.sign.stop()
+		a.sign, a.account = signForm{}, nil
+		a.goTo(choose)
 	case a.step == choose || a.edit != nil:
 		return core.Close(a)
 	default:
-		a.goTo(choose, st)
+		a.goTo(choose)
 	}
 	return nil
 }
@@ -193,17 +186,17 @@ func (a *Add) choose(st *core.State, p api.Provider, acct *api.AccountRef) tea.C
 	a.prov, a.account = p, acct
 	if acct != nil {
 		a.named.reset(unique(st, acct.Name))
-		a.goTo(name, st)
+		a.goTo(name)
 		return nil
 	}
-	a.goTo(signin, st)
+	a.goTo(signin)
 	return a.sign.load(st, p.Type, "")
 }
 
 func (a *Add) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
-	win := &ui.Window{W: min(76, maxW), Step: strconv.Itoa(int(a.step)+1) + " of 4", Progress: a.progress(st), Shimmer: st.T}
-	if a.edit != nil {
-		win.Step, win.Progress = "", 0
+	win := &ui.Window{W: min(76, maxW)}
+	if a.edit == nil {
+		win.Steps = a.steps()
 	}
 	var rows int
 	switch a.step {
@@ -236,19 +229,10 @@ func (a *Add) Actions(st *core.State) []core.Action {
 		}
 		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "continue"}, {Key: "esc", Label: "back"}}
 	case name:
-		enter := core.Action{Key: "enter", Label: "add drive"}
 		if a.edit != nil {
-			items := a.nameItems(st)
-			switch items[min(a.named.focus, len(items)-1)] {
-			case fConn:
-				enter.Label = strings.ToLower(a.connLabel(st))
-			case fRemove:
-				enter.Label, enter.Danger = "remove", true
-			default:
-				enter.Label = "save"
-			}
+			return a.editActions(st)
 		}
-		return []core.Action{{Key: "↑↓", Label: "move"}, enter, {Key: "esc", Label: "back"}}
+		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "add drive"}, {Key: "esc", Label: "back"}}
 	}
 	switch r := a.run; {
 	case r.working():
@@ -265,5 +249,5 @@ func (a *Add) Animating(st *core.State) bool {
 	if ui.Reduced() {
 		return false
 	}
-	return ui.Easing(a.movedAt, st.Now, easeFor) || a.sign.working() || a.run.working() || a.pick.loading()
+	return a.sign.working() || a.run.working() || a.pick.loading()
 }

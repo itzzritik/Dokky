@@ -284,6 +284,7 @@ func (d *Daemon) tick(ctx context.Context) {
 	d.observeIdle(time.Now(), statsErr)
 	d.cleanupUploads(time.Now())
 	d.remountFlagged()
+	d.applyPulled()
 	d.publish()
 }
 
