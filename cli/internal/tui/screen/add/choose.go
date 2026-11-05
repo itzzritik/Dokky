@@ -78,10 +78,10 @@ func (a *Add) updateChoose(msg tea.Msg, st *core.State) tea.Cmd {
 		return nil
 	case tea.KeyPressMsg:
 		switch m.String() {
-		case "up", "shift+tab":
+		case "up":
 			p.sel = max(0, p.sel-1)
 			return nil
-		case "down", "tab":
+		case "down":
 			p.sel = min(len(opts)-1, p.sel+1)
 			return nil
 		case "enter":

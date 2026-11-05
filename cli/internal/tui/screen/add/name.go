@@ -125,10 +125,10 @@ func (a *Add) updateName(msg tea.Msg, st *core.State) tea.Cmd {
 			return nil
 		}
 		switch m.String() {
-		case "tab", "down":
+		case "down":
 			n.focus = min(len(items)-1, n.focus+1)
 			return nil
-		case "shift+tab", "up":
+		case "up":
 			n.focus = max(0, n.focus-1)
 			return nil
 		case "enter":

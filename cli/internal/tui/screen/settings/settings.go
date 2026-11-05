@@ -293,41 +293,17 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	rows := s.rows(st)
 	s.sel = max(0, min(s.sel, len(rows)-1))
-	type line struct {
-		text string
-		idx  int
-	}
-	var lines []line
+	var lines []ui.ListLine
 	for i, r := range rows {
 		if r.group != "" {
 			if len(lines) > 0 {
-				lines = append(lines, line{"", -1})
+				lines = append(lines, ui.ListLine{Item: -1})
 			}
-			lines = append(lines, line{ui.L(nil).Sp(2).T(r.group, p.Muted).String(), -1})
+			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Muted).String(), Item: -1})
 		}
-		lines = append(lines, line{s.line(r, i == s.sel, w), i})
+		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, w), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}
-	top := 4
-	room := h - top
-	at := 0
-	for i, l := range lines {
-		if l.idx == s.sel {
-			at = i
-		}
-	}
-	if at < s.top {
-		s.top = max(0, at-1)
-	}
-	if at >= s.top+room {
-		s.top = at - room + 1
-	}
-	for i := s.top; i < len(lines) && i < s.top+room; i++ {
-		if lines[i].idx >= 0 {
-			b.Hit(0, top+i-s.top, "row:"+strconv.Itoa(lines[i].idx), lines[i].text)
-		} else {
-			b.Put(0, top+i-s.top, lines[i].text)
-		}
-	}
+	ui.List(b, 4, h-4, &s.top, s.sel, lines)
 	return b.Layer()
 }
 

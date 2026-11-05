@@ -26,7 +26,7 @@ func (g *Gate) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.KeyPressMsg:
 		switch m.String() {
-		case "left", "right", "tab", "shift+tab":
+		case "left", "right":
 			g.sel = 1 - g.sel
 		case "enter":
 			return g, g.choose(st)
