@@ -81,15 +81,3 @@ func RunPrimary(st *State, d api.Drive) tea.Cmd {
 	}
 	return nil
 }
-
-// footer actions that follow a drive's state
-func DriveActions(d api.Drive) []Action {
-	var out []Action
-	if p := Primary(d); p != "" {
-		out = append(out, Action{Key: "enter", Label: p})
-	}
-	if d.State == api.Connected {
-		out = append(out, Action{Key: "c", Label: "disconnect"})
-	}
-	return out
-}

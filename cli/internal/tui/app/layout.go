@@ -36,6 +36,7 @@ func (a *App) render() string {
 	var passes []ui.Pass
 	var left []core.Action
 	right := []core.Action{{Key: "q", Label: "quit"}}
+	var more *core.Action
 	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
 	case !a.st.Connected:
@@ -52,9 +53,9 @@ func (a *App) render() string {
 			a.tabs[a.active].View(a.st, bw, bh).X(bodyX).Y(bodyY),
 		)
 		passes = append(passes, ui.Pass{Layer: base})
-		left, right = a.tabs[a.active].Actions(a.st), append([]core.Action{{Key: "m", Label: "more"}}, a.globals()...)
+		left, right, more = a.tabs[a.active].Actions(a.st), a.globals(), &moreKey
 		if a.capturing() {
-			right = nil
+			right, more = nil, nil
 		}
 	}
 	for i, win := range a.windows {
@@ -69,13 +70,13 @@ func (a *App) render() string {
 		}
 		passes = append(passes, ui.Pass{Layer: lipgloss.NewLayer("").AddLayers(l).X(x).Y(y), Dim: !placed, Modal: true})
 		if i == len(a.windows)-1 {
-			left, right = win.Actions(a.st), nil
-			if _, open := win.(*menu); !open && !a.capturing() && ui.HintsWidth(left, true) > w-6 {
-				right = []core.Action{{Key: "m", Label: "more"}}
+			left, right, more = win.Actions(a.st), nil, nil
+			if _, open := win.(*menu); !open && !a.capturing() {
+				more = &moreKey
 			}
 		}
 	}
-	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, "v"+buildinfo.Version).Y(h - 2)})
+	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, more, "v"+buildinfo.Version).Y(h - 2)})
 	if a.toast != nil && a.toast.Live(a.st.Now) && !a.waiting() {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
@@ -83,6 +84,8 @@ func (a *App) render() string {
 	a.hits = hits
 	return out
 }
+
+var moreKey = core.Action{Key: "m", Label: "more"}
 
 // actions on every tab, in the footer's right side and the menu
 func (a *App) globals() []core.Action {
@@ -135,7 +138,11 @@ func (a *App) down(w, h int) *lipgloss.Layer {
 	case a.starting:
 		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).B("Starting dokky", p.Text).String(), ""
 	case !a.failed:
-		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).T("Connecting", p.Muted).String(), ""
+		word := "Connecting"
+		if !a.lostAt.IsZero() {
+			word = "Reconnecting"
+		}
+		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).T(word, p.Muted).String(), ""
 	}
 	y := h/2 - 2
 	b.Put((w-ui.Width(title))/2, y, title)

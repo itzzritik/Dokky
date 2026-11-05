@@ -46,7 +46,11 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// starts or restarts the daemon when it can; the TUI shows its own screen when it cannot
-			_ = call(api.MState, nil, nil)
+			var s api.State
+			_ = call(api.MState, nil, &s)
+			if updateOnOpen(s.Version, os.Stderr) {
+				relaunch()
+			}
 			return tui.Run(cmd.Context(), tui.Deps{Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
 		},
 	}

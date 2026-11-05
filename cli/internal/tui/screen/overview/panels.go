@@ -1,6 +1,7 @@
 package overview
 
 import (
+	"path"
 	"strconv"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -8,55 +9,128 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-func activity(st *core.State, w int) string {
+// panel width from which the files sit beside the graph instead of under it
+const splitW = 90
+
+// the graph and its scale, with the files moving now and just moved beside it (under it when narrow)
+func activity(st *core.State, w, h int) string {
 	p := ui.P()
 	a := st.Act
-	iw := w - 4
+	iw, ih := w-4, h-2
 	var total []float64
+	peak := 0.0
 	for _, s := range a.History {
 		total = append(total, s.Down+s.Up)
+		peak = max(peak, s.Down+s.Up)
 	}
-	body := ui.Graph(iw, 4, total, ui.Phase(a.History, st.Now))
-	body = append(body, "")
-	var moving, waiting []api.Transfer
-	for _, t := range a.Now {
-		if t.Waiting {
-			waiting = append(waiting, t)
-		} else {
-			moving = append(moving, t)
+	split := w >= splitW
+	gw, gh, fw, fh := iw, 4, iw, ih-5
+	if split {
+		gw = (iw - 3) / 2
+		gh, fw, fh = ih-1, iw-3-gw, ih
+	}
+	graph := append(ui.Graph(gw, gh, total, ui.Phase(a.History, st.Now)), axis(gw, peak))
+	list := files(st, fw, fh)
+	body := append(graph, list...)
+	if split {
+		sep := ui.Paint(ui.G.V, p.Line, nil, false)
+		body = make([]string, ih)
+		for i := range body {
+			body[i] = ui.L(nil).Raw(ui.L(nil).Raw(graph[i]).Pad(gw)).Sp(1).Raw(sep).Sp(1).Raw(list[i]).String()
 		}
 	}
-	for _, t := range moving[:min(2, len(moving))] {
-		body = append(body, transferLine(st, t, iw))
-	}
-	if len(moving) == 0 {
-		body = append(body, ui.Paint("Nothing is moving.", p.Faint, nil, false))
-	}
-	if n := len(waiting) + max(0, len(moving)-2); n > 0 {
-		body = append(body, ui.L(nil).Sp(2).T(strconv.Itoa(n)+" more waiting", p.Faint).String())
-	}
 	speeds := ui.G.Down + " " + core.Speed(a.Down) + "   " + ui.G.Up + " " + core.Speed(a.Up)
-	return ui.Panel(w, panelH, "Activity", speeds, body)
+	return ui.Panel(w, h, "Activity", speeds, body)
 }
 
-func transferLine(st *core.State, t api.Transfer, w int) string {
+// "2 min ago", the peak, "now" under the graph
+func axis(w int, peak float64) string {
 	p := ui.P()
-	dir, where := ui.G.Down, "from "
-	if t.Up {
-		dir, where = ui.G.Up, "to "
+	left, right := "2 min ago", "now"
+	l := ui.L(nil).T(left, p.Faint)
+	if mid := "peak " + core.Speed(peak); peak > 0 {
+		if gap := (w-ui.Width(mid))/2 - ui.Width(left); gap >= 2 && gap+ui.Width(left)+ui.Width(mid)+2+ui.Width(right) <= w {
+			l.Sp(gap).T(mid, p.Muted)
+		}
 	}
+	return l.Right(w, ui.L(nil).T(right, p.Faint))
+}
+
+type file struct {
+	t    api.Transfer
+	done bool
+}
+
+// moving first, then waiting, then the latest finished; exactly n lines
+func files(st *core.State, w, n int) []string {
+	p := ui.P()
+	out := make([]string, max(0, n))
+	if n <= 0 {
+		return out
+	}
+	var all []file
+	for _, waiting := range []bool{false, true} {
+		for _, t := range st.Act.Now {
+			if t.Waiting == waiting {
+				all = append(all, file{t: t})
+			}
+		}
+	}
+	for _, t := range st.Act.Earlier {
+		all = append(all, file{t: t, done: true})
+	}
+	if len(all) == 0 {
+		out[0] = ui.Paint("Nothing has moved yet.", p.Faint, nil, false)
+		return out
+	}
+	show := len(all)
+	if show > n {
+		show = n - 1
+		out[n-1] = ui.Paint(strconv.Itoa(len(all)-show)+" more in Activity", p.Faint, nil, false)
+	}
+	for i, f := range all[:show] {
+		out[i] = fileLine(st, f, w)
+	}
+	return out
+}
+
+func fileLine(st *core.State, f file, w int) string {
+	p := ui.P()
+	t := f.t
+	l, right := ui.L(nil), ui.L(nil)
+	nc := p.Text
+	switch {
+	case !f.done && t.Waiting:
+		l.B(ui.G.Dash, p.Faint)
+		nc = p.Muted
+		when := "Waiting"
+		if d := t.RetryAt.Sub(st.Now); d > 0 {
+			when += ", " + core.In(d)
+		}
+		right.T(when, p.Faint)
+	case !f.done:
+		dir := ui.G.Down
+		if t.Up {
+			dir = ui.G.Up
+		}
+		l.B(dir, p.Accent)
+		frac := 0.0
+		if t.Size > 0 {
+			frac = float64(t.Done) / float64(t.Size)
+		}
+		right.Raw(ui.ThinBar(max(6, w/5), frac, st.T, nil, nil)).T(pct(frac), p.Muted)
+	case t.Error != "":
+		l.B(ui.G.Cross, p.Coral)
+		right.T("Failed", p.Coral)
+	default:
+		l.B(ui.G.Check, p.Kelp)
+		right.T(core.Ago(t.At, st.Now), p.Faint)
+	}
+	l.Sp(1).T(path.Base(t.Name), nc)
 	if d, ok := st.Drive(t.DriveID); ok {
-		where += d.Name
+		l.Sp(2).T(d.Name, p.Faint)
 	}
-	frac := 0.0
-	if t.Size > 0 {
-		frac = float64(t.Done) / float64(t.Size)
-	}
-	nameW := max(8, (w-12)/3)
-	barW := max(4, w-2-nameW-1-nameW-1-5)
-	return ui.L(nil).B(dir, p.Accent).Sp(1).Raw(ui.L(nil).T(t.Name, p.Text).Pad(nameW)).Sp(1).
-		Raw(ui.L(nil).T(where, p.Muted).Pad(nameW)).Sp(1).Raw(ui.ThinBar(barW, frac, st.T, nil)).
-		T(pct(frac), p.Muted).String()
+	return l.Right(w, right)
 }
 
 func pct(f float64) string {
@@ -65,32 +139,4 @@ func pct(f float64) string {
 		s = " " + s
 	}
 	return s
-}
-
-func (o *Overview) space(st *core.State, w int) string {
-	p := ui.P()
-	var body []string
-	grow := ui.Ease(0, 1, o.shown, st.Now, growFor)
-	for _, d := range st.Snap.Drives {
-		if d.Space == nil || d.Space.Total <= 0 || len(body) >= 8 {
-			continue
-		}
-		used := 1 - float64(d.Space.Free)/float64(d.Space.Total)
-		tone, fc := p.Ramp[2], p.Muted
-		if used > .9 {
-			tone, fc = p.Buoy, p.Buoy
-		}
-		free := ui.L(nil).T(core.Size(d.Space.Free)+" free", fc)
-		body = append(body, ui.L(nil).T(d.Name, p.Text).Right(w-4, free), ui.ThinBar(w-4, used*grow, st.T, tone))
-	}
-	if len(body) == 0 {
-		msg := "Connect a drive to see its space."
-		for _, d := range st.Snap.Drives {
-			if d.State == api.Connected {
-				msg = "No free space info yet."
-			}
-		}
-		body = append(body, ui.Paint(msg, p.Faint, nil, false))
-	}
-	return ui.Panel(w, panelH, "Space", "", body)
 }

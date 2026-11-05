@@ -1,16 +1,16 @@
 package drives
 
 import (
-	"context"
 	"image/color"
+	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/add"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -22,6 +22,8 @@ type Drives struct {
 	find     *ui.Field
 	finding  bool
 	selID    string
+	meterID  string
+	meterAt  time.Time
 }
 
 func New() *Drives { return &Drives{find: ui.NewField("", "", "Find a drive", false)} }
@@ -59,6 +61,19 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	d, ok := s.current(st)
 	n := len(s.list(st))
 	switch m := msg.(type) {
+	case core.SwitchTab:
+		if m.Tab == core.DrivesTab {
+			s.meterID = ""
+		}
+		if m.Drive != "" {
+			s.finding = false
+			s.find.Input.SetValue("")
+			for i, x := range s.list(st) {
+				if x.ID == m.Drive {
+					s.sel, s.selID, s.open = i, x.ID, !st.Wide
+				}
+			}
+		}
 	case core.Click:
 		for i, x := range s.list(st) {
 			if m.ID == "row:"+x.ID {
@@ -106,15 +121,9 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				s.open = true
 				return s, nil
 			}
-			return s, core.RunPrimary(st, d)
-		case "c":
-			if d.State == api.Connected {
-				return s, core.Disconnect(st, d.ID)
-			}
-		case "e":
 			return s, add.Edit(st, d)
-		case "x":
-			return s, remove(d)
+		case "o":
+			return s, core.RunPrimary(st, d)
 		}
 	}
 	return s, nil
@@ -126,27 +135,6 @@ func (s *Drives) move(st *core.State, by, n int) {
 	}
 	s.sel = max(0, min(n-1, s.sel+by))
 	s.selID = s.list(st)[s.sel].ID
-}
-
-func remove(d api.Drive) tea.Cmd {
-	c := &confirm.Confirm{
-		Question: "Remove " + core.Safe(d.Name) + "?",
-		Line:     "Its folder leaves this computer. Your files stay.",
-		Do:       "Remove",
-		Run: func(st *core.State, forget bool) tea.Cmd {
-			cl, id, name := st.C, d.ID, core.Safe(d.Name)
-			return func() tea.Msg {
-				if err := cl.RemoveDrive(context.Background(), api.DriveRemove{ID: id, ForgetAccount: forget}); err != nil {
-					return core.Toast{Text: core.Report(err), Bad: true}
-				}
-				return core.Toast{Text: name + " removed"}
-			}
-		},
-	}
-	if d.AccountDrives == 1 {
-		c.Toggle = "Also forget the sign-in"
-	}
-	return confirm.Open(c)
 }
 
 func (s *Drives) Actions(st *core.State) []core.Action {
@@ -164,8 +152,10 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 	if s.open && !st.Wide {
 		acts = []core.Action{{Key: "esc", Label: "back"}}
 	}
-	acts = append(acts, core.DriveActions(d)...)
-	acts = append(acts, core.Action{Key: "e", Label: "edit"}, core.Action{Key: "x", Label: "remove", Danger: true})
+	acts = append(acts, core.Action{Key: "enter", Label: "edit"})
+	if p := core.Primary(d); p != "" {
+		acts = append(acts, core.Action{Key: "o", Label: p})
+	}
 	if st.Wide {
 		acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})
 	}
@@ -182,7 +172,10 @@ func (s *Drives) Animating(st *core.State) bool {
 		}
 	}
 	d, ok := s.current(st)
-	return ok && d.State == api.Connected && (st.Act.Down > 0 || st.Act.Up > 0)
+	if !ok || !st.Wide && !s.open {
+		return false
+	}
+	return ui.MeterGrowing(s.meterAt, st.Now) || ui.MeterMoving() && d.Space != nil && d.Space.Total > d.Space.Free
 }
 
 func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
@@ -194,8 +187,12 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 		return b.Layer()
 	}
 	d, ok := s.current(st)
+	if ok && d.ID != s.meterID {
+		s.meterID, s.meterAt = d.ID, st.Now
+	}
+	grow := ui.MeterGrow(s.meterAt, st.Now)
 	if !st.Wide && s.open && ok {
-		details(st, b, d, 0, w, h)
+		details(st, b, d, 0, w, h, grow)
 		return b.Layer()
 	}
 	lw := w
@@ -206,7 +203,7 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 	if s.finding || s.find.Value() != "" {
 		b.Add(0, 0, s.find.View("find", lw, s.finding, nil))
 	} else {
-		b.Put(2, 0, ui.Paint(core.Count(len(st.Snap.Drives), "drive"), p.Muted, nil, false))
+		b.Put(2, 0, ui.L(nil).T("Your drives", p.Muted).Right(lw-3, ui.L(nil).T(strconv.Itoa(len(st.Snap.Drives)), p.Faint)))
 	}
 	room := h - 2
 	if s.sel < s.top {
@@ -238,7 +235,7 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 		}
 		b.Lines(listW+3, 0, rule)
 		if ok {
-			details(st, b, d, listW+7, w-listW-7, h)
+			details(st, b, d, listW+7, w-listW-7, h, grow)
 		}
 	}
 	return b.Layer()

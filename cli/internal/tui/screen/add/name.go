@@ -11,6 +11,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -39,6 +40,8 @@ const (
 	fAge
 	fPin
 	fSignIn
+	fConn
+	fRemove
 )
 
 func (n *nameForm) reset(name string) {
@@ -58,7 +61,7 @@ func (n *nameForm) fill(st *core.State, d api.Drive) {
 	n.pin = adv("Pinned version", st.Snap.Settings.PinnedVersion, "Latest")
 }
 
-func (a *Add) nameItems() []int {
+func (a *Add) nameItems(st *core.State) []int {
 	items := []int{fName, fFolder, fLogin}
 	if a.edit == nil {
 		return items
@@ -70,7 +73,54 @@ func (a *Add) nameItems() []int {
 	if a.edit.ServiceType != "" && !oauthType(a.edit.ServiceType) {
 		items = append(items, fSignIn)
 	}
-	return items
+	if a.connLabel(st) != "" {
+		items = append(items, fConn)
+	}
+	return append(items, fRemove)
+}
+
+// what the connection row does now: the drive's live state, not the one the window opened with
+func (a *Add) connLabel(st *core.State) string {
+	d, _ := st.Drive(a.edit.ID)
+	switch d.State {
+	case api.Connected:
+		return "Disconnect"
+	case api.Off, api.Failed:
+		return "Connect"
+	}
+	return ""
+}
+
+func (a *Add) runConn(st *core.State) tea.Cmd {
+	switch a.connLabel(st) {
+	case "Disconnect":
+		return tea.Batch(core.Close(a), core.Disconnect(st, a.edit.ID))
+	case "Connect":
+		return tea.Batch(core.Close(a), core.Connect(st, a.edit.ID))
+	}
+	return nil
+}
+
+func (a *Add) remove() tea.Cmd {
+	d := *a.edit
+	c := &confirm.Confirm{
+		Question: "Remove " + core.Safe(d.Name) + "?",
+		Line:     "Its folder leaves this computer. Your files stay.",
+		Do:       "Remove",
+		Run: func(st *core.State, forget bool) tea.Cmd {
+			cl, id, name := st.C, d.ID, core.Safe(d.Name)
+			return tea.Batch(core.Close(a), func() tea.Msg {
+				if err := cl.RemoveDrive(context.Background(), api.DriveRemove{ID: id, ForgetAccount: forget}); err != nil {
+					return core.Toast{Text: core.Report(err), Bad: true}
+				}
+				return core.Toast{Text: name + " removed"}
+			})
+		},
+	}
+	if d.AccountDrives == 1 {
+		c.Toggle = "Also forget the sign-in"
+	}
+	return confirm.Open(c)
 }
 
 // cloud sign-ins go through the browser; their details are not edited here
@@ -88,7 +138,7 @@ func (n *nameForm) input(item int) *ui.Field {
 
 func (a *Add) updateName(msg tea.Msg, st *core.State) tea.Cmd {
 	n := &a.named
-	items := a.nameItems()
+	items := a.nameItems(st)
 	n.focus = min(n.focus, len(items)-1)
 	item := items[n.focus]
 	switch m := msg.(type) {
@@ -114,6 +164,10 @@ func (a *Add) updateName(msg tea.Msg, st *core.State) tea.Cmd {
 				n.adv = !n.adv
 			case fSignIn:
 				return a.toSignIn(st)
+			case fConn:
+				return a.runConn(st)
+			case fRemove:
+				return a.remove()
 			}
 		}
 		if k, ok := strings.CutPrefix(m.ID, "chip:login:"); ok {
@@ -138,6 +192,10 @@ func (a *Add) updateName(msg tea.Msg, st *core.State) tea.Cmd {
 				return nil
 			case fSignIn:
 				return a.toSignIn(st)
+			case fConn:
+				return a.runConn(st)
+			case fRemove:
+				return a.remove()
 			}
 			return a.submitName(st)
 		case "left", "right", "space":
@@ -238,7 +296,7 @@ func (a *Add) viewName(st *core.State, win *ui.Window, maxH int) int {
 	case n.err != "":
 		win.Sub, win.SubBad = n.err, true
 	}
-	items := a.nameItems()
+	items := a.nameItems(st)
 	cur := items[min(n.focus, len(items)-1)]
 	type piece struct {
 		y    int
@@ -258,10 +316,10 @@ func (a *Add) viewName(st *core.State, win *ui.Window, maxH int) int {
 			b.Add(lw, y, f2.View("item:"+strconv.Itoa(item), cw-lw, cur == item && n.req == 0, p.Surface))
 		}})
 	}
-	row := func(y, item int, label, glyph string) {
+	row := func(y, item int, label, glyph string, fg color.Color) {
 		pieces = append(pieces, piece{y, item, func(b *ui.Box, y int) {
 			b.Add(0, y, ui.Row("item:"+strconv.Itoa(item), cw, cur == item, p.Surface, func(bg color.Color, iw int) string {
-				return ui.L(bg).T(label, p.Muted).Right(iw, ui.L(bg).T(glyph, p.Muted))
+				return ui.L(bg).T(label, fg).Right(iw, ui.L(bg).T(glyph, p.Muted))
 			}))
 		}})
 	}
@@ -281,7 +339,7 @@ func (a *Add) viewName(st *core.State, win *ui.Window, maxH int) int {
 		if n.adv {
 			caret = ui.G.Caret
 		}
-		row(y, fAdv, "Advanced", caret)
+		row(y, fAdv, "Advanced", caret, p.Muted)
 		if n.adv {
 			for i, it := range []int{fLocal, fSize, fAge, fPin} {
 				field(y+2+2*i, it, n.input(it), advLabel)
@@ -290,8 +348,14 @@ func (a *Add) viewName(st *core.State, win *ui.Window, maxH int) int {
 		}
 		if a.edit.ServiceType != "" && !oauthType(a.edit.ServiceType) {
 			y += 2
-			row(y, fSignIn, "Sign-in details", ui.G.Arrow)
+			row(y, fSignIn, "Sign-in details", ui.G.Arrow, p.Muted)
 		}
+		if label := a.connLabel(st); label != "" {
+			y += 2
+			row(y, fConn, label, "", p.Muted)
+		}
+		y += 2
+		row(y, fRemove, "Remove drive", "", p.Coral)
 	}
 	// the body scrolls so the focused item stays in the window
 	room := win.Room(maxH)

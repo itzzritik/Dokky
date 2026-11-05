@@ -48,6 +48,7 @@ type App struct {
 	updateChecked     bool
 	backoff           time.Duration
 	heard             time.Time // last event from the daemon
+	lostAt            time.Time // when a live connection dropped
 }
 
 func New(deps core.Deps) *App {
@@ -55,7 +56,7 @@ func New(deps core.Deps) *App {
 	return &App{
 		st:    &core.State{Deps: deps, Now: now},
 		deps:  deps,
-		tabs:  []core.Screen{overview.New(now), drives.New(), activity.New(), health.New(), settings.New()},
+		tabs:  []core.Screen{overview.New(), drives.New(), activity.New(), health.New(), settings.New()},
 		start: now,
 		veil:  true,
 	}
@@ -148,7 +149,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		}
 		return a.nextToast()
 	case core.SwitchTab:
-		return a.setTab(m.Tab)
+		return a.switchTab(m)
 	case menuRun:
 		if a.top() == m.owner {
 			return a.key(core.Press(m.key))
@@ -241,12 +242,14 @@ func (a *App) broadcast(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (a *App) setTab(i int) tea.Cmd {
-	if i < 0 || i >= len(a.tabs) || len(a.windows) > 0 || a.gate != nil {
+func (a *App) setTab(i int) tea.Cmd { return a.switchTab(core.SwitchTab{Tab: i}) }
+
+func (a *App) switchTab(m core.SwitchTab) tea.Cmd {
+	if m.Tab < 0 || m.Tab >= len(a.tabs) || len(a.windows) > 0 || a.gate != nil {
 		return nil
 	}
-	a.active = i
-	return a.broadcast(core.SwitchTab{Tab: i})
+	a.active = m.Tab
+	return a.broadcast(m)
 }
 
 func (a *App) capturing() bool {

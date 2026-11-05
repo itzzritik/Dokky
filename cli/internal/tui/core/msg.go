@@ -21,7 +21,13 @@ type OpenWindow struct{ Screen Screen }
 // closes that window wherever it is in the stack
 type CloseWindow struct{ Screen Screen }
 
-type SwitchTab struct{ Tab int }
+// Drive, when set, is selected on the Drives tab
+type SwitchTab struct {
+	Tab   int
+	Drive string
+}
+
+const DrivesTab = 1
 
 type Progress api.AddProgress
 

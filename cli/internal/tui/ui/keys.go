@@ -35,15 +35,15 @@ func HintsWidth(acts []core.Action, labels bool) int {
 	return w
 }
 
-// screen keys left, global keys right; labels go before keys do, and right shrinks to its first key plus accents
-func Footer(w int, left, right []core.Action, version string) *lipgloss.Layer {
+// screen keys left, globals right; short on room, globals fold into more (only shown then), then labels go, then keys
+func Footer(w int, left, right []core.Action, more *core.Action, version string) *lipgloss.Layer {
 	avail := w - 6
-	more := right
-	if len(right) > 1 {
-		more = right[:1:1]
-		for _, a := range right[1:] {
+	folded := right
+	if more != nil {
+		folded = []core.Action{*more}
+		for _, a := range right {
 			if a.Accent {
-				more = append(more, a)
+				folded = append(folded, a)
 			}
 		}
 	}
@@ -51,9 +51,9 @@ func Footer(w int, left, right []core.Action, version string) *lipgloss.Layer {
 		l, r   []core.Action
 		ll, rl bool
 	}
-	cands := []cand{{left, right, true, true}, {left, more, true, true}, {left, more, true, false}}
+	cands := []cand{{left, right, true, true}, {left, folded, true, true}, {left, folded, true, false}}
 	for n := len(left); n >= 0; n-- {
-		cands = append(cands, cand{left[:n], more, false, false})
+		cands = append(cands, cand{left[:n], folded, false, false})
 	}
 	b := NewBox()
 	put := func(x int, acts []core.Action, label bool) {
