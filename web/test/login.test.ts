@@ -309,7 +309,12 @@ test("service and mount schemas accept what the device sends", () => {
     baseVersion: 0,
   };
   expect(mountBody.safeParse(mount).success).toBe(true);
-  expect(mountBody.safeParse({ ...mount, name: "Nas" }).success).toBe(false);
+  expect(mountBody.safeParse({ ...mount, name: "Work OneDrive" }).success).toBe(
+    true
+  );
+  for (const name of ["a/b", "a:b", "a\nb", "  "]) {
+    expect(mountBody.safeParse({ ...mount, name }).success).toBe(false);
+  }
   expect(mountBody.safeParse({ ...mount, name: "a".repeat(41) }).success).toBe(
     false
   );

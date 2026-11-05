@@ -41,7 +41,7 @@ type Engine struct {
 	opMu     sync.Mutex // serialises Mount, Unmount, Stop and fs cache clearing
 	stopped  bool
 	mu       sync.Mutex
-	mounted  map[string]liveMount
+	mounted  map[string]liveMount // by mount id
 	ejected  chan struct{}
 }
 
@@ -59,7 +59,7 @@ var (
 )
 
 type MountStats struct {
-	Name                             string
+	ID                               string
 	CacheBytes                       int64
 	UploadsQueued, UploadsInProgress int
 	FreeBytes                        uint64
@@ -130,7 +130,7 @@ func (e *Engine) Mount(m store.Mount, mountPoint string) (string, error) {
 		return "", err
 	}
 	e.mu.Lock()
-	_, ok := e.mounted[m.Name]
+	_, ok := e.mounted[m.ID]
 	e.mu.Unlock()
 	if ok {
 		return "", fmt.Errorf("%s is already mounted", m.Name)
@@ -143,32 +143,32 @@ func (e *Engine) Mount(m store.Mount, mountPoint string) (string, error) {
 		return "", err
 	}
 	e.mu.Lock()
-	e.mounted[m.Name] = liveMount{fs: fsName, point: out.MountPoint, serviceID: m.ServiceID, onUnmount: takeUnmountHook(e)}
+	e.mounted[m.ID] = liveMount{fs: fsName, point: out.MountPoint, serviceID: m.ServiceID, onUnmount: takeUnmountHook(e)}
 	e.mu.Unlock()
 	return out.MountPoint, nil
 }
 
-func (e *Engine) Unmount(name string) error {
+func (e *Engine) Unmount(id string) error {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
-	return e.unmount(name)
+	return e.unmount(id)
 }
 
-func (e *Engine) unmount(name string) error {
+func (e *Engine) unmount(id string) error {
 	if err := e.prune(); err != nil {
 		return err
 	}
 	// out of e.mounted first, so the eject watcher doesn't take our own unmount for a Finder eject
 	e.mu.Lock()
-	lm, ok := e.mounted[name]
-	delete(e.mounted, name)
+	lm, ok := e.mounted[id]
+	delete(e.mounted, id)
 	e.mu.Unlock()
 	if !ok {
 		return nil
 	}
 	if err := rpc("mount/unmount", map[string]any{"mountPoint": lm.point}, nil); err != nil {
 		e.mu.Lock()
-		e.mounted[name] = lm
+		e.mounted[id] = lm
 		e.mu.Unlock()
 		return err
 	}
@@ -235,8 +235,8 @@ func (e *Engine) Stats() ([]MountStats, error) {
 		return nil, err
 	}
 	stats := make([]MountStats, 0, len(live))
-	for _, name := range slices.Sorted(maps.Keys(live)) {
-		if !points[live[name].point] {
+	for _, id := range slices.Sorted(maps.Keys(live)) {
+		if !points[live[id].point] {
 			continue
 		}
 		var out struct {
@@ -245,11 +245,11 @@ func (e *Engine) Stats() ([]MountStats, error) {
 				UploadsQueued, UploadsInProgress int
 			}
 		}
-		if err := rpc("vfs/stats", map[string]any{"fs": live[name].fs}, &out); err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+		if err := rpc("vfs/stats", map[string]any{"fs": live[id].fs}, &out); err != nil {
+			return nil, fmt.Errorf("%s: %w", id, err)
 		}
 		stats = append(stats, MountStats{
-			Name:              name,
+			ID:                id,
 			CacheBytes:        out.DiskCache.BytesUsed,
 			UploadsQueued:     out.DiskCache.UploadsQueued,
 			UploadsInProgress: out.DiskCache.UploadsInProgress,
@@ -259,10 +259,10 @@ func (e *Engine) Stats() ([]MountStats, error) {
 	return stats, nil
 }
 
-func (e *Engine) Queue(name string) ([]QueueItem, error) {
-	lm, ok := e.snapshot()[name]
+func (e *Engine) Queue(id string) ([]QueueItem, error) {
+	lm, ok := e.snapshot()[id]
 	if !ok {
-		return nil, fmt.Errorf("%s is not mounted", name)
+		return nil, fmt.Errorf("%s is not mounted", id)
 	}
 	var out struct {
 		Queue []struct {
@@ -363,8 +363,8 @@ func (e *Engine) Stop() {
 		return
 	}
 	e.stopped = true
-	for name := range e.snapshot() {
-		_ = e.unmount(name)
+	for id := range e.snapshot() {
+		_ = e.unmount(id)
 	}
 	librclone.Finalize()
 	running.Store(false)

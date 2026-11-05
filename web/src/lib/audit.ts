@@ -7,7 +7,8 @@ export type AuditAction =
   | "mount.put"
   | "mount.delete"
   | "token.writeback"
-  | "device.revoke";
+  | "device.revoke"
+  | "device.rename";
 
 export const clientIp = (req: Request): string =>
   req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||

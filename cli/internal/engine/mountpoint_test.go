@@ -11,20 +11,19 @@ import (
 )
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"nas", "my-drive2", "a", "9"} {
+	for _, ok := range []string{"nas", "my-drive2", "Work OneDrive", "Photos ✨", "über", " padded ", strings.Repeat("é", 40)} {
 		require.NoError(t, ValidName(ok), ok)
 	}
-	for _, bad := range []string{"", "Nas", "a b", "-x", "x-", "a--b", "über", "a_b", strings.Repeat("a", 41)} {
+	for _, bad := range []string{"", "   ", "a/b", "a:b", "a\nb", "a\x7fb", strings.Repeat("a", 41)} {
 		require.Error(t, ValidName(bad), bad)
 	}
-	require.NoError(t, ValidName(strings.Repeat("a", 40)))
 }
 
 func TestDefaultMountPoint(t *testing.T) {
-	require.Equal(t, filepath.Join("/h", "dokky", "Nas"), DefaultMountPoint("/h", "nas", "darwin"))
-	require.Equal(t, filepath.Join("/h", "dokky", "Google Drive"), DefaultMountPoint("/h", "google-drive", "linux"))
-	require.Equal(t, "Jarvis", Label("jarvis"))
-	require.Equal(t, "My 2 Nas", Label("my-2-nas"))
+	require.Equal(t, filepath.Join("/h", "dokky", "nas"), DefaultMountPoint("/h", "nas", "darwin"))
+	require.Equal(t, filepath.Join("/h", "dokky", "Work OneDrive"), DefaultMountPoint("/h", "Work OneDrive", "linux"))
+	require.Equal(t, filepath.Join("/h", "dokky", "Notes"), DefaultMountPoint("/h", "Notes. ", "darwin"))
+	require.Equal(t, filepath.Join("/h", "dokky", "Drive"), DefaultMountPoint("/h", "..", "linux"))
 	require.Equal(t, "*", DefaultMountPoint(`C:\Users\r`, "nas", "windows"))
 }
 

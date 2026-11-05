@@ -348,7 +348,7 @@ func TestDeepCleanLoggedInWipesEverything(t *testing.T) {
 	api := newFakeAPI(t)
 	in := setupInstall(t, loggedIn(api.srv.URL))
 	in.d.start()
-	require.Contains(t, in.eng.mounted, "media")
+	require.Contains(t, in.eng.mounted, "m1")
 
 	DeepClean(in.d)
 
@@ -360,7 +360,7 @@ func TestDeepCleanLoggedInWipesEverything(t *testing.T) {
 func TestDeepCleanLocalOnlyKeepsStore(t *testing.T) {
 	in := setupInstall(t, sample("m1"))
 	in.d.start()
-	require.Contains(t, in.eng.mounted, "media")
+	require.Contains(t, in.eng.mounted, "m1")
 
 	DeepClean(in.d)
 
@@ -381,11 +381,11 @@ func TestDeepCleanStopsUploadsAndReportsThem(t *testing.T) {
 		{Name: "c.mov", Size: 1 << 20},
 		{Name: "d.mov", Size: 1 << 20},
 	}
-	in.eng.queue["media"], in.eng.events = items, nil
+	in.eng.queue["m1"], in.eng.events = items, nil
 
 	DeepClean(in.d)
 
-	require.Equal(t, []string{"queue media", "stop jobs", "unmount media", "partials media"}, in.eng.events)
+	require.Equal(t, []string{"queue m1", "stop jobs", "unmount m1", "partials media"}, in.eng.events)
 	require.Equal(t, map[string][]string{"m1": {"a.mov", "dir/b.mov", "c.mov", "d.mov"}}, in.eng.partials)
 	size := fs.SizeSuffix(1<<30 + 1<<29 + 2<<20).ByteUnit()
 	require.Equal(t, "dokky was uninstalled. 4 files ("+size+") were not uploaded: a.mov, dir/b.mov, c.mov and 1 more.", in.fx.body)

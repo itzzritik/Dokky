@@ -93,10 +93,10 @@ func (f *fakeEngine) Mount(m store.Mount, point string) (string, error) {
 	if f.failMount != nil {
 		return "", f.failMount
 	}
-	if _, ok := f.mounted[m.Name]; ok {
+	if _, ok := f.mounted[m.ID]; ok {
 		return "", fmt.Errorf("%s is already mounted", m.Name)
 	}
-	f.mounted[m.Name] = point
+	f.mounted[m.ID] = point
 	f.os[point] = true
 	f.mountedAt = time.Now()
 	return point, nil
@@ -149,7 +149,7 @@ func (f *fakeEngine) Stats() ([]engine.MountStats, error) {
 	}
 	var out []engine.MountStats
 	for name := range f.mounted {
-		out = append(out, engine.MountStats{Name: name, UploadsQueued: f.uploads})
+		out = append(out, engine.MountStats{ID: name, UploadsQueued: f.uploads})
 	}
 	return out, nil
 }
@@ -249,12 +249,12 @@ func stateOf(d *Daemon, id string) (string, string) {
 
 func TestMountMarksMountedAndSaves(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 
 	state, _ := stateOf(d, "m1")
 	require.Equal(t, stateMounted, state)
 	require.True(t, load(t, st).Local["m1"].Mounted)
-	require.Equal(t, d.defaultPoint("media"), f.mounted["media"])
+	require.Equal(t, d.defaultPoint("media"), f.mounted["m1"])
 	if runtime.GOOS != "windows" {
 		require.DirExists(t, d.defaultPoint("media"))
 	}
@@ -267,8 +267,8 @@ func TestStartupRemountsOnlyFlagged(t *testing.T) {
 	d, f, _ := newTestDaemon(t, sample("m1"))
 	d.start()
 
-	require.Contains(t, f.mounted, "media")
-	require.NotContains(t, f.mounted, "docs")
+	require.Contains(t, f.mounted, "m1")
+	require.NotContains(t, f.mounted, "m2")
 	require.Contains(t, f.services, "s1")
 	state, _ := stateOf(d, "m2")
 	require.Equal(t, stateUnmounted, state)
@@ -292,10 +292,10 @@ func TestStartupOfflineKeepsFlag(t *testing.T) {
 
 func TestUnmountCleansMountPoint(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
-	require.NoError(t, d.unmount("media"))
+	require.NoError(t, d.mount("m1"))
+	require.NoError(t, d.unmount("m1"))
 
-	require.NotContains(t, f.mounted, "media")
+	require.NotContains(t, f.mounted, "m1")
 	require.NoDirExists(t, d.defaultPoint("media"))
 	require.NoDirExists(t, filepath.Join(d.home, "dokky"))
 	require.False(t, load(t, st).Local["m1"].Mounted)
@@ -320,8 +320,8 @@ func TestForeignMountIsNeverForced(t *testing.T) {
 	f.os[other] = true
 	require.NoError(t, d.setLocal("m1", other))
 
-	require.ErrorContains(t, d.mount("media"), "already in use")
-	require.NoError(t, d.unmount("media"))
+	require.ErrorContains(t, d.mount("m1"), "already in use")
+	require.NoError(t, d.unmount("m1"))
 	require.NoError(t, d.deleteMount(context.Background(), "m1", false))
 	require.Empty(t, f.forced)
 	require.DirExists(t, other)
@@ -329,10 +329,10 @@ func TestForeignMountIsNeverForced(t *testing.T) {
 
 func TestSetLocalRefusesWhileMounted(t *testing.T) {
 	d, _, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 	other := filepath.Join(t.TempDir(), "elsewhere")
 	require.ErrorContains(t, d.setLocal("m1", other), "unmount")
-	require.NoError(t, d.unmount("media"))
+	require.NoError(t, d.unmount("m1"))
 	require.NoError(t, d.setLocal("m1", other))
 	require.Equal(t, other, load(t, st).Local["m1"].MountPoint)
 	require.Error(t, d.setLocal("m1", "relative"))
@@ -356,7 +356,7 @@ func TestStatusAnswersWhileMountIsStuck(t *testing.T) {
 	d, f, _ := newTestDaemon(t, sample())
 	f.hangMount = "s1"
 	mounted := make(chan error, 1)
-	go func() { mounted <- d.mount("media") }()
+	go func() { mounted <- d.mount("m1") }()
 	<-f.entered
 
 	var r StatusReply
@@ -380,7 +380,7 @@ func TestCommandsDontWaitOnOfflineRetry(t *testing.T) {
 	}()
 	<-f.entered
 
-	within(t, time.Second, func() { require.NoError(t, d.mount("docs")) })
+	within(t, time.Second, func() { require.NoError(t, d.mount("m2")) })
 	within(t, time.Second, func() { d.status() })
 
 	close(f.gate)
@@ -403,31 +403,31 @@ func TestOfflineRetryBacksOff(t *testing.T) {
 	require.Equal(t, probes, f.probes)
 
 	f.failProbe = nil
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 }
 
 func TestMountClearsStaleEngineEntry(t *testing.T) {
 	d, f, _ := newTestDaemon(t, sample())
-	f.mounted["media"] = "/gone"
+	f.mounted["m1"] = "/gone"
 	f.failUnmount = 1
-	require.NoError(t, d.mount("media"))
-	require.Equal(t, d.defaultPoint("media"), f.mounted["media"])
+	require.NoError(t, d.mount("m1"))
+	require.Equal(t, d.defaultPoint("media"), f.mounted["m1"])
 }
 
 func TestUnmountForcesWhenPathStays(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 	f.leaveOS = true
-	require.NoError(t, d.unmount("media"))
+	require.NoError(t, d.unmount("m1"))
 	require.Equal(t, []string{d.defaultPoint("media")}, f.forced)
 	require.False(t, load(t, st).Local["m1"].Mounted)
 }
 
 func TestUnmountFailsWhileStillMounted(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 	f.leaveOS, f.stuck = true, true
-	require.Error(t, d.unmount("media"))
+	require.Error(t, d.unmount("m1"))
 	state, _ := stateOf(d, "m1")
 	require.Equal(t, stateError, state)
 	require.True(t, load(t, st).Local["m1"].Mounted)
@@ -437,19 +437,19 @@ func TestRemountRightAfterUnmountWaits(t *testing.T) {
 	remountSettle = 100 * time.Millisecond
 	t.Cleanup(func() { remountSettle = 0 })
 	d, f, _ := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
-	require.NoError(t, d.unmount("media"))
+	require.NoError(t, d.mount("m1"))
+	require.NoError(t, d.unmount("m1"))
 	unmounted := time.Now()
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 	require.GreaterOrEqual(t, f.mountedAt.Sub(unmounted), 90*time.Millisecond)
 }
 
 func TestTickReapsEjectedMount(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
-	require.NoError(t, d.mount("docs"))
-	require.NoError(t, f.Unmount("media"))
-	require.NoError(t, f.Unmount("docs"))
+	require.NoError(t, d.mount("m1"))
+	require.NoError(t, d.mount("m2"))
+	require.NoError(t, f.Unmount("m1"))
+	require.NoError(t, f.Unmount("m2"))
 	d.tick(context.Background())
 	for _, id := range []string{"m1", "m2"} {
 		state, _ := stateOf(d, id)
@@ -457,11 +457,11 @@ func TestTickReapsEjectedMount(t *testing.T) {
 		require.False(t, load(t, st).Local[id].Mounted)
 	}
 	require.Eventually(t, func() bool { return len(f.notices()) == 1 }, time.Second, 5*time.Millisecond)
-	require.Contains(t, f.notices()[0], "Docs, Media")
+	require.Contains(t, f.notices()[0], "docs, media")
 	require.Contains(t, f.notices()[0], "Open dokky to mount")
 
-	require.NoError(t, d.mount("media"))
-	require.NoError(t, d.unmount("media"))
+	require.NoError(t, d.mount("m1"))
+	require.NoError(t, d.unmount("m1"))
 	d.tick(context.Background())
 	time.Sleep(20 * time.Millisecond)
 	require.Len(t, f.notices(), 1, "unmounting from dokky is not an eject")
@@ -469,7 +469,7 @@ func TestTickReapsEjectedMount(t *testing.T) {
 
 func TestServiceDeleteUnmountsItsMounts(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample())
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 	require.NoError(t, d.deleteService(context.Background(), "s1"))
 
 	require.Empty(t, f.mounted)
@@ -482,8 +482,8 @@ func TestServiceDeleteUnmountsItsMounts(t *testing.T) {
 
 func TestMountPutValidates(t *testing.T) {
 	d, _, st := newTestDaemon(t, sample())
-	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "Bad Name", ServiceID: "s1"}))
-	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "media", ServiceID: "s1", VFS: store.DefaultVFS()}), "already exists")
+	require.Error(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "a/b", ServiceID: "s1"}))
+	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "Media", ServiceID: "s1", VFS: store.DefaultVFS()}), "already uses the folder")
 	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "nope", VFS: store.DefaultVFS()}), "no service")
 	require.ErrorContains(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "s1"}), "cache max age")
 	require.NoError(t, d.putMount(context.Background(), store.Mount{ID: "m3", Name: "new", ServiceID: "s1", VFS: store.DefaultVFS()}))
@@ -498,12 +498,12 @@ func TestMountPutValidates(t *testing.T) {
 func TestMountPutCacheMaxAge(t *testing.T) {
 	d, f, st := newTestDaemon(t, sample("m1"))
 	d.start()
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 
 	var m store.Mount
 	require.NoError(t, call(t, d, "mount.get", idParams{ID: "m1"}, &m))
 	require.Equal(t, "media", m.Name)
-	require.Equal(t, "5m", d.mountStatus("media").CacheMaxAge)
+	require.Equal(t, "5m", d.mountStatus("m1").CacheMaxAge)
 
 	m.VFS.CacheMaxAge = "2h"
 	require.ErrorContains(t, call(t, d, "mount.put", m, nil), "cache max age")
@@ -512,17 +512,17 @@ func TestMountPutCacheMaxAge(t *testing.T) {
 	m.VFS.CacheMaxAge = "1h"
 	require.NoError(t, call(t, d, "mount.put", m, nil))
 	require.Equal(t, "1h", load(t, st).Mounts[0].VFS.CacheMaxAge)
-	require.Equal(t, "1h", d.mountStatus("media").CacheMaxAge)
-	require.True(t, d.mountStatus("media").RemountToApply)
+	require.Equal(t, "1h", d.mountStatus("m1").CacheMaxAge)
+	require.True(t, d.mountStatus("m1").RemountToApply)
 
 	docs := load(t, st).Mounts[1]
 	docs.VFS.CacheMaxAge = "7d"
 	require.NoError(t, call(t, d, "mount.put", docs, nil))
-	require.False(t, d.mountStatus("docs").RemountToApply)
+	require.False(t, d.mountStatus("m2").RemountToApply)
 
-	require.NoError(t, d.unmount("media"))
-	require.NoError(t, d.mount("media"))
-	require.False(t, d.mountStatus("media").RemountToApply)
+	require.NoError(t, d.unmount("m1"))
+	require.NoError(t, d.mount("m1"))
+	require.False(t, d.mountStatus("m1").RemountToApply)
 	require.ErrorContains(t, call(t, d, "mount.get", idParams{ID: "nope"}, nil), "no mount")
 }
 

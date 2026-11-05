@@ -60,21 +60,14 @@ type mountState struct {
 	remount     bool // a pulled change waits for the next mount
 }
 
-func byName(name string) func(store.Mount) bool {
-	return func(m store.Mount) bool { return m.Name == name }
-}
-
 func byID(id string) func(store.Mount) bool {
 	return func(m store.Mount) bool { return m.ID == id }
 }
 
-func (d *Daemon) mount(name string) error {
-	if err := engine.ValidName(name); err != nil {
-		return err
-	}
-	m, ok := d.findMount(byName(name))
+func (d *Daemon) mount(id string) error {
+	m, ok := d.findMount(byID(id))
 	if !ok {
-		return fmt.Errorf("no mount named %q", name)
+		return fmt.Errorf("no drive with id %q", id)
 	}
 	if err := d.probe(m); err != nil {
 		return err
@@ -82,8 +75,8 @@ func (d *Daemon) mount(name string) error {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	_ = d.refresh()
-	if m, ok = d.findMount(byID(m.ID)); !ok {
-		return fmt.Errorf("no mount named %q", name)
+	if m, ok = d.findMount(byID(id)); !ok {
+		return fmt.Errorf("no drive with id %q", id)
 	}
 	return d.mountLocked(m)
 }
@@ -127,27 +120,29 @@ func (d *Daemon) mountLocked(m store.Mount) error {
 	point := d.mountPoint(m)
 	for id, other := range d.states {
 		// "*" lets Windows pick a free drive letter for each mount
-		if id != m.ID && other.name != "" && other.point == point && point != "*" {
+		if id != m.ID && other.name != "" && strings.EqualFold(other.point, point) && point != "*" {
 			d.mu.Unlock()
-			return fmt.Errorf("mount point %s is used by %s", point, other.name)
+			return fmt.Errorf("mount point %s is used by another drive", point)
 		}
 	}
 	// a stale mount is dokky's only if flagged or at the default path
 	ours := d.data.Local[m.ID].Mounted || point == d.defaultPoint(m.Name)
-	engineName := cmp.Or(st.name, m.Name)
+	// a sign-in clash can move a live mount to a new id while rclone still holds the old one
+	engineID := cmp.Or(st.name, m.ID)
 	st.state, st.err = stateMounting, ""
 	d.mu.Unlock()
 	d.publish()
 
-	actual, err := d.attach(m, engineName, point, ours)
+	actual, err := d.attach(m, engineID, point, ours)
 
 	d.mu.Lock()
 	if err != nil {
 		d.fail(m, st, err)
 	} else {
-		*st = mountState{state: stateMounted, name: m.Name, point: actual}
+		*st = mountState{state: stateMounted, name: m.ID, point: actual}
 		d.setMounted(m.ID, true)
 		err = d.save()
+		go d.reportDrives()
 	}
 	d.mu.Unlock()
 	d.publish()
@@ -164,8 +159,8 @@ func (d *Daemon) fail(m store.Mount, st *mountState, err error) {
 	d.log.Error("mount failed", "name", m.Name, "err", err)
 }
 
-func (d *Daemon) attach(m store.Mount, engineName, point string, ours bool) (string, error) {
-	if err := d.clearEngine(engineName); err != nil {
+func (d *Daemon) attach(m store.Mount, engineID, point string, ours bool) (string, error) {
+	if err := d.clearEngine(engineID); err != nil {
 		return "", err
 	}
 	if wait := remountSettle - time.Since(d.unmountedAt[point]); wait > 0 {
@@ -185,13 +180,13 @@ func (d *Daemon) attach(m store.Mount, engineName, point string, ours bool) (str
 	return d.eng.Mount(m, point)
 }
 
-func (d *Daemon) unmount(name string) error {
+func (d *Daemon) unmount(id string) error {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	_ = d.refresh()
-	m, ok := d.findMount(byName(name))
+	m, ok := d.findMount(byID(id))
 	if !ok {
-		return fmt.Errorf("no mount named %q", name)
+		return fmt.Errorf("no drive with id %q", id)
 	}
 	return d.unmountLocked(m)
 }
@@ -200,13 +195,13 @@ func (d *Daemon) unmountLocked(m store.Mount) error {
 	d.mu.Lock()
 	st := d.state(m.ID)
 	live, flagged := st.name != "", d.data.Local[m.ID].Mounted
-	name, point := cmp.Or(st.name, m.Name), cmp.Or(st.point, d.mountPoint(m))
+	engineID, point := cmp.Or(st.name, m.ID), cmp.Or(st.point, d.mountPoint(m))
 	ours := live || point == d.defaultPoint(m.Name)
 	d.mu.Unlock()
 
 	var err error
 	if live || flagged {
-		err = d.detach(name, point, ours)
+		err = d.detach(engineID, point, ours)
 	}
 
 	d.mu.Lock()
@@ -216,14 +211,15 @@ func (d *Daemon) unmountLocked(m store.Mount) error {
 		*st = mountState{state: stateUnmounted}
 		d.markUnmounted(m.ID)
 		err = d.save()
+		go d.reportDrives()
 	}
 	d.mu.Unlock()
 	d.publish()
 	return err
 }
 
-func (d *Daemon) detach(name, point string, ours bool) error {
-	if err := d.clearEngine(name); err != nil {
+func (d *Daemon) detach(id, point string, ours bool) error {
+	if err := d.clearEngine(id); err != nil {
 		return err
 	}
 	if !ours {
@@ -239,9 +235,9 @@ func (d *Daemon) detach(name, point string, ours bool) error {
 	return nil
 }
 
-func (d *Daemon) clearEngine(name string) error {
+func (d *Daemon) clearEngine(id string) error {
 	var err error
-	if poll(func() bool { err = d.eng.Unmount(name); return err == nil }) {
+	if poll(func() bool { err = d.eng.Unmount(id); return err == nil }) {
 		return nil
 	}
 	return err
@@ -293,14 +289,17 @@ func (d *Daemon) refreshStats() error {
 	}
 	live := make(map[string]engine.MountStats, len(stats))
 	for _, s := range stats {
-		live[s.Name] = s
+		live[s.ID] = s
 	}
 	d.mu.Lock()
 	d.stats = live
 	var gone, names []string
 	for id, st := range d.states {
 		if _, ok := live[st.name]; st.state == stateMounted && !ok {
-			gone, names = append(gone, st.point), append(names, engine.Label(st.name))
+			gone = append(gone, st.point)
+			if i := slices.IndexFunc(d.data.Mounts, byID(id)); i >= 0 {
+				names = append(names, d.data.Mounts[i].Name)
+			}
 			*st = mountState{state: stateUnmounted}
 			d.markUnmounted(id)
 		}

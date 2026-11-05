@@ -168,15 +168,16 @@ func TestAddMountRejectsBadName(t *testing.T) {
 
 	m = press(m, "down", "enter")
 	require.Equal(t, `{"serviceId":"s1","path":"Media"}`, f.called("browse")[1])
-	m = press(m, "enter", "ctrl+u", "Bad Name", "enter")
-	require.Contains(t, view(m), "lowercase letters")
-	require.Empty(t, f.called("mount.put"))
+	f.errs = map[string]error{"mount.put": &ipc.Error{Code: "internal", Message: "a drive name must be 1 to 40 characters, without / or :"}}
+	m = press(m, "enter", "ctrl+u", "a/b", "enter")
+	require.Contains(t, view(m), "without / or :")
+	f.errs = nil
 
 	m = press(m, "ctrl+u", "media", "enter")
 	puts := f.called("mount.put")
-	require.Len(t, puts, 1)
-	require.Contains(t, puts[0], `"name":"media","serviceId":"s1","remotePath":"Media"`)
-	require.Contains(t, puts[0], `"cacheMaxAge":"5m"`)
+	require.Len(t, puts, 2)
+	require.Contains(t, puts[1], `"name":"media","serviceId":"s1","remotePath":"Media"`)
+	require.Contains(t, puts[1], `"cacheMaxAge":"5m"`)
 	require.Contains(t, view(m), "Mount media now?")
 	press(m, "y")
 	require.Equal(t, []string{`{"name":"media"}`}, f.called("mount"))
