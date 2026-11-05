@@ -235,7 +235,7 @@ func valid(v string) bool {
 	return err == nil
 }
 
-func newer(a, than string) bool {
+func Newer(a, than string) bool {
 	va, err := semver.NewVersion(a)
 	if err != nil {
 		return false
@@ -291,7 +291,7 @@ func (d *Daemon) autoUpdate(ctx context.Context, now time.Time) bool {
 		d.updateOff(u.blocked)
 		return false
 	}
-	if newer(installedVersion(u.paths.State), buildinfo.Version) {
+	if Newer(installedVersion(u.paths.State), buildinfo.Version) {
 		return d.idle.IsIdle(now)
 	}
 	why := autoOff(d.settings())
@@ -349,10 +349,10 @@ func (d *Daemon) updateCheck(ctx context.Context) (checkReply, error) {
 		return checkReply{}, err
 	}
 	cur := buildinfo.Version
-	if v := installedVersion(d.upd.paths.State); newer(v, cur) {
+	if v := installedVersion(d.upd.paths.State); Newer(v, cur) {
 		cur = v
 	}
-	return checkReply{Latest: r.Version, Newer: newer(r.Version, cur)}, nil
+	return checkReply{Latest: r.Version, Newer: Newer(r.Version, cur)}, nil
 }
 
 type openReply struct {
@@ -370,7 +370,7 @@ func (d *Daemon) updateOnOpen(ctx context.Context) openReply {
 		lctx, cancel := context.WithTimeout(ctx, openLookup)
 		r, err := Latest(lctx, http.DefaultClient, "latest", runtime.GOOS+"-"+runtime.GOARCH)
 		cancel()
-		if err == nil && newer(r.Version, buildinfo.Version) && newer(r.Version, installedVersion(u.paths.State)) {
+		if err == nil && Newer(r.Version, buildinfo.Version) && Newer(r.Version, installedVersion(u.paths.State)) {
 			if _, _, err := d.install(ctx, "latest"); err != nil {
 				d.log.Warn("update on open", "err", err)
 			}
@@ -378,7 +378,7 @@ func (d *Daemon) updateOnOpen(ctx context.Context) openReply {
 		u.mu.Unlock()
 	}
 	v := installedVersion(u.paths.State)
-	return openReply{Restarting: newer(v, buildinfo.Version) && d.uploading() == 0, Version: v}
+	return openReply{Restarting: Newer(v, buildinfo.Version) && d.uploading() == 0, Version: v}
 }
 
 func (d *Daemon) uploading() int {
@@ -399,10 +399,10 @@ func (d *Daemon) install(ctx context.Context, version string) (string, bool, err
 	}
 	if version == "latest" {
 		cur := buildinfo.Version
-		if v := installedVersion(d.upd.paths.State); newer(v, cur) {
+		if v := installedVersion(d.upd.paths.State); Newer(v, cur) {
 			cur = v
 		}
-		if !newer(r.Version, cur) {
+		if !Newer(r.Version, cur) {
 			return cur, false, nil
 		}
 	}

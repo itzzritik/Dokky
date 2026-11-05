@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
+	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 )
@@ -454,13 +455,12 @@ func client(a *store.Account) *dsync.Client {
 }
 
 func deviceInfo() dsync.DeviceInfo {
-	name, _ := os.Hostname()
-	name = strings.TrimSpace(name)
+	name := strings.TrimSpace(platform.ComputerName())
 	if name == "" {
 		name = "dokky"
 	}
 	if len(name) > maxDeviceName {
-		name = name[:maxDeviceName]
+		name = strings.ToValidUTF8(name[:maxDeviceName], "")
 	}
 	return dsync.DeviceInfo{DeviceName: name, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: buildinfo.Version}
 }

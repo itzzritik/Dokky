@@ -17,6 +17,7 @@ import (
 const (
 	cardH  = 5
 	panelH = 10
+	stackH = 15 // taller when the files sit under the graph
 )
 
 type Overview struct {
@@ -177,9 +178,13 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 		b.Lines(0, 0, banner(needs, w, bh))
 		y = bh + 1
 	}
-	if h >= y+panelH+1+1+2*cardH {
-		b.Put(0, y, activity(st, w, panelH))
-		y += panelH + 1
+	ph := panelH
+	if w < splitW && h >= y+stackH+1+1+2*cardH {
+		ph = stackH
+	}
+	if h >= y+ph+1+1+2*cardH {
+		b.Put(0, y, activity(st, w, ph))
+		y += ph + 1
 	}
 	b.Put(0, y, ui.Paint("Your drives", p.Muted, nil, false))
 	items := o.items(st)

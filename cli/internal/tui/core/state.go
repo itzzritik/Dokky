@@ -24,10 +24,11 @@ const (
 	Busy
 )
 
-// one line of the health page
+// one line of the health page: what it means, the facts behind it and the fix
 type Check struct {
-	Name, Status, Detail string
-	Tone                 Tone
+	Name, Status, Detail, Fix string
+	Facts                     [][2]string
+	Tone                      Tone
 }
 
 type State struct {

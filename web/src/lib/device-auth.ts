@@ -11,6 +11,7 @@ const LOGIN_TTL_MS = 600_000;
 const SEEN_EVERY_MS = 300_000;
 const CODE_CHARS = "BCDFGHJKLMNPQRSTVWXZ";
 const BEARER = /^Bearer dky_[\w-]{43}$/u;
+const OS_NAME = /^[^\p{Cc}]{1,64}$/u;
 
 export interface Device {
   arch: string;
@@ -19,6 +20,7 @@ export interface Device {
   lastSeenAt: Date;
   name: string;
   os: string;
+  osName?: string;
   revokedAt: Date | null;
   tokenHash: string;
   userId: string;
@@ -156,6 +158,7 @@ export async function authDevice(
     return apiError(401, "device_revoked", "this device was revoked");
   }
   const version = req.headers.get("x-dokky-version") ?? "";
+  const osName = (req.headers.get("x-dokky-os") ?? "").trim();
   const cutoff = new Date(now.getTime() - SEEN_EVERY_MS);
   if (device.lastSeenAt <= cutoff) {
     await devices().updateOne(
@@ -163,8 +166,15 @@ export async function authDevice(
       { $set: { lastSeenAt: now } }
     );
   }
+  const set: Partial<Device> = {};
   if (valid(version) && version !== device.version) {
-    await devices().updateOne({ _id: device._id }, { $set: { version } });
+    set.version = version;
+  }
+  if (OS_NAME.test(osName) && osName !== device.osName) {
+    set.osName = osName;
+  }
+  if (Object.keys(set).length > 0) {
+    await devices().updateOne({ _id: device._id }, { $set: set });
   }
   return { userId: device.userId, deviceId: String(device._id) };
 }

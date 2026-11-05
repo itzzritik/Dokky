@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
+	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
 )
 
@@ -81,6 +82,7 @@ type Device struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
 	OS         string    `json:"os"`
+	OSName     string    `json:"osName"`
 	Arch       string    `json:"arch"`
 	Version    string    `json:"version"`
 	LastSeenAt time.Time `json:"lastSeenAt"`
@@ -123,6 +125,7 @@ func (c *Client) do(ctx context.Context, method, path string, auth bool, headers
 		version = buildinfo.Version
 	}
 	req.Header.Set("X-Dokky-Version", version)
+	req.Header.Set("X-Dokky-OS", platform.OSName())
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

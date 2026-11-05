@@ -1,8 +1,6 @@
 package main
 
 import (
-	"cmp"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
-	"github.com/itzzritik/dokky/cli/internal/doctor"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/tui"
@@ -71,38 +68,6 @@ func messageOnly(err error) error {
 		return &daemonError{ie}
 	}
 	return err
-}
-
-var checkNames = map[string]string{
-	"fuse3": "File system driver", "winfsp": "File system driver", "macos version": "macOS",
-	"daemon installed": "Background service", "daemon running": "Service running", "daemon version": "Service version",
-	"keychain": "Keychain", "disk space": "Free space",
-}
-
-// the doctor's checks in plain words; problems get a short status and the fix in the detail
-func doctorChecks(ctx context.Context) []tui.Check {
-	var out []tui.Check
-	for _, c := range doctor.Run(ctx, realDoctorEnv()) {
-		ch := tui.Check{Name: cmp.Or(checkNames[c.Name], c.Name), Status: upper(c.Detail), Detail: upper(c.Detail) + ".", Tone: tui.Good}
-		switch {
-		case c.Warn:
-			ch.Tone, ch.Status = tui.Warn, "Needs a look"
-		case !c.OK:
-			ch.Tone, ch.Status = tui.Bad, "Not working"
-		}
-		if c.Fix != "" {
-			ch.Detail += "\n\nTo fix it: " + c.Fix
-		}
-		out = append(out, ch)
-	}
-	return out
-}
-
-func upper(s string) string {
-	if s == "" || strings.HasPrefix(s, "macOS") {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func uninstall() error {

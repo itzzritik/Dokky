@@ -24,7 +24,11 @@ func activity(st *core.State, w, h int) string {
 		peak = max(peak, s.Down+s.Up)
 	}
 	split := w >= splitW
-	gw, gh, fw, fh := iw, 4, iw, ih-5
+	gw, gh, fw := iw, 4, iw
+	if ih >= 12 {
+		gh = 5
+	}
+	fh := ih - gh - 1
 	if split {
 		gw = (iw - 3) / 2
 		gh, fw, fh = ih-1, iw-3-gw, ih

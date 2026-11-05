@@ -40,6 +40,7 @@ type Device struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
 	OS         string    `json:"os"`
+	OSName     string    `json:"osName"`
 	Arch       string    `json:"arch"`
 	Version    string    `json:"version"`
 	LastSeenAt time.Time `json:"lastSeenAt"`
