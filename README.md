@@ -5,7 +5,7 @@ dokky mounts your cloud storage as normal folders on your computer. Open them in
 ## Install
 
 ```
-npm i -g dokky
+npm i -g dokky --allow-scripts=dokky
 ```
 
 The program itself is saved at `~/.local/bin/dokky` (on Windows, `%USERPROFILE%\.local\bin\dokky.exe`). If that folder is not on your PATH, dokky adds it. After that dokky keeps working even if you change or remove Node.
@@ -42,7 +42,7 @@ Privacy: the server stores your credentials encrypted, but it can decrypt them t
 
 ## Updates
 
-dokky updates itself in the background with npm: every hour it checks for a new version, runs `npm i -g dokky@latest` with the npm that installed it, and switches once nothing is uploading. Turn it off in Settings, Automatic updates. You can also update with `npm i -g dokky` yourself. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
+dokky updates itself in the background with npm: every hour it checks for a new version, runs `npm i -g dokky@latest --allow-scripts=dokky` with the npm that installed it, and switches once nothing is uploading. Turn it off in Settings, Automatic updates. You can also update with `npm i -g dokky --allow-scripts=dokky` yourself; newer npm versions skip dokky's install step without that flag. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
 
 ## Uninstall
 
