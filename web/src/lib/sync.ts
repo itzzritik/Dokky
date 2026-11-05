@@ -15,6 +15,7 @@ import { aadFor, type Box, decrypt, encrypt } from "@/lib/secrets";
 
 interface Item {
   _id: string;
+  createdAt?: Date;
   updatedAt: Date;
   updatedBy: string;
   userId: string;
@@ -86,6 +87,7 @@ export const mountWire = (doc: MountDoc) => ({
   remotePath: doc.remotePath,
   vfs: doc.vfs,
   version: doc.version,
+  createdAt: doc.createdAt?.toISOString(),
   updatedAt: doc.updatedAt.toISOString(),
 });
 
@@ -131,7 +133,13 @@ export async function save<T extends Item>(
   const own = { _id: c.id, userId: c.userId } as Filter<T>;
   try {
     if (baseVersion === 0) {
-      const doc = { ...set, _id: c.id, userId: c.userId, version: 1 } as T;
+      const doc = {
+        ...set,
+        _id: c.id,
+        userId: c.userId,
+        version: 1,
+        createdAt: set.updatedAt,
+      } as T;
       await coll.insertOne(doc as OptionalUnlessRequiredId<T>);
       return doc;
     }

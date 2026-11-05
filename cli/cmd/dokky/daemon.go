@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"runtime"
@@ -46,7 +47,7 @@ func newDaemonCmd() *cobra.Command {
 func call(method string, params, result any) error {
 	err := callOnce(method, params, result)
 	if errors.Is(err, errNotRunning) {
-		if err = startDaemon(); err == nil {
+		if err = startDaemon(os.Stderr); err == nil {
 			err = callOnce(method, params, result)
 		}
 	}
@@ -105,7 +106,7 @@ func socketUp() error {
 	return c.Close()
 }
 
-func startDaemon() error {
+func startDaemon(note io.Writer) error {
 	bin := daemon.DefaultPaths().Bin
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("dokky is not installed at %s, install it with: npm i -g dokky, or run: dokky daemon", bin)
@@ -125,7 +126,7 @@ func startDaemon() error {
 		}
 		if !noted && time.Since(start) > slowStartNote {
 			noted = true
-			fmt.Fprintln(os.Stderr, "starting dokky...")
+			fmt.Fprintln(note, "starting dokky...")
 		}
 	}
 	return errors.New("dokky daemon did not start in time, check: dokky daemon")

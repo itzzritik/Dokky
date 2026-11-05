@@ -3,7 +3,7 @@ package ipc
 import "encoding/json"
 
 const (
-	Protocol   = 1
+	Protocol   = 2
 	maxMessage = 8 << 20
 )
 

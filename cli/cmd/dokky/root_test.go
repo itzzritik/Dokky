@@ -88,27 +88,3 @@ func TestCallRestartsOnProtocolMismatch(t *testing.T) {
 	require.Equal(t, "new", out["version"])
 	require.EqualValues(t, 1, restarts.Load())
 }
-
-func TestTUICallKeepsErrorCode(t *testing.T) {
-	fakeDaemon(t, map[string]ipc.Handler{
-		"status": func(context.Context, json.RawMessage) (any, error) { return map[string]string{}, nil },
-		"service.put": func(context.Context, json.RawMessage) (any, error) {
-			return nil, codedErr{"conflict", `{"name":"nas"}`}
-		},
-	})
-	d, err := connectTUI()
-	require.NoError(t, err)
-	defer d.main.Close()
-	defer d.long.Close()
-
-	err = d.Call(context.Background(), "service.put", nil, nil)
-	require.EqualError(t, err, `{"name":"nas"}`)
-	var ie *ipc.Error
-	require.ErrorAs(t, err, &ie)
-	require.Equal(t, "conflict", ie.Code)
-}
-
-type codedErr struct{ code, msg string }
-
-func (e codedErr) Error() string { return e.msg }
-func (e codedErr) Code() string  { return e.code }

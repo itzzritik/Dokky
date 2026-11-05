@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
+	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
@@ -27,22 +29,14 @@ func newLoginCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			var start struct {
-				UserCode  string `json:"userCode"`
-				VerifyURL string `json:"verifyUrl"`
-				Interval  int    `json:"interval"`
-				Resume    bool   `json:"resume"`
-			}
+			var start client.LoginStart
 			if err := call("login.start", nil, &start); err != nil {
 				return err
 			}
 			if !start.Resume {
 				fmt.Fprintf(out, "Open %s\nand check that it shows the code %s\n", start.VerifyURL, start.UserCode)
 			}
-			var poll struct {
-				Status  string        `json:"status"`
-				Clashes []dsync.Clash `json:"clashes"`
-			}
+			var poll client.LoginPoll
 			for {
 				if err := call("login.poll", nil, &poll); err != nil {
 					return fmt.Errorf("login is not finished: %w; run dokky login again to retry", err)
@@ -65,9 +59,7 @@ func newLoginCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("login is not finished, %d name clashes left; run dokky login again", len(clashes))
 				}
-				var r struct {
-					Clashes []dsync.Clash `json:"clashes"`
-				}
+				var r client.LoginPoll
 				if err := call("login.resolve", map[string]string{"kind": c.Kind, "name": c.Name, "keep": keep}, &r); err != nil {
 					fmt.Fprintln(cmd.ErrOrStderr(), err)
 					continue
@@ -80,7 +72,7 @@ func newLoginCmd() *cobra.Command {
 	}
 }
 
-func askKeep(in *bufio.Reader, out io.Writer, c dsync.Clash) (string, error) {
+func askKeep(in *bufio.Reader, out io.Writer, c api.Clash) (string, error) {
 	fmt.Fprintf(out, "\nThis device and your account both have a %s named %q.\n  local:   %s\n  account: %s\n", c.Kind, c.Name, c.Local, c.Account)
 	fmt.Fprintln(out, "local replaces the account's copy on every device; account replaces this device's copy.")
 	for {

@@ -31,6 +31,7 @@ type Mount struct {
 	RemotePath string    `json:"remotePath"`
 	VFS        VFS       `json:"vfs"`
 	Version    int64     `json:"version"`
+	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
@@ -41,8 +42,12 @@ type LocalMount struct {
 }
 
 type Settings struct {
-	AutoUpdate    bool   `json:"autoUpdate"`
-	PinnedVersion string `json:"pinnedVersion"`
+	AutoUpdate       bool   `json:"autoUpdate"`
+	PinnedVersion    string `json:"pinnedVersion"`
+	Theme            string `json:"theme"`
+	Motion           string `json:"motion"`
+	NotifyDisconnect bool   `json:"notifyDisconnect"`
+	Chosen           bool   `json:"chosen"`
 }
 
 type Account struct {
@@ -65,7 +70,7 @@ type Data struct {
 }
 
 func Fresh() Data {
-	return Data{Local: map[string]LocalMount{}, Settings: Settings{AutoUpdate: true}}
+	return Data{Local: map[string]LocalMount{}, Settings: Settings{AutoUpdate: true, NotifyDisconnect: true, Theme: "auto", Motion: "full"}}
 }
 
 func DefaultVFS() VFS {

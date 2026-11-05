@@ -445,7 +445,9 @@ func TestRemountRightAfterUnmountWaits(t *testing.T) {
 }
 
 func TestTickReapsEjectedMount(t *testing.T) {
-	d, f, st := newTestDaemon(t, sample())
+	data := sample()
+	data.Settings.NotifyDisconnect = true
+	d, f, st := newTestDaemon(t, data)
 	require.NoError(t, d.mount("m1"))
 	require.NoError(t, d.mount("m2"))
 	require.NoError(t, f.Unmount("m1"))

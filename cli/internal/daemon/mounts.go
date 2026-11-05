@@ -50,6 +50,10 @@ type mountEngine interface {
 	StopJobs() error
 	RemovePartials(ctx context.Context, m store.Mount, names []string) error
 	CleanupUploads(serviceID string) error
+	Sample() (int64, []engine.Moving, error)
+	Finished() ([]engine.Finished, error)
+	Retry(id, name string) error
+	Space(id string) (free, total int64, ok bool)
 }
 
 type mountState struct {
@@ -309,8 +313,9 @@ func (d *Daemon) refreshStats() error {
 			d.log.Error("save store", "err", err)
 		}
 	}
+	quiet := !d.data.Settings.NotifyDisconnect
 	d.mu.Unlock()
-	if len(names) > 0 {
+	if len(names) > 0 && !quiet {
 		slices.Sort(names)
 		go func() {
 			if err := d.notify("dokky", strings.Join(names, ", ")+" ejected. Open dokky to mount again."); err != nil {
