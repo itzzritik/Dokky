@@ -11,6 +11,7 @@ const (
 	MDriveConnect    = "drive.connect"
 	MDriveDisconnect = "drive.disconnect"
 	MTransferRetry   = "transfer.retry"
+	MCacheClear      = "cache.clear"
 
 	EState       = "state"
 	EActivity    = "activity"

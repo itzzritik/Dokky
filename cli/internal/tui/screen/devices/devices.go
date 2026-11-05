@@ -20,10 +20,22 @@ type Devices struct {
 	req    core.Req
 	sel    int
 	rename *ui.Field
+	btn    int
+}
+
+func (s *Devices) buttons() []ui.Btn {
+	if s.rename != nil {
+		return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "save", Label: "Save", Primary: true}}
+	}
+	drop := ui.Btn{ID: "remove", Label: "Remove", Danger: true}
+	if s.sel < len(s.list) && s.list[s.sel].Current {
+		drop = ui.Btn{ID: "signout", Label: "Sign out", Danger: true}
+	}
+	return []ui.Btn{{ID: "rename", Label: "Rename"}, drop, {ID: "close", Label: "Close", Primary: true}}
 }
 
 func Open(st *core.State) tea.Cmd {
-	d := &Devices{}
+	d := &Devices{btn: 2}
 	return tea.Sequence(core.Open(d), d.load(st))
 }
 
@@ -58,6 +70,11 @@ func (s *Devices) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				s.sel = i
 			}
 		}
+		for _, b := range s.buttons() {
+			if m.ID == "btn:"+b.ID {
+				return s, s.press(b.ID, st)
+			}
+		}
 	case tea.KeyPressMsg:
 		return s, s.key(m, st)
 	}
@@ -72,27 +89,12 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	if s.rename != nil {
 		switch k {
 		case "esc":
-			s.rename = nil
+			return s.press("cancel", st)
 		case "enter":
-			if s.sel >= len(s.list) {
-				s.rename = nil
-				return nil
-			}
-			name, id := strings.TrimSpace(s.rename.Value()), s.list[s.sel].ID
-			s.rename = nil
-			c := st.C
-			return tea.Sequence(func() tea.Msg {
-				if err := c.RenameDevice(context.Background(), id, name); err != nil {
-					return core.Toast{Text: core.Safe(err.Error()), Bad: true}
-				}
-				return core.Toast{Text: "Renamed"}
-			}, s.load(st))
-		default:
-			var cmd tea.Cmd
-			s.rename.Input, cmd = s.rename.Input.Update(m)
-			return cmd
+			return s.press("save", st)
 		}
-		return nil
+		cmd, _ := s.rename.Type(m)
+		return cmd
 	}
 	if len(s.list) == 0 {
 		return nil
@@ -104,16 +106,55 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 		s.sel = max(0, s.sel-1)
 	case "down":
 		s.sel = min(len(s.list)-1, s.sel+1)
+	case "left":
+		s.btn = max(0, s.btn-1)
+	case "right":
+		s.btn = min(len(s.buttons())-1, s.btn+1)
+	case "enter":
+		return s.press(s.buttons()[s.btn].ID, st)
 	case "r":
-		s.rename = ui.NewField("", d.Name, "Computer name", false)
+		return s.press("rename", st)
 	case "s":
 		if d.Current {
-			return tea.Batch(core.Close(s), SignOut())
+			return s.press("signout", st)
 		}
 	case "x":
 		if !d.Current {
-			return s.remove(d)
+			return s.press("remove", st)
 		}
+	}
+	return nil
+}
+
+func (s *Devices) press(id string, st *core.State) tea.Cmd {
+	if id == "close" {
+		return core.Close(s)
+	}
+	if s.sel >= len(s.list) {
+		s.rename = nil
+		return nil
+	}
+	d := s.list[s.sel]
+	switch id {
+	case "rename":
+		s.rename = ui.NewField("", d.Name, "Computer name", false)
+		s.rename.Bare = true
+	case "cancel":
+		s.rename = nil
+	case "save":
+		name := strings.TrimSpace(s.rename.Value())
+		s.rename = nil
+		c := st.C
+		return tea.Sequence(func() tea.Msg {
+			if err := c.RenameDevice(context.Background(), d.ID, name); err != nil {
+				return core.Toast{Text: core.Safe(err.Error()), Bad: true}
+			}
+			return core.Toast{Text: "Renamed"}
+		}, s.load(st))
+	case "signout":
+		return tea.Batch(core.Close(s), SignOut())
+	case "remove":
+		return s.remove(d)
 	}
 	return nil
 }
@@ -167,13 +208,7 @@ func (s *Devices) Actions(st *core.State) []core.Action {
 	case len(s.list) == 0:
 		return []core.Action{{Key: "esc", Label: "close"}}
 	}
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
-	if s.list[min(s.sel, len(s.list)-1)].Current {
-		acts = append(acts, core.Action{Key: "s", Label: "sign out", Danger: true})
-	} else {
-		acts = append(acts, core.Action{Key: "x", Label: "remove", Danger: true})
-	}
-	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "esc", Label: "close"})
+	return []core.Action{{Key: "↑↓", Label: "computer"}, {Key: "← →", Label: "button"}, {Key: "enter", Label: "select"}, {Key: "esc", Label: "close"}}
 }
 
 func (s *Devices) Animating(*core.State) bool { return s.req != 0 && s.list == nil && !ui.Reduced() }
@@ -192,45 +227,55 @@ func osName(o string) string {
 
 func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(84, maxW), Title: "Your computers", Sub: "Your drives sync to all of these."}
+	win := &ui.Window{W: min(72, maxW), Title: "Your computers", Sub: "Your drives sync to all of these.", Buttons: s.buttons(), Active: s.btn}
+	if s.rename != nil {
+		win.Active = 1
+	}
 	cw := win.Inner()
 	body := ui.NewBox()
 	rows := 1
-	switch {
-	case s.list == nil:
+	if s.list == nil {
 		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T("Loading", p.Muted).Pad(cw))
-	default:
+	} else {
 		s.sel = max(0, min(s.sel, len(s.list)-1))
-		room := max(1, maxH-7-2)
-		top := max(0, s.sel-room+1)
-		for i := top; i < len(s.list) && i < top+room; i++ {
-			d, on, y := s.list[i], i == s.sel, i-top
-			if on && s.rename != nil {
-				body.Add(0, y, s.rename.View("rename", cw, true, p.Surface))
-				continue
-			}
-			body.Add(0, y, ui.Row("row:"+d.ID, cw, on, p.Surface, func(bg color.Color, iw int) string {
-				name := ui.L(bg)
-				if on {
-					name.B(d.Name, p.Text)
-				} else {
-					name.T(d.Name, p.Text)
-				}
-				if d.Current {
-					name.Sp(2).T("this computer", p.Accent)
-				}
-				col := max(20, iw-10-10-12)
-				l := ui.L(bg).Raw(name.Pad(col)).Raw(ui.L(bg).T(osName(d.OS), p.Muted).Pad(10)).T(core.Count(d.Drives, "drive"), p.Muted)
-				seen := ui.L(bg).T(core.Ago(d.LastSeenAt, st.Now), p.Faint)
-				if d.Current {
-					seen = ui.L(bg).T("Active now", p.Kelp)
-				}
-				return l.Right(iw, seen)
-			}))
-			rows = y + 1
+		fit := max(1, (win.Room(maxH)+1)/3)
+		top := max(0, s.sel-fit+1)
+		for i := top; i < len(s.list) && i < top+fit; i++ {
+			y := (i - top) * 3
+			s.entry(body, y, st, s.list[i], cw, i == s.sel)
+			rows = y + 2
 		}
 	}
-	win.H = min(maxH, 7+rows+2)
+	win.Fit(rows, maxH)
 	win.Body = body
 	return win.Layer()
+}
+
+// one computer in two lines: name and when it was seen, then what it runs
+func (s *Devices) entry(b *ui.Box, y int, st *core.State, d api.Device, w int, on bool) {
+	p := ui.P()
+	first := ui.RowLine(w, on, p.Surface, func(bg color.Color, iw int) string {
+		if on && s.rename != nil {
+			return ui.L(bg).Raw(s.rename.View("rename", iw, true, bg).GetContent()).Pad(iw)
+		}
+		name := ui.L(bg)
+		if on {
+			name.B(d.Name, p.Text)
+		} else {
+			name.T(d.Name, p.Text)
+		}
+		if d.Current {
+			name.Sp(2).T("this computer", p.Accent)
+		}
+		seen := ui.L(bg).T(core.Ago(d.LastSeenAt, st.Now), p.Faint)
+		if d.Current {
+			seen = ui.L(bg).T("Active now", p.Kelp)
+		}
+		return name.Right(iw, seen)
+	})
+	second := ui.RowLine(w, on, p.Surface, func(bg color.Color, iw int) string {
+		return ui.L(bg).T(osName(d.OS)+"  ·  "+core.Count(d.Drives, "drive"), p.Muted).Pad(iw)
+	})
+	b.Hit(0, y, "row:"+d.ID, first)
+	b.Hit(0, y+1, "row:"+d.ID, second)
 }

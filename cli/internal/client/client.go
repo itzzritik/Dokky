@@ -160,6 +160,10 @@ func (c *Client) Retry(ctx context.Context, driveID, name string) error {
 	return c.call(ctx, quick, api.MTransferRetry, map[string]string{"id": driveID, "name": name}, nil)
 }
 
+func (c *Client) ClearCache(ctx context.Context) error {
+	return c.call(ctx, long, api.MCacheClear, nil, nil)
+}
+
 func (c *Client) Configure(ctx context.Context, p ConfigureParams) (ConfigureReply, error) {
 	return get[ConfigureReply](c, ctx, long, "service.configure", p)
 }

@@ -14,6 +14,7 @@ const LabelW = 14
 type Field struct {
 	Label, Hint string
 	Secret      bool
+	Bare        bool // no strip or bar, for a field inside a selected card
 	Input       textinput.Model
 }
 
@@ -59,6 +60,9 @@ func (f *Field) View(id string, w int, focused bool, bg color.Color) *lipgloss.L
 	pos := min(f.Input.Position(), len(val))
 	start := max(0, pos-iw+1)
 	in := L(fb).Raw(bar).Sp(1)
+	if f.Bare {
+		fb, in = bg, L(bg)
+	}
 	switch {
 	case len(val) == 0 && !focused:
 		in.T(f.Hint, p.Faint)
@@ -102,9 +106,10 @@ func Chips(id string, labels []string, sel int, focused bool, bg color.Color) *l
 	return b.Layer()
 }
 
+// the focused button is filled, coral when it destroys something; the rest sit on the cap colour
 func Button(id, label string, primary, danger, focused bool) *lipgloss.Layer {
 	p := P()
-	fg, bg := p.Text, Mix(p.Surface, p.Text, .1)
+	fg, bg := p.Text, p.Cap
 	switch {
 	case focused && danger:
 		fg, bg = p.OnAccent, p.Coral
@@ -112,8 +117,6 @@ func Button(id, label string, primary, danger, focused bool) *lipgloss.Layer {
 		fg, bg = p.OnAccent, p.Accent
 	case danger:
 		fg = p.Coral
-	case primary:
-		fg = p.Accent
 	}
 	return lipgloss.NewLayer(Paint("  "+label+"  ", fg, bg, focused)).ID(id)
 }

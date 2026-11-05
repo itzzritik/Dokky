@@ -127,6 +127,11 @@ func (a *Add) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
 		return a, a.back(st)
 	}
+	if c, ok := msg.(core.Click); ok {
+		if id, ok := strings.CutPrefix(c.ID, "btn:"); ok {
+			return a, a.press(id, st)
+		}
+	}
 	switch a.step {
 	case choose:
 		return a, a.updateChoose(msg, st)
@@ -161,6 +166,65 @@ func (a *Add) back(st *core.State) tea.Cmd {
 	return nil
 }
 
+// what the window's buttons do; Enter and Esc reach the same places
+func (a *Add) press(id string, st *core.State) tea.Cmd {
+	switch id {
+	case "cancel", "back", "stop":
+		return a.back(st)
+	case "next":
+		return a.sign.submit(st)
+	case "copy":
+		return a.sign.copyOrOpen("c")
+	case "open":
+		return a.sign.copyOrOpen("o")
+	case "add", "save":
+		return a.submitName(st)
+	case "retry":
+		return a.run.start(st, a.run.params)
+	case "done":
+		return a.finish(false)
+	case "finder":
+		return a.finish(true)
+	}
+	return nil
+}
+
+// the bar for the current step; the primary one is what Enter does
+func (a *Add) buttons() ([]ui.Btn, int) {
+	back := ui.Btn{ID: "back", Label: "Back"}
+	switch a.step {
+	case choose:
+		return []ui.Btn{{ID: "cancel", Label: "Cancel"}}, -1
+	case signin:
+		s := &a.sign
+		switch {
+		case s.working() && s.authURL != "":
+			return []ui.Btn{{ID: "stop", Label: "Stop"}, {ID: "copy", Label: "Copy link"}, {ID: "open", Label: "Open again"}}, -1
+		case s.working():
+			return []ui.Btn{{ID: "stop", Label: "Stop"}}, -1
+		case s.oauth && s.question == nil:
+			return []ui.Btn{back, {ID: "next", Label: "Open browser", Primary: true}}, 1
+		}
+		if a.edit != nil {
+			back.Label = "Cancel"
+		}
+		return []ui.Btn{back, {ID: "next", Label: "Continue", Primary: true}}, 1
+	case name:
+		if a.edit != nil {
+			return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "save", Label: "Save", Primary: true}}, 1
+		}
+		return []ui.Btn{back, {ID: "add", Label: "Add drive", Primary: true}}, 1
+	}
+	btns := a.connectButtons()
+	switch {
+	case a.run.working():
+		return btns, -1
+	case a.run.failed != "":
+		return btns, 1
+	}
+	return btns, min(a.run.btn, len(btns)-1)
+}
+
 func (a *Add) choose(st *core.State, p api.Provider, acct *api.AccountRef) tea.Cmd {
 	a.prov, a.account = p, acct
 	if acct != nil {
@@ -177,6 +241,7 @@ func (a *Add) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	if a.edit != nil {
 		win.Step, win.Progress = "", 0
 	}
+	win.Buttons, win.Active = a.buttons()
 	var rows int
 	switch a.step {
 	case choose:
@@ -188,7 +253,7 @@ func (a *Add) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	default:
 		rows = a.viewConnect(st, win)
 	}
-	win.H = min(maxH, 7+rows+2)
+	win.Fit(rows, maxH)
 	return win.Layer()
 }
 

@@ -56,9 +56,9 @@ func dim(c *lipgloss.Canvas, w, h int) {
 			if fg == nil {
 				fg = P().Text
 			}
-			cell.Style.Fg = Mix(bg, fg, .3)
+			cell.Style.Fg = Mix(bg, fg, .22)
 			if cell.Style.Bg != nil {
-				cell.Style.Bg = Mix(bg, cell.Style.Bg, .3)
+				cell.Style.Bg = Mix(bg, cell.Style.Bg, .22)
 			}
 			cell.Style.Attrs = 0
 		}

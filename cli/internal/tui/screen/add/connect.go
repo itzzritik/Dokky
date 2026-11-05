@@ -64,37 +64,44 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 		d := m.Val.(api.Drive)
 		r.done = &d
 		a.from, a.movedAt = a.progress(st), st.Now
-		if d.State != api.Connected {
+		r.btn = 0
+		if d.State == api.Connected {
 			r.btn = 1
-		}
-	case core.Click:
-		switch m.ID {
-		case "btn:open":
-			r.btn = 0
-			return a.finish()
-		case "btn:done":
-			r.btn = 1
-			return a.finish()
 		}
 	case tea.KeyPressMsg:
-		switch {
-		case r.failed != "" && m.String() == "enter":
-			return r.start(st, r.params)
-		case r.done == nil:
-		case m.String() == "left" || m.String() == "right":
-			if r.done.State == api.Connected {
+		btns := a.connectButtons()
+		switch m.String() {
+		case "left", "right":
+			if r.done != nil && len(btns) == 2 {
 				r.btn = 1 - r.btn
 			}
-		case m.String() == "enter":
-			return a.finish()
+		case "enter":
+			switch {
+			case r.failed != "":
+				return a.press("retry", st)
+			case r.done != nil:
+				return a.press(btns[min(r.btn, len(btns)-1)].ID, st)
+			}
 		}
 	}
 	return nil
 }
 
-func (a *Add) finish() tea.Cmd {
+func (a *Add) connectButtons() []ui.Btn {
 	r := &a.run
-	if r.btn == 0 && r.done != nil && r.done.State == api.Connected {
+	switch {
+	case r.failed != "":
+		return []ui.Btn{{ID: "back", Label: "Back"}, {ID: "retry", Label: "Try again", Primary: true}}
+	case r.done != nil && r.done.State == api.Connected:
+		return []ui.Btn{{ID: "done", Label: "Done"}, {ID: "finder", Label: "Open in " + core.FileManager(), Primary: true}}
+	case r.done != nil:
+		return []ui.Btn{{ID: "done", Label: "Done", Primary: true}}
+	}
+	return []ui.Btn{{ID: "cancel", Label: "Cancel"}}
+}
+
+func (a *Add) finish(open bool) tea.Cmd {
+	if r := a.run; open && r.done != nil && r.done.State == api.Connected {
 		return tea.Batch(core.Close(a), core.OpenFolder(r.done.Folder))
 	}
 	return core.Close(a)
@@ -151,17 +158,6 @@ func (a *Add) viewConnect(st *core.State, win *ui.Window) int {
 		}
 		body.Put(0, i, l.Pad(cw))
 	}
-	rows := 3
-	if r.done != nil {
-		x := 0
-		if r.done.State == api.Connected {
-			label := "Open in " + core.FileManager()
-			body.Add(0, 4, ui.Button("btn:open", label, true, false, r.btn == 0))
-			x = ui.ButtonWidth(label) + 2
-		}
-		body.Add(x, 4, ui.Button("btn:done", "Done", false, false, r.btn == 1))
-		rows = 5
-	}
 	win.Body = body
-	return rows
+	return 3
 }

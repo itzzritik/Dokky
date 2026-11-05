@@ -4,7 +4,6 @@ import (
 	"math"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,16 +11,9 @@ import (
 
 const frame = 33 * time.Millisecond
 
-var (
-	envReduced = strings.EqualFold(os.Getenv("DOKKY_MOTION"), "reduced")
-	reduced    atomic.Bool
-)
+var reduced = strings.EqualFold(os.Getenv("DOKKY_MOTION"), "reduced")
 
-func init() { reduced.Store(envReduced) }
-
-func Reduced() bool { return reduced.Load() }
-
-func SetMotion(m string) { reduced.Store(envReduced || m == "reduced") }
+func Reduced() bool { return reduced }
 
 type TickMsg struct{}
 

@@ -13,14 +13,17 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/activity"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/drives"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/health"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/overview"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/settings"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-var tabNames = []string{"Overview", "Drives", "Activity", "Settings"}
+var tabNames = []string{"Overview", "Drives", "Activity", "Health", "Settings"}
 
 type toastGone struct{ at time.Time }
+
+type checked struct{ checks []core.Check }
 
 type App struct {
 	st      *core.State
@@ -44,7 +47,7 @@ func New(deps core.Deps) *App {
 	return &App{
 		st:    &core.State{Deps: deps, Now: now},
 		deps:  deps,
-		tabs:  []core.Screen{overview.New(now), drives.New(), activity.New(), settings.New()},
+		tabs:  []core.Screen{overview.New(now), drives.New(), activity.New(), health.New(), settings.New()},
 		start: now,
 	}
 }
@@ -97,6 +100,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			return a.onLost(lost{epoch: a.st.Epoch})
 		}
 		return a.broadcast(m)
+	case core.RunChecks:
+		return a.runChecks()
+	case checked:
+		a.st.Checks, a.st.Checked, a.st.Checking = m.checks, a.st.Now, false
 	case core.DriveDone:
 		a.st.Busy.Done(m.ID)
 		if m.Err != nil {
@@ -146,8 +153,6 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 
 func (a *App) setSnap(s api.State) tea.Cmd {
 	a.st.Snap = s
-	ui.SetTheme(s.Settings.Theme)
-	ui.SetMotion(s.Settings.Motion)
 	if wantGate(a.st) {
 		if a.gate == nil {
 			a.gate = gate.New(a.st.Now)
@@ -260,7 +265,7 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 	switch s {
 	case "q":
 		return a.quit()
-	case "1", "2", "3", "4":
+	case "1", "2", "3", "4", "5":
 		return a.setTab(int(s[0] - '1'))
 	case "left":
 		return a.setTab(max(0, a.active-1))
@@ -268,6 +273,33 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		return a.setTab(min(len(a.tabs)-1, a.active+1))
 	}
 	return a.updateTop(k)
+}
+
+func (a *App) runChecks() tea.Cmd {
+	if a.st.Checking || a.deps.Doctor == nil {
+		return nil
+	}
+	a.st.Checking = true
+	doctor := a.deps.Doctor
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		return checked{doctor(ctx)}
+	}
+}
+
+// the header spins while something is in flight
+func (a *App) busy() bool {
+	st := a.st
+	if st.Snap.Account.Pending || st.Checking || st.Act.Down > 0 || st.Act.Up > 0 {
+		return true
+	}
+	for _, d := range st.Snap.Drives {
+		if d.Uploads > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) quit() tea.Cmd {
@@ -289,7 +321,7 @@ func (a *App) animating() bool {
 	if !a.st.Connected {
 		return a.starting && !ui.Reduced()
 	}
-	if a.st.Snap.Account.Pending && !ui.Reduced() {
+	if a.busy() && !ui.Reduced() {
 		return true
 	}
 	for _, w := range a.windows {

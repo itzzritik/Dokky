@@ -28,6 +28,9 @@ type Progress api.AddProgress
 // the daemon came back; screens fetch what they keep themselves
 type Reconnected struct{}
 
+// ask the app to run the health checks again
+type RunChecks struct{}
+
 type Req uint64
 
 var reqs atomic.Uint64

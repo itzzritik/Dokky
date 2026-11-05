@@ -115,7 +115,7 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 	body := ui.NewBox()
 	body.Add(0, 0, p.search.View("search", cw, true, pal.Surface))
 	opts := p.options(st)
-	room := max(3, min(10, maxH-7-2-2))
+	room := max(3, min(10, win.Room(maxH)-2))
 	p.sel = max(0, min(p.sel, len(opts)-1))
 	if p.sel < p.top {
 		p.top = p.sel

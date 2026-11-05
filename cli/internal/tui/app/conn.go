@@ -78,7 +78,7 @@ func (a *App) onConnected(m connected) tea.Cmd {
 	a.st.Epoch++
 	a.st.Connected, a.starting, a.dialing = true, false, false
 	a.st.Act, a.st.Catalog = m.act, m.cat
-	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}))
+	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks())
 }
 
 // a reply from before a reconnect, or an event from an old stream, is dropped

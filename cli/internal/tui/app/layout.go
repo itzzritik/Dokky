@@ -55,7 +55,7 @@ func (a *App) render() string {
 		l := win.View(a.st, w-4, h-4)
 		b := lipgloss.NewCompositor(l).Bounds()
 		x, y := (w-b.Dx())/2, max(1, min(windowY, (h-3-b.Dy())/2))
-		passes = append(passes, ui.Pass{Layer: lipgloss.NewLayer("").AddLayers(l).X(x).Y(y), Dim: i == 0, Modal: true})
+		passes = append(passes, ui.Pass{Layer: lipgloss.NewLayer("").AddLayers(l).X(x).Y(y), Dim: true, Modal: true})
 		if i == len(a.windows)-1 {
 			acts = win.Actions(a.st)
 		}
@@ -69,26 +69,37 @@ func (a *App) render() string {
 	return out
 }
 
+// the live chip at the top right: what dokky is doing, else whether anything needs you
 func (a *App) account() string {
-	p, acct := ui.P(), a.st.Snap.Account
+	p, st := ui.P(), a.st
+	acct := st.Snap.Account
+	spin := func(label string) string {
+		return ui.L(nil).B(ui.Spin(st.T), p.Accent).Sp(1).Raw(label).String()
+	}
+	uploads := 0
+	for _, d := range st.Snap.Drives {
+		uploads += d.Uploads
+	}
+	n, bad := st.Problems()
 	switch {
 	case acct.Pending:
-		return ui.L(nil).B(ui.Spin(a.st.T), p.Accent).Sp(1).T("Signing in", p.Accent).String()
+		return spin(ui.Paint("Signing in", p.Accent, nil, false))
+	case st.Act.Down > 0 || st.Act.Up > 0:
+		return spin(ui.L(nil).T(ui.G.Down+" "+core.Speed(st.Act.Down), p.Muted).Sp(2).T(ui.G.Up+" "+core.Speed(st.Act.Up), p.Muted).String())
+	case uploads > 0:
+		return spin(ui.Paint("Uploading "+core.Count(uploads, "file"), p.Muted, nil, false))
+	case n > 0 && bad:
+		return ui.L(nil).B(ui.G.Cross, p.Coral).Sp(1).T(core.Count(n, "problem"), p.Coral).String()
+	case n > 0:
+		return ui.L(nil).B(ui.G.Bang, p.Buoy).Sp(1).T(core.Count(n, "problem"), p.Buoy).String()
 	case acct.SignedOut:
-		return ui.Paint("Signed out", p.Buoy, nil, false)
+		return ui.L(nil).B(ui.G.Bang, p.Buoy).Sp(1).T("Signed out", p.Buoy).String()
 	case acct.Offline:
-		return ui.Paint("Offline", p.Faint, nil, false)
-	case acct.LoggedIn:
-		name, _, _ := strings.Cut(strings.TrimSpace(acct.Name), " ")
-		if name == "" {
-			name, _, _ = strings.Cut(acct.Email, "@")
-		}
-		if name == "" {
-			return ui.Paint("Signed in", p.Muted, nil, false)
-		}
-		return ui.L(nil).T("Signed in as "+name, p.Muted).String()
+		return ui.L(nil).B(ui.G.Dash, p.Faint).Sp(1).T("Offline", p.Faint).String()
+	case st.Checking:
+		return spin(ui.Paint("Checking", p.Muted, nil, false))
 	}
-	return ui.Paint("This computer only", p.Muted, nil, false)
+	return ui.L(nil).B(ui.G.Check, p.Kelp).Sp(1).T("Healthy", p.Muted).String()
 }
 
 // calm full screen while the daemon is away
