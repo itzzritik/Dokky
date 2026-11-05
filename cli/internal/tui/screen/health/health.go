@@ -27,21 +27,14 @@ const (
 )
 
 type Health struct {
-	sel    int
-	moved  bool
-	fixing bool
-}
-
-type fixed struct {
-	n      int
-	err    error
-	reopen bool
+	sel   int
+	moved bool
 }
 
 func New() *Health { return &Health{} }
 
-// live checks from the daemon's state, then the computer's own
-func checks(st *core.State) []core.Check {
+// Checks: live checks from the daemon's state, then the computer's own
+func Checks(st *core.State) []core.Check {
 	out := []core.Check{drives(st), uploads(st), sync(st)}
 	if len(st.Checks) == 0 && st.Checking {
 		return append(out, core.Check{Name: "This computer", Status: "Checking", Detail: "Looking at the background service, updates, the cache and the keychain.", Tone: core.Busy})
@@ -197,20 +190,10 @@ func (h *Health) selected(cs []core.Check) int {
 }
 
 func (h *Health) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
-	if m, ok := msg.(fixed); ok {
-		h.fixing = false
-		switch {
-		case m.reopen && m.err == nil:
-			return h, core.Send(core.Reopen{})
-		case m.err != nil:
-			return h, tea.Batch(core.Fail(m.err), core.Send(core.RunChecks{}))
-		}
-		return h, tea.Batch(core.Say("Fixed "+core.Count(m.n, "problem")), core.Send(core.RunChecks{}))
-	}
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		if c, ok := msg.(core.Click); ok && strings.HasPrefix(c.ID, "check:") {
-			for i, x := range checks(st) {
+			for i, x := range Checks(st) {
 				if c.ID == "check:"+x.Name {
 					h.sel, h.moved = i, true
 				}
@@ -218,7 +201,7 @@ func (h *Health) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		}
 		return h, nil
 	}
-	cs := checks(st)
+	cs := Checks(st)
 	switch k.String() {
 	case "up":
 		h.sel, h.moved = max(0, h.selected(cs)-1), true
@@ -227,7 +210,7 @@ func (h *Health) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	case "r":
 		return h, core.Send(core.RunChecks{})
 	case "f":
-		return h, h.fixAll(st)
+		return h, core.Send(core.FixAll{})
 	case "c":
 		return h, tea.Batch(tea.SetClipboard(report(st, cs)), core.Say("Report copied"))
 	}
@@ -255,7 +238,7 @@ func report(st *core.State, cs []core.Check) string {
 
 func (h *Health) Actions(st *core.State) []core.Action {
 	acts := []core.Action{{Key: "↑↓", Label: "move"}}
-	if len(repairs(st)) > 0 && !h.fixing {
+	if len(Repairs(st, false)) > 0 && !st.Fixing {
 		acts = append(acts, core.Action{Key: "f", Label: "fix all", Accent: true})
 	}
 	acts = append(acts, core.Action{Key: "c", Label: "copy report"})
@@ -269,10 +252,10 @@ func (h *Health) Animating(st *core.State) bool {
 	if ui.Reduced() {
 		return false
 	}
-	if h.fixing {
+	if st.Fixing {
 		return true
 	}
-	for _, c := range checks(st) {
+	for _, c := range Checks(st) {
 		if c.Tone == core.Busy {
 			return true
 		}
@@ -296,7 +279,7 @@ func tone(t core.Tone) (string, ui.Status) {
 func (h *Health) View(st *core.State, w, ht int) *lipgloss.Layer {
 	p := ui.P()
 	b := ui.NewBox()
-	cs := checks(st)
+	cs := Checks(st)
 	sel := h.selected(cs)
 	bh := 1
 	if ht >= shortBox+bannerH {
@@ -436,20 +419,21 @@ func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
 	}
 	text, key, action := core.Count(n, "problem")+verb, "", ""
 	switch {
-	case hl.fixing:
+	case st.Fixing:
 		text = ui.Spin(st.T) + " Fixing"
-	case len(repairs(st)) > 0:
+	case len(Repairs(st, false)) > 0:
 		key, action = "f", "fix all"
 	}
 	return ui.Banner(w, h, bad, text, key, action)
 }
 
-// the problems Fix all can repair: this computer's first, then drives and uploads, anything that reopens dokky last
-func repairs(st *core.State) []core.Check {
+// the problems Fix all can repair: this computer's first, then drives and uploads, anything that reopens dokky last; the pass on open skips reopening twice
+func Repairs(st *core.State, auto bool) []core.Check {
 	var now, last []core.Check
 	for _, c := range append(slices.Clone(st.Checks), drives(st), uploads(st)) {
 		switch {
 		case c.Repair == nil || c.Tone != core.Warn && c.Tone != core.Bad:
+		case c.Reopen && auto && st.Deps.Reopened:
 		case c.Reopen:
 			last = append(last, c)
 		default:
@@ -457,24 +441,4 @@ func repairs(st *core.State) []core.Check {
 		}
 	}
 	return append(now, last...)
-}
-
-func (h *Health) fixAll(st *core.State) tea.Cmd {
-	todo := repairs(st)
-	if h.fixing || len(todo) == 0 {
-		return nil
-	}
-	h.fixing = true
-	return func() tea.Msg {
-		var errs []error
-		reopen := false
-		for _, c := range todo {
-			if err := c.Repair(); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", c.Name, err))
-				continue
-			}
-			reopen = reopen || c.Reopen
-		}
-		return fixed{n: len(todo), err: errors.Join(errs...), reopen: reopen}
-	}
 }

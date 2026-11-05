@@ -10,6 +10,7 @@ import (
 )
 
 type Deps struct {
+	Reopened  bool // this run follows a reopen, so repairs that reopen again are left out
 	Start     func() error
 	Doctor    func(context.Context) []Check
 	Uninstall func() error
@@ -50,6 +51,7 @@ type State struct {
 	Checks    []Check
 	Checked   time.Time
 	Checking  bool
+	Fixing    bool   // Fix all is running
 	Latest    string // a newer dokky to update to
 }
 

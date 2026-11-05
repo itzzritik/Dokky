@@ -59,7 +59,8 @@ func serviceCheck(env doctor.Env, by map[string]doctor.Check) tui.Check {
 	case !run.OK:
 		v = ""
 		c.Status, c.Tone, c.Auto = "Not running", tui.Bad, "Fix all starts the background service."
-	case !same.OK:
+	// a dev build never matches the installed service, and restarting it every open would only disturb the drives
+	case !same.OK && !strings.Contains(env.Version, "dev"):
 		c.Status, c.Tone, c.Auto, c.Reopen = "Out of date", tui.Warn, "Fix all restarts dokky so both run the same version.", true
 	case !env.DaemonInstalled:
 		c.Status, c.Tone, c.Auto = "Off at login", tui.Warn, "Fix all sets the background service to start at login."
