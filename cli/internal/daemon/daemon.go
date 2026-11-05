@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
@@ -85,6 +86,7 @@ type Daemon struct {
 	notify      func(title, body string) error
 
 	idle     Idle
+	act      activity
 	upd      updater
 	loop     dsync.Loop
 	syncMu   sync.Mutex // one pull at a time; taken before opMu
@@ -101,6 +103,8 @@ type Daemon struct {
 	data    store.Data
 	states  map[string]*mountState
 	stats   map[string]engine.MountStats
+	space   map[string]api.Space
+	spaceAt map[string]time.Time
 	flow    *loginFlow
 	clashes []dsync.Clash
 	saves   uint64 // a pull that started before a save is dropped
@@ -197,6 +201,10 @@ func Run(ctx context.Context, p Paths) (err error) {
 			<-served
 		}
 	}()
+	sampleCtx, stopSample := context.WithCancel(ctx)
+	sampled := make(chan struct{})
+	go func() { d.sample(sampleCtx); close(sampled) }()
+	defer func() { stopSample(); <-sampled }()
 	log.Info("daemon started", "version", buildinfo.Version)
 	d.autoUpdate(ctx, time.Now())
 	wipe := make(chan *InstallWatch)
@@ -251,6 +259,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
 		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
 		unmountedAt: map[string]time.Time{}, cleaned: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
+		space: map[string]api.Space{}, spaceAt: map[string]time.Time{},
 	}
 }
 
@@ -310,11 +319,6 @@ type deleteParams struct {
 	Force bool   `json:"force"`
 }
 
-type localParams struct {
-	ID         string `json:"id"`
-	MountPoint string `json:"mountPoint"`
-}
-
 func decode[T, R any](fn func(T) (R, error)) ipc.Handler {
 	return decodeCtx(func(_ context.Context, p T) (R, error) { return fn(p) })
 }
@@ -343,6 +347,10 @@ func decodeCtx[T, R any](fn func(context.Context, T) (R, error)) ipc.Handler {
 func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	return map[string]ipc.Handler{
 		"status": func(context.Context, json.RawMessage) (any, error) { return d.status(), nil },
+		api.MState: func(context.Context, json.RawMessage) (any, error) {
+			d.tryRefresh()
+			return d.snapshot(), nil
+		},
 		"mount": decode(func(p namedParams) (any, error) {
 			id, err := d.resolve(p)
 			if err == nil {
@@ -388,18 +396,25 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			return m, nil
 		}),
 		"mount.delete":      decodeCtx(func(ctx context.Context, p deleteParams) (any, error) { return nil, d.deleteMount(ctx, p.ID, p.Force) }),
-		"mount.setLocal":    decode(func(p localParams) (any, error) { return nil, d.setLocal(p.ID, p.MountPoint) }),
 		"providers":         func(context.Context, json.RawMessage) (any, error) { return engine.Providers() },
 		"service.configure": decodeCtx(d.configure),
 		"service.test": decode(func(p testParams) (testReply, error) {
 			p.Service.Options, _ = d.keepSecrets(p.EditOf, p.Service.Type, p.Service.Options)
 			return d.testService(p.Service), nil
 		}),
-		"browse":       decode(d.browse),
-		"transfers":    func(context.Context, json.RawMessage) (any, error) { return d.transfers(), nil },
-		"settings.get": func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
-		"settings.set": decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
-		"login.start":  decodeCtx(func(ctx context.Context, _ struct{}) (loginStartReply, error) { return d.loginStart(ctx) }),
+		"browse":             decode(d.browse),
+		api.MActivity:        func(context.Context, json.RawMessage) (any, error) { return d.activity(), nil },
+		api.MTransferRetry:   decode(d.retry),
+		api.MCatalog:         func(context.Context, json.RawMessage) (any, error) { return catalog() },
+		api.MAccounts:        func(context.Context, json.RawMessage) (any, error) { return d.accounts(), nil },
+		api.MDriveAdd:        decodeCtx(d.addDrive),
+		api.MDriveUpdate:     decodeCtx(d.updateDrive),
+		api.MDriveRemove:     decodeCtx(d.removeDrive),
+		api.MDriveConnect:    decode(d.connectDrive),
+		api.MDriveDisconnect: decode(d.disconnectDrive),
+		"settings.get":       func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
+		"settings.set":       decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
+		"login.start":        decodeCtx(func(ctx context.Context, _ struct{}) (loginStartReply, error) { return d.loginStart(ctx) }),
 		"login.poll": decodeCtx(func(ctx context.Context, _ struct{}) (loginPollReply, error) {
 			r, err := d.loginPoll(ctx)
 			d.syncNow(ctx)
@@ -415,7 +430,6 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"devices.list":   decodeCtx(func(ctx context.Context, _ struct{}) ([]dsync.Device, error) { return d.devices(ctx) }),
 		"devices.revoke": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.revokeDevice(ctx, p.ID) }),
 		"devices.rename": decodeCtx(func(ctx context.Context, p namedParams) (any, error) { return nil, d.renameDevice(ctx, p.ID, p.Name) }),
-		"account.get":    func(context.Context, json.RawMessage) (any, error) { return d.accountInfo(), nil },
 		"update": decodeCtx(func(ctx context.Context, p updateParams) (updateReply, error) {
 			r, err := d.update(ctx, p)
 			if err == nil && r.Updated {
@@ -440,12 +454,16 @@ func requestRestart(restart chan<- struct{}) {
 	})
 }
 
-func (d *Daemon) status() StatusReply {
-	// Stats waits on rclone's mount lock while a mount runs; serve the cache then
+// Stats waits on rclone's mount lock while a mount runs; serve the cache then
+func (d *Daemon) tryRefresh() {
 	if d.opMu.TryLock() {
 		_ = d.refresh()
 		d.opMu.Unlock()
 	}
+}
+
+func (d *Daemon) status() StatusReply {
+	d.tryRefresh()
 	r := StatusReply{Version: buildinfo.Version, Protocol: ipc.Protocol, Mounts: []MountStatus{}}
 	if du, err := diskusage.New(d.cacheDir); err == nil {
 		r.FreeBytes = du.Available
@@ -490,6 +508,8 @@ func (d *Daemon) publish() {
 	}
 	raw, _ := json.Marshal(d.status())
 	d.srv.Publish(ipc.Event{Event: "status", Data: raw})
+	raw, _ = json.Marshal(d.snapshot())
+	d.srv.Publish(ipc.Event{Event: api.EState, Data: raw})
 }
 
 func (d *Daemon) putService(ctx context.Context, s store.Service) error {
@@ -599,17 +619,10 @@ func (d *Daemon) mountSlot(m store.Mount) (int, error) {
 	if !slices.ContainsFunc(d.data.Services, func(s store.Service) bool { return s.ID == m.ServiceID }) {
 		return -1, fmt.Errorf("no service with id %q", m.ServiceID)
 	}
-	i := -1
-	folder := engine.SafeFolder(m.Name, runtime.GOOS)
-	for j, x := range d.data.Mounts {
-		switch {
-		case x.ID == m.ID:
-			i = j
-		case strings.EqualFold(engine.SafeFolder(x.Name, runtime.GOOS), folder):
-			return -1, fmt.Errorf("another drive already uses the folder %s", folder)
-		}
+	if err := d.folderClash(m.ID, m.Name); err != nil {
+		return -1, err
 	}
-	return i, nil
+	return slices.IndexFunc(d.data.Mounts, byID(m.ID)), nil
 }
 
 func (d *Daemon) resolve(p namedParams) (string, error) {

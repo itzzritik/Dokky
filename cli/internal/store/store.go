@@ -83,7 +83,7 @@ func (s *Store) Load() (Data, error) {
 	if err != nil {
 		return Data{}, fmt.Errorf("decrypt store: %w", err)
 	}
-	var d Data
+	d := Fresh()
 	if err := json.Unmarshal(plain, &d); err != nil {
 		return Data{}, err
 	}

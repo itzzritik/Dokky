@@ -69,11 +69,6 @@ type oauthReply struct {
 	AuthURL string `json:"authUrl"`
 }
 
-type transfer struct {
-	Mount string             `json:"mount"`
-	Items []engine.QueueItem `json:"items"`
-}
-
 func (d *Daemon) configure(ctx context.Context, p configureParams) (configureReply, error) {
 	if p.ID == "" {
 		p.ID = uuid.NewString()
@@ -188,26 +183,6 @@ func (d *Daemon) browse(p browseParams) ([]string, error) {
 	return d.eng.ListDirs(s, p.Path)
 }
 
-func (d *Daemon) transfers() []transfer {
-	type live struct{ mount, engineName string }
-	var mounted []live
-	d.mu.Lock()
-	for _, m := range d.data.Mounts {
-		if st := d.states[m.ID]; st != nil && st.state == stateMounted {
-			mounted = append(mounted, live{m.Name, st.name})
-		}
-	}
-	d.mu.Unlock()
-	out := []transfer{}
-	for _, l := range mounted {
-		// an error means it went away since; the next refresh marks it unmounted
-		if items, err := d.eng.Queue(l.engineName); err == nil {
-			out = append(out, transfer{Mount: l.mount, Items: items})
-		}
-	}
-	return out
-}
-
 func (d *Daemon) settings() store.Settings {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -216,12 +191,14 @@ func (d *Daemon) settings() store.Settings {
 
 func (d *Daemon) setSettings(s store.Settings) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err := writePin(d.upd.paths.State, s.PinnedVersion); err != nil {
-		return err
+	err := writePin(d.upd.paths.State, s.PinnedVersion)
+	if err == nil {
+		d.data.Settings = s
+		err = d.save()
 	}
-	d.data.Settings = s
-	return d.save()
+	d.mu.Unlock()
+	d.publish()
+	return err
 }
 
 func splitSecrets(s store.Service) (store.Service, error) {

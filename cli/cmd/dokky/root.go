@@ -1,12 +1,18 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"strings"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
+	"github.com/itzzritik/dokky/cli/internal/doctor"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/tui"
@@ -38,51 +44,15 @@ func newRootCmd() *cobra.Command {
 		},
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
-		RunE: func(*cobra.Command, []string) error {
-			d, err := connectTUI()
-			if err != nil {
-				return err
-			}
-			defer d.main.Close()
-			defer d.long.Close()
-			return tui.Run(d)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// starts or restarts the daemon when it can; the TUI shows its own screen when it cannot
+			_ = call(api.MState, nil, nil)
+			return tui.Run(cmd.Context(), tui.Deps{Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorProblems, Uninstall: uninstall})
 		},
 	}
 	cmd.SetVersionTemplate("dokky {{.Version}}\n")
 	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd(), newDoctorCmd(), newLoginCmd(), newLogoutCmd(), newSelftestCmd(), newUpdateCmd())
 	return cmd
-}
-
-// long calls get their own connection: the daemon answers one request at a time per connection
-type tuiDaemon struct{ main, long *ipc.Client }
-
-func connectTUI() (tuiDaemon, error) {
-	if err := call("status", nil, nil); err != nil {
-		return tuiDaemon{}, err
-	}
-	state, err := platform.StateDir()
-	if err != nil {
-		return tuiDaemon{}, err
-	}
-	main, err := ipc.Connect(state)
-	if err != nil {
-		return tuiDaemon{}, err
-	}
-	long, err := ipc.Connect(state)
-	if err != nil {
-		main.Close()
-		return tuiDaemon{}, err
-	}
-	return tuiDaemon{main, long}, nil
-}
-
-func (d tuiDaemon) Call(ctx context.Context, method string, params, result any) error {
-	c := d.main
-	switch method {
-	case "service.configure", "service.test", "browse":
-		c = d.long
-	}
-	return messageOnly(c.Call(ctx, method, params, result))
 }
 
 // prints only the message while errors.As still finds the code
@@ -99,7 +69,23 @@ func messageOnly(err error) error {
 	return err
 }
 
-func (d tuiDaemon) Events(ctx context.Context) (<-chan ipc.Event, error) { return d.main.Events(ctx) }
+func doctorProblems(ctx context.Context) []string {
+	var out []string
+	for _, c := range doctor.Run(ctx, realDoctorEnv()) {
+		if d := cmp.Or(c.Detail, c.Name); !c.OK && !c.Warn {
+			out = append(out, strings.ToUpper(d[:1])+d[1:])
+		}
+	}
+	return out
+}
+
+func uninstall() error {
+	out, err := exec.Command("npm", "rm", "-g", "dokky").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 func ensurePath() error {
 	home, err := os.UserHomeDir()

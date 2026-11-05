@@ -184,6 +184,7 @@ test("create shows up in the snapshot with secrets decrypted and stored as boxes
     remotePath: "media/Films 2026",
     vfs,
     version: 1,
+    createdAt: isoTime,
     updatedAt: isoTime,
   };
   expect(await m.json()).toEqual(mountItem);

@@ -367,26 +367,6 @@ func (d *Daemon) renameDevice(ctx context.Context, id, name string) error {
 	return d.answer(acct, client(acct).RenameDevice(ctx, id, name))
 }
 
-type accountReply struct {
-	LoggedIn   bool      `json:"loggedIn"`
-	Pending    bool      `json:"pending"`
-	Offline    bool      `json:"offline"`
-	SignedOut  bool      `json:"signedOut"`
-	Name       string    `json:"name"`
-	Email      string    `json:"email"`
-	LastSyncAt time.Time `json:"lastSyncAt"`
-}
-
-func (d *Daemon) accountInfo() accountReply {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	r := accountReply{Offline: d.offline, SignedOut: d.signedOut}
-	if a := d.data.Account; a != nil {
-		r.LoggedIn, r.Pending, r.Name, r.Email, r.LastSyncAt = true, a.Pending, a.Name, a.Email, a.LastSyncAt
-	}
-	return r
-}
-
 func (d *Daemon) account() (*store.Account, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

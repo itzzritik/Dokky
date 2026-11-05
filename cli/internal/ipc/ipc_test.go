@@ -191,7 +191,7 @@ func TestHandlerCtxCancelledOnDisconnect(t *testing.T) {
 	})
 	conn, err := platform.Dial(platform.SocketAddr(dir), time.Second)
 	require.NoError(t, err)
-	_, err = conn.Write([]byte(`{"v":1,"id":1,"method":"hang"}` + "\n"))
+	_, err = conn.Write([]byte(`{"v":2,"id":1,"method":"hang"}` + "\n"))
 	require.NoError(t, err)
 	<-started
 	conn.Close()
@@ -238,7 +238,7 @@ func TestPublishNeverBlocks(t *testing.T) {
 	conn, err := platform.Dial(platform.SocketAddr(dir), time.Second)
 	require.NoError(t, err)
 	defer conn.Close()
-	_, err = conn.Write([]byte(`{"v":1,"id":1,"method":"events"}` + "\n"))
+	_, err = conn.Write([]byte(`{"v":2,"id":1,"method":"events"}` + "\n"))
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
 	done := make(chan struct{})
