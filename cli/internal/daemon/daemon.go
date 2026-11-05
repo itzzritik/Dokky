@@ -439,6 +439,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			}
 			return r, err
 		}),
+		"update.install": decodeCtx(func(ctx context.Context, _ struct{}) (installReply, error) { return d.installNow(ctx) }),
 		"update.restart": decodeCtx(func(ctx context.Context, _ struct{}) (openReply, error) {
 			r := d.updateOnOpen(ctx)
 			if r.Restarting {
@@ -585,7 +586,7 @@ func (d *Daemon) deleteService(ctx context.Context, id string) error {
 }
 
 func (d *Daemon) putMount(ctx context.Context, m store.Mount) error {
-	m.Name = strings.TrimSpace(m.Name)
+	m.Name = engine.Title(strings.TrimSpace(m.Name))
 	if err := engine.ValidName(m.Name); err != nil {
 		return err
 	}

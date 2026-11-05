@@ -29,22 +29,26 @@ type unveil struct{}
 const veilFor = 300 * time.Millisecond
 
 type App struct {
-	reopen      bool
-	fixedOnOpen bool
-	st          *core.State
-	deps        core.Deps
-	tabs        []core.Screen
-	active      int
-	gate        core.Screen
-	windows     []core.Screen
-	toast       *ui.Toast
-	pending     []core.Toast
-	start       time.Time
-	ticking     bool
-	hits        ui.Hits
-	caret       *image.Point // the typed-in field's caret, for the terminal's bar cursor
-	events      <-chan client.Event
-	stop        context.CancelFunc
+	reopen         bool
+	fixedOnOpen    bool
+	pendingRestart string // an installed dokky this TUI restarts onto once uploads finish
+	restartOpen    bool
+	everConnected  bool
+	autoStarted    bool
+	st             *core.State
+	deps           core.Deps
+	tabs           []core.Screen
+	active         int
+	gate           core.Screen
+	windows        []core.Screen
+	toast          *ui.Toast
+	pending        []core.Toast
+	start          time.Time
+	ticking        bool
+	hits           ui.Hits
+	caret          *image.Point // the typed-in field's caret, for the terminal's bar cursor
+	events         <-chan client.Event
+	stop           context.CancelFunc
 
 	// blank until the first dial answers or veilFor passes
 	veil, failed      bool
@@ -136,6 +140,12 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			a.fixedOnOpen = true
 			return a.fixAll(true)
 		}
+	case found:
+		return a.onFound(m)
+	case installed:
+		return a.onInstalled(m)
+	case restartNow:
+		return a.onRestartNow()
 	case core.FixAll:
 		return a.fixAll(m.Auto)
 	case fixed:
@@ -210,7 +220,7 @@ func (a *App) setSnap(s api.State) tea.Cmd {
 	if len(s.Clashes) > 0 && s.Account.Pending && !a.hasClashWindow() {
 		a.windows = append(a.windows, gate.NewClashes(s.Clashes))
 	}
-	return tea.Batch(a.nextToast(), a.checkUpdate())
+	return tea.Batch(a.nextToast(), a.checkUpdate(), a.restartWhenIdle())
 }
 
 func wantGate(st *core.State) bool {
@@ -357,7 +367,7 @@ func (a *App) runChecks() tea.Cmd {
 // the header spins while something is in flight
 func (a *App) busy() bool {
 	st := a.st
-	if st.Snap.Account.Pending || st.Checking || st.Act.Down > 0 || st.Act.Up > 0 {
+	if st.Snap.Account.Pending || st.Checking || st.Fixing || st.Updating != "" && st.Updating != "Update ready" || st.Act.Down > 0 || st.Act.Up > 0 {
 		return true
 	}
 	for _, d := range st.Snap.Drives {

@@ -43,6 +43,8 @@ func MountParams(fsName, mountPoint, volName string, v store.VFS, goos string) m
 		p["network_mode"] = true
 	default:
 		p["mountType"] = "mount"
+		// file managers and df show the device by this name, not rclone's "id:path"
+		p["devname"] = volName
 	}
 	return p
 }

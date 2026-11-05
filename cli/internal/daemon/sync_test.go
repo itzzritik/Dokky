@@ -267,7 +267,7 @@ func TestSavesGoToServerFirst(t *testing.T) {
 	require.Equal(t, int64(1), api.mount(id.ID).Version)
 	saved := load(t, st)
 	require.Equal(t, int64(1), saved.Mounts[2].Version)
-	require.Equal(t, "photos", saved.Mounts[2].Name)
+	require.Equal(t, "Photos", saved.Mounts[2].Name, "names are saved capitalized")
 
 	require.NoError(t, call(t, d, "mount.delete", map[string]string{"id": "m2"}, nil))
 	require.Empty(t, api.mount("m2").ID)
@@ -276,7 +276,7 @@ func TestSavesGoToServerFirst(t *testing.T) {
 	err := call(t, d, "mount.put", store.Mount{ID: "m7", Name: "media", ServiceID: "s1", VFS: store.DefaultVFS()}, nil)
 	require.ErrorContains(t, err, "already uses the folder")
 	api.set(func() {
-		api.mounts["other"] = store.Mount{ID: "other", Name: "music", ServiceID: "s1", Version: 1}
+		api.mounts["other"] = store.Mount{ID: "other", Name: "Music", ServiceID: "s1", Version: 1}
 	})
 	err = call(t, d, "mount.put", store.Mount{ID: "m8", Name: "music", ServiceID: "s1", VFS: store.DefaultVFS()}, nil)
 	require.Equal(t, "name_taken", codeOf(t, err))

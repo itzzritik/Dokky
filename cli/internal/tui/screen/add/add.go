@@ -166,7 +166,7 @@ func (a *Add) back(st *core.State) tea.Cmd {
 	return nil
 }
 
-// what the window's buttons do; Enter and Esc reach the same places
+// what each step's keys and clicks do
 func (a *Add) press(id string, st *core.State) tea.Cmd {
 	switch id {
 	case "cancel", "back", "stop":
@@ -189,42 +189,6 @@ func (a *Add) press(id string, st *core.State) tea.Cmd {
 	return nil
 }
 
-// the bar for the current step; the primary one is what Enter does
-func (a *Add) buttons() ([]ui.Btn, int) {
-	back := ui.Btn{ID: "back", Label: "Back"}
-	switch a.step {
-	case choose:
-		return []ui.Btn{{ID: "cancel", Label: "Cancel"}}, -1
-	case signin:
-		s := &a.sign
-		switch {
-		case s.working() && s.authURL != "":
-			return []ui.Btn{{ID: "stop", Label: "Stop"}, {ID: "copy", Label: "Copy link"}, {ID: "open", Label: "Open again"}}, -1
-		case s.working():
-			return []ui.Btn{{ID: "stop", Label: "Stop"}}, -1
-		case s.oauth && s.question == nil:
-			return []ui.Btn{back, {ID: "next", Label: "Open browser", Primary: true}}, 1
-		}
-		if a.edit != nil {
-			back.Label = "Cancel"
-		}
-		return []ui.Btn{back, {ID: "next", Label: "Continue", Primary: true}}, 1
-	case name:
-		if a.edit != nil {
-			return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "save", Label: "Save", Primary: true}}, 1
-		}
-		return []ui.Btn{back, {ID: "add", Label: "Add drive", Primary: true}}, 1
-	}
-	btns := a.connectButtons()
-	switch {
-	case a.run.working():
-		return btns, -1
-	case a.run.failed != "":
-		return btns, 1
-	}
-	return btns, min(a.run.btn, len(btns)-1)
-}
-
 func (a *Add) choose(st *core.State, p api.Provider, acct *api.AccountRef) tea.Cmd {
 	a.prov, a.account = p, acct
 	if acct != nil {
@@ -241,7 +205,6 @@ func (a *Add) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	if a.edit != nil {
 		win.Step, win.Progress = "", 0
 	}
-	win.Buttons, win.Active = a.buttons()
 	var rows int
 	switch a.step {
 	case choose:
@@ -287,13 +250,15 @@ func (a *Add) Actions(st *core.State) []core.Action {
 		}
 		return []core.Action{{Key: "↑↓", Label: "move"}, enter, {Key: "esc", Label: "back"}}
 	}
-	switch {
-	case a.run.working():
+	switch r := a.run; {
+	case r.working():
 		return []core.Action{{Key: "esc", Label: "cancel"}}
-	case a.run.failed != "":
+	case r.failed != "":
 		return []core.Action{{Key: "enter", Label: "try again"}, {Key: "esc", Label: "back"}}
+	case r.done != nil && r.done.State == api.Connected:
+		return []core.Action{{Key: "enter", Label: "open in " + core.FileManager()}, {Key: "esc", Label: "done"}}
 	}
-	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}}
+	return []core.Action{{Key: "enter", Label: "done"}}
 }
 
 func (a *Add) Animating(st *core.State) bool {

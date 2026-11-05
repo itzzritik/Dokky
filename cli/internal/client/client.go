@@ -244,6 +244,19 @@ func (c *Client) UpdateCheck(ctx context.Context) (string, error) {
 	return r.Latest, err
 }
 
+// installs the newest dokky with npm and returns the installed version; nothing restarts
+func (c *Client) InstallUpdate(ctx context.Context) (string, error) {
+	r, err := get[struct {
+		Version string `json:"version"`
+	}](c, ctx, long, "update.install", nil)
+	return r.Version, err
+}
+
+// the service exits and starts again from the installed dokky
+func (c *Client) RestartDaemon(ctx context.Context) error {
+	return c.call(ctx, quick, "daemon.restart", nil, nil)
+}
+
 // installs the latest dokky; the daemon restarts onto it when updated
 func (c *Client) Update(ctx context.Context) (string, bool, error) {
 	r, err := get[struct {

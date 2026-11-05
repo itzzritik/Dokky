@@ -2,30 +2,107 @@ package app
 
 import (
 	"context"
+	"math"
+	"strconv"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
+const restartIn = 3 * time.Second
+
 type latest struct{ version string }
 
-type updated struct {
+type found struct {
 	version string
-	ok      bool
+	err     error
 }
 
+type installed struct {
+	version string
+	err     error
+}
+
+type restartNow struct{}
+
+// once a session, never before the TUI shows: with automatic updates on, npm installs the newest in the background and dokky restarts onto it; off, it is offered
 func (a *App) checkUpdate() tea.Cmd {
-	if a.updateChecked || !a.st.Connected || a.st.Snap.Settings.AutoUpdate {
+	if a.updateChecked || !a.st.Connected || a.deps.Reopened || strings.Contains(buildinfo.Version, "dev") {
 		return nil
 	}
 	a.updateChecked = true
 	c := a.st.C
+	if !a.st.Snap.Settings.AutoUpdate {
+		return func() tea.Msg {
+			v, _ := c.UpdateCheck(context.Background())
+			return latest{v}
+		}
+	}
+	a.st.Updating = "Checking for updates"
 	return func() tea.Msg {
-		v, _ := c.UpdateCheck(context.Background())
-		return latest{v}
+		v, err := c.UpdateCheck(context.Background())
+		return found{v, err}
+	}
+}
+
+func (a *App) onFound(m found) tea.Cmd {
+	if m.err != nil || m.version == "" {
+		a.st.Updating = ""
+		return nil
+	}
+	a.st.Updating = "Updating to " + m.version
+	c := a.st.C
+	return func() tea.Msg {
+		v, err := c.InstallUpdate(context.Background())
+		return installed{v, err}
+	}
+}
+
+func (a *App) onInstalled(m installed) tea.Cmd {
+	switch {
+	case m.err != nil:
+		a.st.Updating = ""
+		return core.Send(core.Toast{Text: "Couldn't update. dokky tries again later.", Bad: true})
+	case m.version == "" || m.version == buildinfo.Version:
+		a.st.Updating = ""
+		return core.Say("dokky is up to date")
+	}
+	a.pendingRestart = m.version
+	return a.restartWhenIdle()
+}
+
+// a restart drops the mounts for a moment, so it waits for uploads to finish
+func (a *App) restartWhenIdle() tea.Cmd {
+	if a.pendingRestart == "" || a.restartOpen {
+		return nil
+	}
+	uploads := 0
+	for _, d := range a.st.Snap.Drives {
+		uploads += d.Uploads
+	}
+	if uploads > 0 {
+		a.st.Updating = "Update ready"
+		return nil
+	}
+	a.restartOpen, a.st.Updating = true, ""
+	a.windows = append(a.windows, &restarting{version: a.pendingRestart, at: a.st.Now})
+	return tea.Tick(restartIn, func(time.Time) tea.Msg { return restartNow{} })
+}
+
+// the service restarts onto the new dokky unless it already runs it, then this TUI opens again on it
+func (a *App) onRestartNow() tea.Cmd {
+	c, running, next := a.st.C, a.st.Snap.Version, a.pendingRestart
+	return func() tea.Msg {
+		if c != nil && running != next {
+			_ = c.RestartDaemon(context.Background())
+		}
+		return core.Reopen{}
 	}
 }
 
@@ -37,6 +114,29 @@ func (a *App) onLatest(m latest) {
 	if a.updateReady() && a.gate == nil {
 		a.windows = append([]core.Screen{&update{btn: 1}}, a.windows...)
 	}
+}
+
+// can't be closed: a red bar drains for restartIn, then dokky restarts on the new version
+type restarting struct {
+	version string
+	at      time.Time
+}
+
+func (r *restarting) Update(tea.Msg, *core.State) (core.Screen, tea.Cmd) { return r, nil }
+func (r *restarting) Capturing() bool                                    { return true }
+func (r *restarting) Actions(*core.State) []core.Action                  { return nil }
+func (r *restarting) Animating(*core.State) bool                         { return true }
+
+func (r *restarting) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+	p := ui.P()
+	left := max(0, restartIn-st.Now.Sub(r.at))
+	win := &ui.Window{W: min(56, maxW), Title: "dokky updated to " + r.version, Ok: true,
+		Sub: "Restarting in " + strconv.Itoa(int(math.Ceil(left.Seconds()))) + " s"}
+	body := ui.NewBox()
+	body.Put(0, 0, ui.ThinBar(win.Inner(), float64(left)/float64(restartIn), st.T, p.Coral, p.Surface))
+	win.Body = body
+	win.Fit(1, maxH)
+	return win.Layer()
 }
 
 type update struct {
@@ -75,12 +175,9 @@ func (m *update) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			m.err = core.Report(msg.Err)
 			return m, nil
 		}
-		u, _ := msg.Val.(updated)
+		v, _ := msg.Val.(string)
 		st.Latest = ""
-		if !u.ok {
-			return m, tea.Batch(core.Close(m), core.Say("dokky is up to date"))
-		}
-		return m, core.Send(core.Reopen{})
+		return m, tea.Batch(core.Close(m), func() tea.Msg { return installed{version: v} })
 	}
 	return m, nil
 }
@@ -93,10 +190,7 @@ func (m *update) press(st *core.State) tea.Cmd {
 		return nil
 	}
 	m.busy, m.err, m.req = true, "", core.NextReq()
-	return core.Do(st, m.req, func(ctx context.Context, c *client.Client) (any, error) {
-		v, ok, err := c.Update(ctx)
-		return updated{v, ok}, err
-	})
+	return core.Do(st, m.req, func(ctx context.Context, c *client.Client) (any, error) { return c.InstallUpdate(ctx) })
 }
 
 func (m *update) View(st *core.State, maxW, maxH int) *lipgloss.Layer {

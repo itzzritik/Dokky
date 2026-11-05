@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rclone/rclone/fs/cache"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/store"
@@ -192,6 +193,21 @@ func (e *Engine) Reachable(s store.Service, remotePath string) error {
 	e.opMu.Lock()
 	e.clearFsCache(s.ID)
 	e.opMu.Unlock()
+	// listing a whole root pages through every item, slow on a big Google Drive; where the backend has it, about is one call
+	if remotePath == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), testRemoteTimeout)
+		defer cancel()
+		f, err := cache.Get(ctx, s.ID+":")
+		if err == nil && f.Features().About != nil {
+			_, err = f.Features().About(ctx)
+		}
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("%s did not answer within %s", s.Name, testRemoteTimeout)
+		case err != nil || f.Features().About != nil:
+			return err
+		}
+	}
 	_, err := e.ListDirs(s, remotePath)
 	return err
 }
