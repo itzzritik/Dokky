@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -29,8 +30,6 @@ const (
 
 const editLabelW = 20
 
-var ageLabels = map[string]string{"5m": "5 minutes", "15m": "15 minutes", "1h": "1 hour", "6h": "6 hours", "24h": "1 day", "7d": "7 days"}
-
 // a list of values: enter edits one in place and saves it on its own; actions are keys in the footer
 type editForm struct {
 	focus      int
@@ -39,6 +38,33 @@ type editForm struct {
 	req        core.Req
 	err        string
 	remounting bool
+
+	opened         time.Time // rows fade in once, top to bottom
+	saving, saved  int       // the row being saved, and the one that just was
+	savedAt        time.Time // its check fades out
+	login          *bool     // the switch moves on the press, before the save answers
+	loginAt, ageAt time.Time
+	ageFrom        string // the keep-for the highlight leaves
+}
+
+const (
+	revealStep = 35 * time.Millisecond
+	revealFor  = 160 * time.Millisecond
+	savedFor   = 1600 * time.Millisecond
+	slideFor   = 180 * time.Millisecond
+)
+
+func (e *editForm) animating(now time.Time) bool {
+	return e.req != 0 || now.Sub(e.opened) < 12*revealStep+revealFor || now.Sub(e.savedAt) < savedFor ||
+		now.Sub(e.loginAt) < slideFor || now.Sub(e.ageAt) < slideFor
+}
+
+// reveal of the k-th element, 0 to 1
+func (e *editForm) shown(k int, now time.Time) float64 {
+	if ui.Reduced() {
+		return 1
+	}
+	return ui.Ease(0, 1, e.opened.Add(time.Duration(k)*revealStep), now, revealFor)
 }
 
 func editRows() []int { return []int{eName, eSource, eMount, eLogin, eSize, eAge} }
@@ -74,11 +100,12 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 		if m.Req != e.req {
 			return nil
 		}
-		e.req, e.age, e.remounting = 0, "", false
+		e.req, e.age, e.remounting, e.login = 0, "", false, nil
 		if m.Err != nil {
 			e.err = core.Report(m.Err)
 			return nil
 		}
+		e.saved, e.savedAt = e.saving, st.Now
 		if renamed, _ := m.Val.(bool); renamed {
 			return tea.Batch(core.Say("Saved"), core.Send(core.Recheck{}))
 		}
@@ -87,7 +114,7 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "item:")); err == nil && e.field == nil {
 			e.focus = slices.Index(rows, i)
 			if i == eLogin {
-				return a.saveEdit(st, api.DriveUpdate{AtLogin: ptr(!d.AtLogin)}, false)
+				return a.flipLogin(st, d)
 			}
 		}
 		return nil
@@ -118,7 +145,7 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 		case "enter", "space", "left", "right":
 			switch {
 			case row == eLogin:
-				return a.saveEdit(st, api.DriveUpdate{AtLogin: ptr(!d.AtLogin)}, false)
+				return a.flipLogin(st, d)
 			case row == eAge && (k == "left" || k == "right"):
 				ages := engine.CacheMaxAges
 				i := slices.Index(ages, cmp.Or(e.age, d.CacheMaxAge))
@@ -126,6 +153,9 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 					i = max(0, i-1)
 				} else {
 					i = min(len(ages)-1, i+1)
+				}
+				if ages[i] != cmp.Or(e.age, d.CacheMaxAge) {
+					e.ageFrom, e.ageAt = cmp.Or(e.age, d.CacheMaxAge), st.Now
 				}
 				e.age = ages[i]
 			case row == eAge:
@@ -224,84 +254,156 @@ func (a *Add) remountSave(st *core.State, d api.Drive, u api.DriveUpdate, rename
 	})
 }
 
+func (a *Add) flipLogin(st *core.State, d api.Drive) tea.Cmd {
+	on := !d.AtLogin
+	if a.ed.login != nil {
+		on = !*a.ed.login
+	}
+	a.ed.login, a.ed.loginAt = &on, st.Now
+	return a.saveEdit(st, api.DriveUpdate{AtLogin: &on}, false)
+}
+
 func (a *Add) saveEdit(st *core.State, u api.DriveUpdate, renamed bool) tea.Cmd {
 	e := &a.ed
 	u.ID, e.req, e.err = a.edit.ID, core.NextReq(), ""
+	e.saving = editRows()[max(0, min(e.focus, len(editRows())-1))]
 	return core.Do(st, e.req, func(ctx context.Context, c *client.Client) (any, error) {
 		_, err := c.UpdateDrive(ctx, u)
 		return renamed, err
 	})
 }
 
-func ptr[T any](v T) *T { return &v }
-
+// a header with what the drive is and its live state, then two quiet sections of values; the focused row lifts, a saved one ticks
 func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 	p := ui.P()
 	e := &a.ed
 	d := a.live(st)
 	cw := win.Inner()
 	win.Title = d.Name
-	win.Sub = cmp.Or(a.prov.Name, d.ServiceType)
-	if k := d.AccountDrives; k > 1 {
-		win.Sub += ", also used by " + core.Count(k-1, "more drive")
-	}
-	switch {
-	case e.req != 0 && e.remounting:
-		win.Sub = ui.Spin(st.T) + " Saving and remounting"
-	case e.req != 0:
-		win.Sub = ui.Spin(st.T) + " Saving"
-	case e.err != "":
-		win.Sub, win.SubBad = e.err, true
-	}
 	rows := editRows()
 	cur := rows[max(0, min(e.focus, len(rows)-1))]
 	body := ui.NewBox()
-	line := func(y, row int, label string, value func(bg color.Color, w int) string) {
-		body.Add(0, y, ui.Row("item:"+strconv.Itoa(row), cw, row == cur, p.Surface, func(bg color.Color, iw int) string {
-			l := ui.L(bg)
+	bg := p.Surface
+	fade := func(c color.Color, k int) color.Color { return ui.Mix(bg, c, e.shown(k, st.Now)) }
+
+	head := ui.L(bg)
+	switch {
+	case e.req != 0:
+		what := "Saving"
+		if e.remounting {
+			what = "Saving and remounting"
+		}
+		head.B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(what, p.Muted)
+	case e.err != "":
+		head.T(core.Fit(e.err, cw-18), p.Coral)
+	default:
+		head.T(cmp.Or(a.prov.Name, d.ServiceType), fade(p.Muted, 0))
+		if d.Account != "" && d.Account != d.Name {
+			head.Sp(2).T(d.Account, fade(p.Faint, 0))
+		}
+		if k := d.AccountDrives; k > 1 {
+			head.Sp(2).T("shared with "+core.Count(k-1, "drive"), fade(p.Faint, 0))
+		}
+	}
+	body.Put(0, 0, head.Right(cw, ui.DriveStatus(d, st.T).Line(bg, true)))
+
+	section := func(y, k int, name string) {
+		l := ui.L(bg).Sp(2).T(name, fade(p.Faint, k)).Sp(1)
+		body.Put(0, y, l.T(strings.Repeat(ui.G.H, max(0, cw-l.Width()-1)), fade(ui.Mix(bg, p.Text, .1), k)).Pad(cw))
+	}
+	line := func(y, k, row int, label string, value func(bg color.Color, w int, k int) string) {
+		body.Add(0, y, ui.Row("item:"+strconv.Itoa(row), cw, row == cur, bg, func(rb color.Color, iw int) string {
+			l := ui.L(rb)
 			if row == cur {
 				l.B(label, p.Text)
 			} else {
-				l.T(label, ui.Mix(p.Muted, p.Text, .55))
+				l.T(label, fade(ui.Mix(p.Muted, p.Text, .55), k))
 			}
 			vw := iw - editLabelW
 			if row == cur && e.field != nil {
-				return ui.L(bg).Raw(l.Pad(editLabelW)).Raw(ui.L(bg).Raw(e.field.View("edit", vw, true, bg).GetContent()).Pad(vw)).String()
+				return ui.L(rb).Raw(l.Pad(editLabelW)).Raw(ui.L(rb).Raw(e.field.View("edit", vw, true, rb).GetContent()).Pad(vw)).String()
 			}
-			return ui.L(bg).Raw(l.Pad(editLabelW)).Raw(value(bg, vw)).String()
+			return ui.L(rb).Raw(l.Pad(editLabelW)).Raw(value(rb, vw, k)).String()
 		}))
 	}
-	text := func(v, empty string) func(bg color.Color, w int) string {
-		return func(bg color.Color, w int) string {
+	// a value right aligned; the one just saved shows a check that fades back into it
+	text := func(row int, v, empty string) func(rb color.Color, w, k int) string {
+		return func(rb color.Color, w, k int) string {
 			fg := p.Text
 			if v == "" {
 				v, fg = empty, p.Faint
 			}
-			return ui.L(bg).Right(w, ui.L(bg).T(core.Fit(v, w-1), fg))
+			out := ui.L(rb)
+			if row == e.saved && !ui.Reduced() {
+				if t := float64(st.Now.Sub(e.savedAt)) / float64(savedFor); t < 1 {
+					out.B(ui.G.Check+" ", ui.Mix(rb, p.Kelp, 1-t))
+					fg = ui.Mix(p.Kelp, fg, t)
+				}
+			}
+			return ui.L(rb).Right(w, out.T(core.Fit(v, w-3), fade(fg, k)))
 		}
 	}
-	line(0, eName, "Name", text(d.Name, ""))
-	line(1, eSource, "Source folder", text(d.SubPath, "Whole account"))
-	line(2, eMount, "Mount folder", text(d.LocalFolder, core.Home(d.Folder)))
-	line(3, eLogin, "Connect at login", func(bg color.Color, w int) string {
-		on := 0.0
-		if d.AtLogin {
-			on = 1
+
+	section(2, 1, "Drive")
+	line(3, 2, eName, "Name", text(eName, d.Name, ""))
+	line(4, 3, eSource, "Source folder", text(eSource, d.SubPath, "Whole account"))
+	line(5, 4, eMount, "Mount folder", text(eMount, d.LocalFolder, core.Home(d.Folder)))
+	line(6, 5, eLogin, "Connect at login", func(rb color.Color, w, k int) string {
+		on := d.AtLogin
+		if e.login != nil {
+			on = *e.login
 		}
-		return ui.L(bg).Right(w, ui.L(bg).Raw(ui.Switch(on, bg)))
+		frac := 0.0
+		if on {
+			frac = 1
+		}
+		if !ui.Reduced() {
+			frac = ui.Ease(1-frac, frac, e.loginAt, st.Now, slideFor)
+		}
+		if e.shown(k, st.Now) < .5 {
+			return ui.L(rb).Pad(w)
+		}
+		return ui.L(rb).Right(w, ui.L(rb).Raw(ui.Switch(frac, rb)))
 	})
-	body.Put(2, 5, ui.Paint("Cache", p.Faint, p.Surface, false))
-	line(6, eSize, "Size limit", text(d.CacheMaxSize, "No limit"))
-	line(7, eAge, "Keep files for", func(bg color.Color, w int) string {
-		age := cmp.Or(e.age, d.CacheMaxAge)
-		v := ui.L(bg).T(cmp.Or(ageLabels[age], age), p.Text)
-		if cur == eAge {
-			v = ui.L(bg).T(ui.G.Back+" ", p.Faint).Raw(v.String()).T(" "+ui.G.Arrow, p.Faint)
-		}
-		return ui.L(bg).Right(w, v)
+	section(8, 6, "Cache")
+	line(9, 7, eSize, "Size limit", text(eSize, d.CacheMaxSize, "No limit"))
+	line(10, 8, eAge, "Keep files for", func(rb color.Color, w, k int) string {
+		return ui.L(rb).Right(w, a.ageScale(st, d, rb, cur == eAge, k))
 	})
 	win.Body = body
-	return 8
+	return 11
+}
+
+// the keep-for choices on a scale; the highlight crossfades to the next pick
+func (a *Add) ageScale(st *core.State, d api.Drive, rb color.Color, focused bool, k int) *ui.Line {
+	p := ui.P()
+	e := &a.ed
+	sel := cmp.Or(e.age, d.CacheMaxAge)
+	t := 1.0
+	if !ui.Reduced() {
+		t = ui.Ease(0, 1, e.ageAt, st.Now, slideFor)
+	}
+	strength := .22
+	if focused {
+		strength = .38
+	}
+	l := ui.L(rb)
+	for i, ag := range engine.CacheMaxAges {
+		on := 0.0
+		switch ag {
+		case sel:
+			on = t
+		case e.ageFrom:
+			on = 1 - t
+		}
+		short := strings.Replace(ag, "24h", "1d", 1)
+		fg := ui.Mix(p.Faint, p.Text, on)
+		l.Raw(ui.Paint(" "+short+" ", ui.Mix(rb, fg, e.shown(k, st.Now)), ui.Mix(rb, p.Accent, strength*on), on > .5))
+		if i < len(engine.CacheMaxAges)-1 {
+			l.Sp(1)
+		}
+	}
+	return l
 }
 
 func (a *Add) editActions(st *core.State) []core.Action {

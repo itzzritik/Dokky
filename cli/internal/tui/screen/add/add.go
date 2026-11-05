@@ -47,7 +47,7 @@ func Open(st *core.State, typ string) tea.Cmd {
 }
 
 func Edit(st *core.State, d api.Drive) tea.Cmd {
-	a := &Add{edit: &d, step: name}
+	a := &Add{edit: &d, step: name, ed: editForm{opened: st.Now, saving: -1, saved: -1}}
 	a.prov, _ = provider(st, d.ServiceType)
 	if a.prov.Type == "" {
 		a.prov = api.Provider{Type: d.ServiceType, Name: d.ServiceName}
@@ -249,5 +249,5 @@ func (a *Add) Animating(st *core.State) bool {
 	if ui.Reduced() {
 		return false
 	}
-	return a.sign.working() || a.run.working() || a.pick.loading()
+	return a.sign.working() || a.run.working() || a.pick.loading() || a.edit != nil && a.step == name && a.ed.animating(st.Now)
 }
