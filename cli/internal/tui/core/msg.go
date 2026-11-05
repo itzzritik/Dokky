@@ -46,7 +46,7 @@ type Reply struct {
 
 func Send(msg tea.Msg) tea.Cmd { return func() tea.Msg { return msg } }
 
-func Fail(err error) tea.Cmd { return Send(Toast{Text: Safe(err.Error()), Bad: true}) }
+func Fail(err error) tea.Cmd { return Send(Toast{Text: Report(err), Bad: true}) }
 
 func Say(text string) tea.Cmd { return Send(Toast{Text: text}) }
 

@@ -54,7 +54,7 @@ func (s *SignIn) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			return s, nil
 		}
 		if m.Err != nil {
-			s.status, s.err = "failed", core.Safe(m.Err.Error())
+			s.status, s.err = "failed", core.Report(m.Err)
 			return s, nil
 		}
 		switch v := m.Val.(type) {
@@ -151,7 +151,7 @@ func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 		rows = 1
 	case s.start.UserCode == "":
 		win.Title, win.Sub = "Signing in", ""
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T("Waiting for dokky.ritik.me", p.Muted).Pad(win.Inner()))
+		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for dokky.ritik.me", p.Muted).Pad(win.Inner()))
 		rows = 1
 	default:
 		code := ui.L(p.Surface)
@@ -163,7 +163,7 @@ func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 			code.Raw(ui.Paint(" "+string(c)+" ", p.Ramp[5], p.Cap, true)).Sp(1)
 		}
 		body.Put(0, 0, code.Pad(win.Inner()))
-		body.Put(0, 3, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T("Waiting for you to approve", p.Muted).Pad(win.Inner()))
+		body.Put(0, 3, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for you to approve", p.Muted).Pad(win.Inner()))
 		rows = 4
 	}
 	win.Fit(rows, maxH)

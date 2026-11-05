@@ -431,6 +431,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"devices.list":   decodeCtx(func(ctx context.Context, _ struct{}) ([]dsync.Device, error) { return d.devices(ctx) }),
 		"devices.revoke": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.revokeDevice(ctx, p.ID) }),
 		"devices.rename": decodeCtx(func(ctx context.Context, p namedParams) (any, error) { return nil, d.renameDevice(ctx, p.ID, p.Name) }),
+		"update.check":   decodeCtx(func(ctx context.Context, _ struct{}) (checkReply, error) { return d.updateCheck(ctx) }),
 		"update": decodeCtx(func(ctx context.Context, p updateParams) (updateReply, error) {
 			r, err := d.update(ctx, p)
 			if err == nil && r.Updated {

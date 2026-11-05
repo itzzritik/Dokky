@@ -333,6 +333,27 @@ func (d *Daemon) update(ctx context.Context, p updateParams) (updateReply, error
 	return updateReply{Version: v, Updated: ok}, d.setSettings(s)
 }
 
+type checkReply struct {
+	Latest string `json:"latest"`
+	Newer  bool   `json:"newer"`
+}
+
+// the newest dokky on npm and whether it beats the running or installed one; empty while updates can't install
+func (d *Daemon) updateCheck(ctx context.Context) (checkReply, error) {
+	if d.upd.blocked != "" {
+		return checkReply{}, nil
+	}
+	r, err := Latest(ctx, http.DefaultClient, "latest", runtime.GOOS+"-"+runtime.GOARCH)
+	if err != nil {
+		return checkReply{}, err
+	}
+	cur := buildinfo.Version
+	if v := installedVersion(d.upd.paths.State); newer(v, cur) {
+		cur = v
+	}
+	return checkReply{Latest: r.Version, Newer: newer(r.Version, cur)}, nil
+}
+
 // caller holds upd.mu; "latest" never installs an older or equal version
 func (d *Daemon) install(ctx context.Context, version string) (string, bool, error) {
 	r, err := Latest(ctx, http.DefaultClient, version, runtime.GOOS+"-"+runtime.GOARCH)

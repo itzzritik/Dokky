@@ -24,7 +24,7 @@ func (a *App) View() tea.View {
 
 func (a *App) render() string {
 	w, h := a.st.W, a.st.H
-	if w == 0 || h == 0 {
+	if w == 0 || h == 0 || a.veil {
 		return ""
 	}
 	p := ui.P()
@@ -34,34 +34,49 @@ func (a *App) render() string {
 		return strings.Repeat("\n", h/2) + strings.Repeat(" ", max(0, (w-ui.Width(msg))/2)) + ui.Paint(msg, p.Muted, nil, false)
 	}
 	var passes []ui.Pass
-	var acts []core.Action
+	var left []core.Action
+	right := []core.Action{{Key: "q", Label: "quit"}}
+	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
 	case !a.st.Connected:
 		passes = append(passes, ui.Pass{Layer: a.down(w, h)})
-		acts = []core.Action{{Key: "enter", Label: "start dokky"}, {Key: "q", Label: "quit"}}
+		if a.failed {
+			left = []core.Action{{Key: "enter", Label: "start dokky"}}
+		}
 	case a.gate != nil:
 		passes = append(passes, ui.Pass{Layer: a.gate.View(a.st, w, h)})
-		acts = a.gate.Actions(a.st)
+		left = a.gate.Actions(a.st)
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
 			ui.Header(w, a.st.T, tabNames, a.active, a.account()),
-			a.tabs[a.active].View(a.st, w-2*bodyX, h-bodyY-3).X(bodyX).Y(bodyY),
+			a.tabs[a.active].View(a.st, bw, bh).X(bodyX).Y(bodyY),
 		)
 		passes = append(passes, ui.Pass{Layer: base})
-		acts = append(a.tabs[a.active].Actions(a.st), core.Action{Key: "q", Label: "quit"})
+		left, right = a.tabs[a.active].Actions(a.st), append([]core.Action{{Key: "m", Label: "more"}}, a.globals()...)
+		if a.capturing() {
+			right = nil
+		}
 	}
 	for i, win := range a.windows {
 		// windows stay clear of the footer row
 		l := win.View(a.st, w-4, h-4)
 		b := lipgloss.NewCompositor(l).Bounds()
 		x, y := (w-b.Dx())/2, max(1, min(windowY, (h-3-b.Dy())/2))
-		passes = append(passes, ui.Pass{Layer: lipgloss.NewLayer("").AddLayers(l).X(x).Y(y), Dim: true, Modal: true})
+		pl, placed := win.(core.Placer)
+		if placed {
+			x, y = pl.Place(bw, bh, b.Dx(), b.Dy())
+			x, y = bodyX+x, bodyY+y
+		}
+		passes = append(passes, ui.Pass{Layer: lipgloss.NewLayer("").AddLayers(l).X(x).Y(y), Dim: !placed, Modal: true})
 		if i == len(a.windows)-1 {
-			acts = win.Actions(a.st)
+			left, right = win.Actions(a.st), nil
+			if _, open := win.(*menu); !open && !a.capturing() && ui.HintsWidth(left, true) > w-6 {
+				right = []core.Action{{Key: "m", Label: "more"}}
+			}
 		}
 	}
-	passes = append(passes, ui.Pass{Layer: ui.Footer(w, acts, "v"+buildinfo.Version).Y(h - 2)})
-	if a.toast != nil && a.toast.Live(a.st.Now) {
+	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, "v"+buildinfo.Version).Y(h - 2)})
+	if a.toast != nil && a.toast.Live(a.st.Now) && !a.waiting() {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
 	out, hits := ui.Compose(w, h, passes...)
@@ -69,12 +84,20 @@ func (a *App) render() string {
 	return out
 }
 
+// actions on every tab, in the footer's right side and the menu
+func (a *App) globals() []core.Action {
+	if a.updateReady() {
+		return []core.Action{{Key: "u", Label: "update", Accent: true}, {Key: "q", Label: "quit"}}
+	}
+	return []core.Action{{Key: "q", Label: "quit"}}
+}
+
 // the live chip at the top right: what dokky is doing, else whether anything needs you
 func (a *App) account() string {
 	p, st := ui.P(), a.st
 	acct := st.Snap.Account
 	spin := func(label string) string {
-		return ui.L(nil).B(ui.Spin(st.T), p.Accent).Sp(1).Raw(label).String()
+		return ui.L(nil).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).Raw(label).String()
 	}
 	uploads := 0
 	for _, d := range st.Snap.Drives {
@@ -108,9 +131,11 @@ func (a *App) down(w, h int) *lipgloss.Layer {
 	b := ui.NewBox()
 	title := ui.Paint("dokky isn't running", p.Text, nil, true)
 	sub := ui.Paint("Start it and your drives come back.", p.Muted, nil, false)
-	if a.starting {
-		title = ui.L(nil).B(ui.Spin(a.st.T), p.Accent).Sp(1).B("Starting dokky", p.Text).String()
-		sub = ""
+	switch {
+	case a.starting:
+		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).B("Starting dokky", p.Text).String(), ""
+	case !a.failed:
+		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).T("Connecting", p.Muted).String(), ""
 	}
 	y := h/2 - 2
 	b.Put((w-ui.Width(title))/2, y, title)

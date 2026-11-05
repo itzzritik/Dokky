@@ -11,7 +11,11 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 )
 
-const redialEvery = 2 * time.Second
+const (
+	redialMin = 250 * time.Millisecond
+	redialMax = 8 * time.Second
+	quietFor  = 30 * time.Second
+)
 
 type connected struct {
 	c      *client.Client
@@ -35,6 +39,15 @@ type event struct {
 }
 
 type started struct{ err error }
+
+type quiet struct{ epoch uint64 }
+
+type refreshed struct {
+	epoch uint64
+	snap  api.State
+	act   api.Activity
+	err   error
+}
 
 func dial() tea.Cmd {
 	return func() tea.Msg {
@@ -77,8 +90,9 @@ func (a *App) onConnected(m connected) tea.Cmd {
 	a.st.C, a.events, a.stop = m.c, m.events, m.stop
 	a.st.Epoch++
 	a.st.Connected, a.starting, a.dialing = true, false, false
+	a.veil, a.failed, a.backoff, a.heard = false, false, 0, a.st.Now
 	a.st.Act, a.st.Catalog = m.act, m.cat
-	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks())
+	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks(), a.listen(quietFor))
 }
 
 // a reply from before a reconnect, or an event from an old stream, is dropped
@@ -90,18 +104,59 @@ func (a *App) onLost(m lost) tea.Cmd {
 		a.stop()
 		a.stop = nil
 	}
-	a.st.Connected = false
+	a.st.Connected, a.veil, a.failed = false, false, true
 	if a.dialing {
 		return nil
 	}
 	a.dialing = true
-	return tea.Tick(redialEvery, func(time.Time) tea.Msg { return redial{} })
+	a.backoff = min(redialMax, max(redialMin, 2*a.backoff))
+	return tea.Tick(a.backoff, func(time.Time) tea.Msg { return redial{} })
+}
+
+func (a *App) listen(d time.Duration) tea.Cmd {
+	epoch := a.st.Epoch
+	return tea.Tick(d, func(time.Time) tea.Msg { return quiet{epoch} })
+}
+
+// no event for quietFor: fetch state and activity once, in case the stream stalled
+func (a *App) onQuiet(m quiet) tea.Cmd {
+	if m.epoch != a.st.Epoch || !a.st.Connected {
+		return nil
+	}
+	if left := quietFor - a.st.Now.Sub(a.heard); left > 0 {
+		return a.listen(left)
+	}
+	a.heard = a.st.Now
+	c, epoch := a.st.C, a.st.Epoch
+	return tea.Batch(a.listen(quietFor), func() tea.Msg {
+		ctx := context.Background()
+		snap, err := c.State(ctx)
+		if err != nil {
+			return refreshed{epoch: epoch, err: err}
+		}
+		act, err := c.Activity(ctx)
+		return refreshed{epoch, snap, act, err}
+	})
+}
+
+func (a *App) onRefreshed(m refreshed) tea.Cmd {
+	switch {
+	case m.epoch != a.st.Epoch:
+		return nil
+	case notRunning(m.err):
+		return a.onLost(lost{epoch: m.epoch})
+	case m.err != nil:
+		return nil
+	}
+	a.st.Act = m.act
+	return a.setSnap(m.snap)
 }
 
 func (a *App) onEvent(m event) tea.Cmd {
 	if m.epoch != a.st.Epoch {
 		return nil
 	}
+	a.heard = a.st.Now
 	var cmd tea.Cmd
 	switch {
 	case m.ev.State != nil:

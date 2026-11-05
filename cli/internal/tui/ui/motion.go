@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"math"
 	"os"
 	"strings"
@@ -34,6 +35,14 @@ func Easing(start, now time.Time, d time.Duration) bool {
 
 func Spin(t float64) string {
 	return G.Spinner[int(t*12)%len(G.Spinner)]
+}
+
+// the spinner's colour sweeps along the water ramp
+func SpinFg(t float64) color.Color {
+	if Reduced() {
+		return P().Accent
+	}
+	return RampAt(.62 + .22*math.Sin(t*1.6))
 }
 
 // wave in 0..1 for shimmer at position i

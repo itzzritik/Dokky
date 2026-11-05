@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"fmt"
 	"image/color"
 	"os"
 	"strconv"
@@ -35,18 +36,12 @@ type row struct {
 
 type Settings struct {
 	sel, top int
+	ys       []int // each row's body line in the last view
 	syncing  bool
 	pending  *api.Settings
 }
 
 func New() *Settings { return &Settings{} }
-
-func onOff(b bool) string {
-	if b {
-		return "On"
-	}
-	return "Off"
-}
 
 // presses faster than the daemon's echo build on the last change
 func (s *Settings) current(st *core.State) api.Settings {
@@ -85,17 +80,9 @@ func (s *Settings) rows(st *core.State) []row {
 		}
 		rows = append(rows, row{group: "Sync", label: label, kind: action, run: s.sync})
 	}
-	updates := "Install automatically"
-	if !set.AutoUpdate {
-		updates = "Off"
-	}
 	rows = append(rows,
-		row{group: "General", label: "Notify when a drive disconnects", value: onOff(set.NotifyDisconnect), kind: choice, run: func(st *core.State) tea.Cmd {
-			return s.set(st, func(v *api.Settings) { v.NotifyDisconnect = !v.NotifyDisconnect })
-		}},
-		row{label: "Updates", value: updates, kind: choice, run: func(st *core.State) tea.Cmd {
-			return s.set(st, func(v *api.Settings) { v.AutoUpdate = !v.AutoUpdate })
-		}},
+		s.choice("General", "Notify when a drive disconnects", []string{"On", "Off"}, set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
+		s.choice("", "Updates", []string{"Install automatically", "Off"}, set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
 		row{group: "Storage", label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
 	)
 	if acct.LoggedIn {
@@ -106,6 +93,23 @@ func (s *Settings) rows(st *core.State) []row {
 		rows = append(rows, row{group: "Account", label: "Sign in", kind: action, run: gate.Open})
 	}
 	return append(rows, row{label: "Uninstall dokky", kind: danger, run: s.uninstall})
+}
+
+// a two-way setting; its first option turns it on
+func (s *Settings) choice(group, label string, opts []string, on bool, set func(*api.Settings, bool)) row {
+	cur := 1
+	if on {
+		cur = 0
+	}
+	return row{group: group, label: label, value: opts[cur], kind: choice, run: func(st *core.State) tea.Cmd {
+		anchor := 0
+		if s.sel < len(s.ys) {
+			anchor = s.ys[s.sel]
+		}
+		return core.Open(&dropdown{title: label, items: opts, cur: cur, cursor: cur, anchor: anchor, choose: func(st *core.State, i int) tea.Cmd {
+			return s.set(st, func(v *api.Settings) { set(v, i == 0) })
+		}})
+	}}
 }
 
 func (s *Settings) sync(st *core.State) tea.Cmd {
@@ -131,7 +135,7 @@ func (s *Settings) uninstall(st *core.State) tea.Cmd {
 					return nil
 				}
 				if err := run(); err != nil {
-					return core.Toast{Text: "Could not uninstall: " + core.Safe(err.Error()), Bad: true}
+					return core.Toast{Text: core.Report(fmt.Errorf("could not uninstall: %w", err)), Bad: true}
 				}
 				return core.Toast{Text: "dokky is uninstalled. It cleans up in about 10 minutes."}
 			}
@@ -170,6 +174,10 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			if r := rows[min(s.sel, len(rows)-1)]; r.run != nil {
 				return s, r.run(st)
 			}
+		case "s":
+			if st.Snap.Account.SignedOut {
+				return s, devices.SignOut()
+			}
 		}
 	}
 	return s, nil
@@ -186,6 +194,9 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "enter", Label: "run"})
 	case danger:
 		acts = append(acts, core.Action{Key: "enter", Label: "uninstall", Danger: true})
+	}
+	if st.Snap.Account.SignedOut {
+		acts = append(acts, core.Action{Key: "s", Label: "sign out"})
 	}
 	return acts
 }
@@ -211,20 +222,39 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	b := ui.NewBox()
 	cw := w
 	acct := st.Snap.Account
+	y := 0
+	if acct.LoggedIn && (acct.SignedOut || acct.Offline) {
+		bh := 1
+		if h >= 21 {
+			bh = 3
+		}
+		text, key, action := "Can't reach dokky.ritik.me", "", ""
+		if acct.SignedOut {
+			text, key, action = "Signed out on the server", "s", "sign out"
+		}
+		b.Lines(0, 0, ui.Banner(w, bh, false, text, key, action))
+		y = bh + 1
+	}
 	if acct.LoggedIn {
 		in := core.Safe(initials(acct.Name, acct.Email))
 		blank := ui.Paint("      ", nil, p.Accent, false)
-		b.Lines(2, 0, []string{blank, ui.Paint("  "+in+strings.Repeat(" ", max(0, 4-ui.Width(in))), p.OnAccent, p.Accent, true), blank})
-		b.Put(10, 0, ui.Paint(core.Safe(cmpOr(acct.Name, acct.Email)), p.Text, nil, true))
-		b.Put(10, 1, ui.Paint(core.Safe(acct.Email), p.Muted, nil, false))
-		b.Put(10, 2, ui.L(nil).B(ui.G.Check, p.Kelp).Sp(1).T("Synced "+core.Ago(acct.LastSyncAt, st.Now), p.Faint).String())
+		b.Lines(2, y, []string{blank, ui.Paint("  "+in+strings.Repeat(" ", max(0, 4-ui.Width(in))), p.OnAccent, p.Accent, true), blank})
+		b.Put(10, y, ui.Paint(core.Safe(cmpOr(acct.Name, acct.Email)), p.Text, nil, true))
+		b.Put(10, y+1, ui.Paint(core.Safe(acct.Email), p.Muted, nil, false))
+		mark, mc := ui.G.Check, p.Kelp
+		if acct.SignedOut || acct.Offline {
+			mark, mc = ui.G.Dash, p.Faint
+		}
+		b.Put(10, y+2, ui.L(nil).B(mark, mc).Sp(1).T("Synced "+core.Ago(acct.LastSyncAt, st.Now), p.Faint).String())
 	} else {
-		b.Put(2, 0, ui.Paint("This computer only", p.Text, nil, true))
-		b.Put(2, 1, ui.Paint("Your drives stay on this computer.", p.Muted, nil, false))
+		b.Put(2, y, ui.Paint("This computer only", p.Text, nil, true))
+		b.Put(2, y+1, ui.Paint("Your drives stay on this computer.", p.Muted, nil, false))
 	}
+	y += 4
 	rows := s.rows(st)
 	s.sel = max(0, min(s.sel, len(rows)-1))
 	var lines []ui.ListLine
+	s.ys = make([]int, len(rows))
 	for i, r := range rows {
 		if r.group != "" {
 			if len(lines) > 0 {
@@ -232,9 +262,13 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 			}
 			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Faint).String(), Item: -1})
 		}
+		s.ys[i] = len(lines)
 		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}
-	ui.List(b, 4, h-4, &s.top, s.sel, lines)
+	ui.List(b, y, h-y, &s.top, s.sel, lines)
+	for i := range s.ys {
+		s.ys[i] += y - s.top
+	}
 	return b.Layer()
 }
 

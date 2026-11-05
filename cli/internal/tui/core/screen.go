@@ -8,8 +8,8 @@ import (
 )
 
 type Action struct {
-	Key, Label string
-	Danger     bool
+	Key, Label     string
+	Danger, Accent bool
 }
 
 type Screen interface {
@@ -21,6 +21,11 @@ type Screen interface {
 
 // a screen that is typing into a field gets every key, tabs and quit included
 type Capturer interface{ Capturing() bool }
+
+// a window placed in the body (bw by bh) instead of centred, with nothing dimmed under it
+type Placer interface {
+	Place(bw, bh, w, h int) (x, y int)
+}
 
 var named = map[string]rune{
 	"enter": tea.KeyEnter, "esc": tea.KeyEscape, "space": tea.KeySpace,

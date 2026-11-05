@@ -18,7 +18,7 @@ func DriveStatus(d api.Drive, t float64) Status {
 	case api.Connected:
 		return Status{G.Check, "Connected", p.Kelp, p.Kelp}
 	case api.Connecting:
-		return Status{Spin(t), "Connecting", p.Accent, p.Accent}
+		return Status{Spin(t), "Connecting", SpinFg(t), p.Accent}
 	case api.Failed:
 		host := d.Account
 		if _, h, ok := strings.Cut(host, "@"); ok {

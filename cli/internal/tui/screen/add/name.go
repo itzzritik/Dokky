@@ -98,7 +98,7 @@ func (a *Add) updateName(msg tea.Msg, st *core.State) tea.Cmd {
 		}
 		n.req = 0
 		if m.Err != nil {
-			n.err = core.Safe(m.Err.Error())
+			n.err = core.Report(m.Err)
 			return nil
 		}
 		return tea.Batch(core.Close(a), core.Say("Saved"))
