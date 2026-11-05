@@ -41,12 +41,14 @@ function installedVersion(dir) {
   }
 }
 
-async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch, rename = fs.renameSync }) {
+// exact: npm just installed this version, so the binary follows it, older or pinned or not
+async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch, rename = fs.renameSync, exact = false }) {
   const bin = binaryPath(home, platform);
   const dir = stateDir({ env, home, platform });
   const have = installedVersion(dir);
   const pinned = fs.existsSync(path.join(dir, "pin"));
-  if (fs.existsSync(bin) && (pinned || (have && cmp(have, pkg.version) >= 0))) return bin;
+  const keep = exact ? have === pkg.version : pinned || (have && cmp(have, pkg.version) >= 0);
+  if (fs.existsSync(bin) && keep) return bin;
 
   const key = platformKey(platform, arch);
   const entry = key && pkg.dokky && pkg.dokky.binaries && pkg.dokky.binaries[key];

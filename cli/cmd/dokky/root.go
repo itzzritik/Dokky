@@ -1,15 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
+	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/tui"
@@ -71,7 +72,15 @@ func messageOnly(err error) error {
 }
 
 func uninstall() error {
-	out, err := exec.Command("npm", "rm", "-g", "dokky").CombinedOutput()
+	state, err := platform.StateDir()
+	if err != nil {
+		return err
+	}
+	cmd, err := daemon.NPM(context.Background(), state, "rm", "-g", "dokky")
+	if err != nil {
+		return err
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}

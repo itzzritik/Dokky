@@ -26,10 +26,9 @@ import (
 
 const (
 	lookupTimeout   = 20 * time.Second
-	downloadTimeout = 15 * time.Minute
+	npmTimeout      = 15 * time.Minute
 	selftestTimeout = time.Minute
 	maxMeta         = 1 << 20
-	maxBinary       = 200 << 20
 	checkTicks      = int(time.Hour / tickInterval)
 	openLookup      = 3 * time.Second
 )
@@ -38,7 +37,18 @@ var (
 	registry    = "https://registry.npmjs.org"
 	releaseBase = "https://github.com/itzzritik/dokky/releases/download/"
 	executable  = os.Executable
-	rename      = os.Rename
+	runNPM      = func(ctx context.Context, state string, args ...string) error {
+		cmd, err := NPM(ctx, state, append(args, "--no-fund", "--no-audit", "--loglevel=error")...)
+		if err != nil {
+			return err
+		}
+		cmd.WaitDelay = time.Second
+		if out, err := cmd.CombinedOutput(); err != nil {
+			out = bytes.TrimSpace(out)
+			return fmt.Errorf("npm %s: %w: %s", strings.Join(args, " "), err, out[max(0, len(out)-400):])
+		}
+		return nil
+	}
 	runSelftest = func(ctx context.Context, bin, state string) error {
 		ctx, cancel := context.WithTimeout(ctx, selftestTimeout)
 		defer cancel()
@@ -118,20 +128,37 @@ func Latest(ctx context.Context, hc *http.Client, version, key string) (Release,
 	return r, nil
 }
 
+// npm installs the package; its postinstall downloads that version's binary and writes the version file
 func Install(ctx context.Context, r Release, p Paths) error {
-	dir := filepath.Join(p.State, "updates")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	// the CLI that asked may go away; a half-done global install would break npm's copy
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), npmTimeout)
+	defer cancel()
+	prev := installedVersion(p.State)
+	pin, _ := os.ReadFile(filepath.Join(p.State, "pin"))
+	// with neither file, every published postinstall, old ones too, replaces the binary
+	for _, name := range []string{"version", "pin"} {
+		_ = os.Remove(filepath.Join(p.State, name))
 	}
-	file := filepath.Join(dir, "dokky-"+r.Version+filepath.Ext(p.Bin))
-	defer os.Remove(file)
-	if err := download(ctx, r, file); err != nil {
-		return err
+	err := runNPM(ctx, p.State, "install", "-g", "dokky@"+r.Version)
+	if err == nil && installedVersion(p.State) != r.Version {
+		err = fmt.Errorf("npm installed dokky %s but its binary did not change", r.Version)
 	}
-	if err := runSelftest(ctx, file, p.State); err != nil {
-		return err
+	if err == nil {
+		if err = runSelftest(ctx, p.Bin, p.State); err != nil && valid(prev) {
+			if rerr := runNPM(ctx, p.State, "install", "-g", "dokky@"+prev); rerr != nil {
+				err = fmt.Errorf("%w; going back to %s also failed: %v", err, prev, rerr)
+			}
+		}
 	}
-	return swap(file, r.Version, p)
+	if err != nil {
+		if installedVersion(p.State) == "" && prev != "" {
+			_ = writeAtomic(p.State, "version", prev)
+		}
+		if len(pin) > 0 {
+			_ = writeAtomic(p.State, "pin", string(pin))
+		}
+	}
+	return err
 }
 
 func get(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {
@@ -148,52 +175,6 @@ func get(ctx context.Context, hc *http.Client, url string) (*http.Response, erro
 		return nil, fmt.Errorf("GET %s: %s", url, res.Status)
 	}
 	return res, nil
-}
-
-func download(ctx context.Context, r Release, file string) error {
-	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
-	defer cancel()
-	res, err := get(ctx, http.DefaultClient, r.URL)
-	if err != nil {
-		return fmt.Errorf("download dokky %s: %w", r.Version, err)
-	}
-	defer res.Body.Close()
-	f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(res.Body, maxBinary+1))
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	switch {
-	case err != nil:
-		return fmt.Errorf("download dokky %s: %w", r.Version, err)
-	case n > maxBinary:
-		return fmt.Errorf("download dokky %s: larger than %d MB", r.Version, maxBinary>>20)
-	case hex.EncodeToString(h.Sum(nil)) != r.SHA256:
-		return fmt.Errorf("download dokky %s: its sha256 does not match the npm registry", r.Version)
-	}
-	return os.Chmod(file, 0o755)
-}
-
-// Windows can rename a running exe but not delete it, so the old one is kept as dokky.old
-func swap(file, version string, p Paths) error {
-	old := filepath.Join(p.State, "dokky.old")
-	if err := rename(p.Bin, old); err != nil {
-		return err
-	}
-	err := rename(file, p.Bin)
-	if err == nil {
-		err = writeAtomic(p.State, "version", version)
-	}
-	if err != nil {
-		if rerr := rename(old, p.Bin); rerr != nil {
-			return fmt.Errorf("%w; putting the old dokky back also failed: %v", err, rerr)
-		}
-	}
-	return err
 }
 
 // the npm launcher leaves the binary alone while <State>/pin exists
