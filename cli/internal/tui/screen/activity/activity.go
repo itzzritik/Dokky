@@ -255,7 +255,7 @@ func (s *Activity) row(st *core.State, e entry, i, w int) string {
 			}
 			barW := max(6, iw-2-nameW-1-driveW-1-5-14)
 			l.B(dir, p.Accent).Sp(1).Raw(ui.L(bg).T(t.Name, p.Text).Pad(nameW)).Sp(1).Raw(ui.L(bg).T(drive, p.Muted).Pad(driveW)).Sp(1).
-				Raw(ui.ThinBar(barW, frac, st.T, nil)).T(pctOf(frac), p.Muted)
+				Raw(ui.ThinBar(barW, frac, st.T, nil, bg)).T(pctOf(frac), p.Muted)
 			left := "Almost done"
 			if t.ETA > 0 {
 				left = core.In(t.ETA) + " left"

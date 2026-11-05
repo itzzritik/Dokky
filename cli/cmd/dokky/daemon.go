@@ -7,10 +7,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
@@ -53,22 +55,70 @@ func call(method string, params, result any) error {
 	}
 	if isCode(err, "protocol_mismatch") {
 		_ = callOnce("daemon.restart", nil, nil)
-		start, relaunched := time.Now(), runtime.GOOS != "windows"
-		for deadline := start.Add(restartWait); time.Now().Before(deadline); {
-			time.Sleep(250 * time.Millisecond)
-			if !relaunched && time.Since(start) > taskRestartWait {
-				relaunched = true
-				if socketUp() != nil {
-					_ = daemon.StartService()
-				}
-			}
+		awaitDaemon(func() bool {
 			err = callOnce(method, params, result)
-			if !errors.Is(err, errNotRunning) && !isCode(err, "protocol_mismatch") {
-				break
-			}
-		}
+			return !errors.Is(err, errNotRunning) && !isCode(err, "protocol_mismatch")
+		})
 	}
 	return messageOnly(err)
+}
+
+// polls until ok, relaunching the Windows task if the daemon does not come back by itself
+func awaitDaemon(ok func() bool) {
+	start, relaunched := time.Now(), runtime.GOOS != "windows"
+	for deadline := start.Add(restartWait); time.Now().Before(deadline); {
+		time.Sleep(250 * time.Millisecond)
+		if !relaunched && time.Since(start) > taskRestartWait {
+			relaunched = true
+			if socketUp() != nil {
+				_ = daemon.StartService()
+			}
+		}
+		if ok() {
+			return
+		}
+	}
+}
+
+// before the TUI: the daemon fetches a newer dokky and restarts onto it, so nothing changes under the open TUI; true once it has
+func updateOnOpen(running string, note io.Writer) bool {
+	var r struct {
+		Restarting bool   `json:"restarting"`
+		Version    string `json:"version"`
+	}
+	if running == "" || os.Getenv(updatedEnv) != "" {
+		return false
+	}
+	done := make(chan error, 1)
+	go func() { done <- callOnce("update.restart", nil, &r) }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(slowStartNote):
+		fmt.Fprintln(note, "checking for a new dokky...")
+		err = <-done
+	}
+	if err != nil || !r.Restarting {
+		return false
+	}
+	fmt.Fprintln(note, "updating dokky to "+r.Version+"...")
+	awaitDaemon(func() bool {
+		var s api.State
+		return callOnce(api.MState, nil, &s) == nil && s.Version != running
+	})
+	return true
+}
+
+const updatedEnv = "DOKKY_UPDATED"
+
+// the installed dokky was just replaced under this process: run the new one in its place
+func relaunch() {
+	bin := daemon.DefaultPaths().Bin
+	self, err := os.Executable()
+	if err != nil || filepath.Clean(self) != filepath.Clean(bin) {
+		return
+	}
+	_ = syscall.Exec(bin, os.Args, append(os.Environ(), updatedEnv+"=1"))
 }
 
 func callOnce(method string, params, result any) error {

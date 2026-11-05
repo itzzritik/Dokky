@@ -439,6 +439,13 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			}
 			return r, err
 		}),
+		"update.restart": decodeCtx(func(ctx context.Context, _ struct{}) (openReply, error) {
+			r := d.updateOnOpen(ctx)
+			if r.Restarting {
+				requestRestart(restart)
+			}
+			return r, nil
+		}),
 		"daemon.restart": func(context.Context, json.RawMessage) (any, error) {
 			requestRestart(restart)
 			return nil, nil

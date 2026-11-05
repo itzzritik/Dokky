@@ -17,7 +17,7 @@ func home(path string) string {
 	return path
 }
 
-func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int) {
+func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int, grow float64) {
 	p := ui.P()
 	put := func(y int, s string) {
 		if y < h {
@@ -32,23 +32,8 @@ func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int) {
 		}
 	}
 	put(1, ui.Paint(kind, p.Muted, nil, false))
-	switch sp := d.Space; {
-	case sp != nil && sp.Total > 0:
-		used := 1 - float64(sp.Free)/float64(sp.Total)
-		var tone = p.Text
-		var bar = ui.ThickBar(w, used, st.T, nil)
-		if used > .9 {
-			tone, bar = p.Buoy, ui.ThickBar(w, used, st.T, p.Buoy)
-		}
-		left := ui.L(nil).B(core.Size(sp.Free)+" free", tone).Sp(1).T("of "+core.Size(sp.Total), p.Muted)
-		put(3, left.Right(w, ui.L(nil).T(strconv.Itoa(int(used*100+.5))+"% used", p.Faint)))
-		put(4, bar)
-	case d.State == api.Connected:
-		put(3, ui.Paint("Free space unknown", p.Muted, nil, true))
-		put(4, ui.Paint("This storage does not report it.", p.Faint, nil, false))
-	default:
-		put(3, ui.Paint("Free space unknown", p.Muted, nil, true))
-		put(4, ui.Paint("Connect to see it.", p.Faint, nil, false))
+	for i, l := range ui.SpaceMeter(w, d, st.T, grow, nil) {
+		put(3+i, l)
 	}
 	at := "Stays off"
 	if d.AtLogin {
@@ -58,29 +43,32 @@ func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int) {
 	if d.CacheBytes > 0 {
 		cache = core.Size(d.CacheBytes)
 	}
-	facts := [][2]string{{"Account", d.Account}, {"Folder", home(d.Folder)}, {"At login", at}}
-	if len(d.AlsoOn) > 0 {
-		facts = append(facts, [2]string{"Also on", strings.Join(d.AlsoOn, ", ")})
-	}
+	added := ""
 	if !d.AddedAt.IsZero() {
-		facts = append(facts, [2]string{"Added", d.AddedAt.Local().Format("2 January 2006")})
+		added = d.AddedAt.Local().Format("2 January 2006")
 	}
-	facts = append(facts, [2]string{"Cache", cache})
+	// every drive shows the same facts in the same places
+	facts := [][2]string{{"Account", d.Account}, {"Folder", home(d.Folder)}, {"At login", at},
+		{"Added", added}, {"Cache", cache}, {"Also on", strings.Join(d.AlsoOn, ", ")}}
 	two := w >= 70
 	colW, per := w, len(facts)
 	if two {
 		colW, per = w/2, (len(facts)+1)/2
 	}
 	for i, f := range facts {
-		cx, cy := 0, 6+i
+		cx, cy := 0, 7+i
 		if two {
-			cx, cy = (i/per)*colW, 6+i%per
+			cx, cy = (i/per)*colW, 7+i%per
+		}
+		v, vc := f[1], p.Text
+		if v == "" {
+			v, vc = ui.G.Dash, p.Faint
 		}
 		if cy < h {
-			b.Put(x+cx, cy, ui.L(nil).Raw(ui.L(nil).T(f[0], p.Faint).Pad(11)).T(f[1], p.Text).Pad(colW-1))
+			b.Put(x+cx, cy, ui.L(nil).Raw(ui.L(nil).T(f[0], p.Faint).Pad(11)).T(v, vc).Pad(colW-1))
 		}
 	}
-	ry := 6 + per + 1
+	ry := 7 + per + 1
 	put(ry, ui.Paint("Recent", p.Muted, nil, false))
 	recent(st, b, d, x, ry+1, w, h)
 }

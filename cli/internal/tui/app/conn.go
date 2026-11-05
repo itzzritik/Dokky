@@ -15,6 +15,7 @@ const (
 	redialMin = 250 * time.Millisecond
 	redialMax = 8 * time.Second
 	quietFor  = 30 * time.Second
+	graceFor  = 30 * time.Second // a daemon restart, e.g. onto a new version, is not "isn't running"
 )
 
 type connected struct {
@@ -90,7 +91,7 @@ func (a *App) onConnected(m connected) tea.Cmd {
 	a.st.C, a.events, a.stop = m.c, m.events, m.stop
 	a.st.Epoch++
 	a.st.Connected, a.starting, a.dialing = true, false, false
-	a.veil, a.failed, a.backoff, a.heard = false, false, 0, a.st.Now
+	a.veil, a.failed, a.backoff, a.heard, a.lostAt = false, false, 0, a.st.Now, time.Time{}
 	a.st.Act, a.st.Catalog = m.act, m.cat
 	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks(), a.listen(quietFor))
 }
@@ -104,13 +105,21 @@ func (a *App) onLost(m lost) tea.Cmd {
 		a.stop()
 		a.stop = nil
 	}
-	a.st.Connected, a.veil, a.failed = false, false, true
+	if a.st.Connected {
+		a.lostAt = a.st.Now
+	}
+	a.st.Connected, a.veil = false, false
+	a.failed = a.lostAt.IsZero() || a.st.Now.Sub(a.lostAt) >= graceFor
 	if a.dialing {
 		return nil
 	}
 	a.dialing = true
-	a.backoff = min(redialMax, max(redialMin, 2*a.backoff))
-	return tea.Tick(a.backoff, func(time.Time) tea.Msg { return redial{} })
+	delay := redialMin
+	if a.failed {
+		a.backoff = min(redialMax, max(redialMin, 2*a.backoff))
+		delay = a.backoff
+	}
+	return tea.Tick(delay, func(time.Time) tea.Msg { return redial{} })
 }
 
 func (a *App) listen(d time.Duration) tea.Cmd {

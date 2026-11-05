@@ -273,11 +273,19 @@ func (a *Add) Actions(st *core.State) []core.Action {
 		}
 		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "continue"}, {Key: "esc", Label: "back"}}
 	case name:
-		label := "add drive"
+		enter := core.Action{Key: "enter", Label: "add drive"}
 		if a.edit != nil {
-			label = "save"
+			items := a.nameItems(st)
+			switch items[min(a.named.focus, len(items)-1)] {
+			case fConn:
+				enter.Label = strings.ToLower(a.connLabel(st))
+			case fRemove:
+				enter.Label, enter.Danger = "remove", true
+			default:
+				enter.Label = "save"
+			}
 		}
-		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: label}, {Key: "esc", Label: "back"}}
+		return []core.Action{{Key: "↑↓", Label: "move"}, enter, {Key: "esc", Label: "back"}}
 	}
 	switch {
 	case a.run.working():

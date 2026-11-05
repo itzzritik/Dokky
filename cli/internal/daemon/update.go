@@ -30,7 +30,8 @@ const (
 	selftestTimeout = time.Minute
 	maxMeta         = 1 << 20
 	maxBinary       = 200 << 20
-	checkTicks      = int(6 * time.Hour / tickInterval)
+	checkTicks      = int(time.Hour / tickInterval)
+	openLookup      = 3 * time.Second
 )
 
 var (
@@ -352,6 +353,42 @@ func (d *Daemon) updateCheck(ctx context.Context) (checkReply, error) {
 		cur = v
 	}
 	return checkReply{Latest: r.Version, Newer: newer(r.Version, cur)}, nil
+}
+
+type openReply struct {
+	Restarting bool   `json:"restarting"`
+	Version    string `json:"version"`
+}
+
+// dokky is opening: fetch a newer release when auto update is on, then restart onto any newer installed one unless uploads run
+func (d *Daemon) updateOnOpen(ctx context.Context) openReply {
+	u := &d.upd
+	if u.blocked != "" {
+		return openReply{}
+	}
+	if autoOff(d.settings()) == "" && u.mu.TryLock() {
+		lctx, cancel := context.WithTimeout(ctx, openLookup)
+		r, err := Latest(lctx, http.DefaultClient, "latest", runtime.GOOS+"-"+runtime.GOARCH)
+		cancel()
+		if err == nil && newer(r.Version, buildinfo.Version) && newer(r.Version, installedVersion(u.paths.State)) {
+			if _, _, err := d.install(ctx, "latest"); err != nil {
+				d.log.Warn("update on open", "err", err)
+			}
+		}
+		u.mu.Unlock()
+	}
+	v := installedVersion(u.paths.State)
+	return openReply{Restarting: newer(v, buildinfo.Version) && d.uploading() == 0, Version: v}
+}
+
+func (d *Daemon) uploading() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for _, s := range d.stats {
+		n += s.UploadsQueued + s.UploadsInProgress
+	}
+	return n
 }
 
 // caller holds upd.mu; "latest" never installs an older or equal version
