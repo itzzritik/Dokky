@@ -263,10 +263,10 @@ func (a *Add) updateSign(msg tea.Msg, st *core.State) tea.Cmd {
 			return s.copyOrOpen(m.String())
 		}
 		switch m.String() {
-		case "tab", "down":
+		case "down":
 			s.focus = max(0, min(len(fields)-1, s.focus+1))
 			return nil
-		case "shift+tab", "up":
+		case "up":
 			s.focus = max(0, s.focus-1)
 			return nil
 		case "enter":

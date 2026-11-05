@@ -34,7 +34,7 @@ func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			} else {
 				c.on = !c.on
 			}
-		case "up", "down", "tab", "shift+tab":
+		case "up", "down":
 			if c.Toggle != "" {
 				c.focus = 1 - c.focus
 			}

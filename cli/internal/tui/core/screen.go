@@ -22,11 +22,8 @@ type Screen interface {
 // a screen that is typing into a field gets every key, tabs and quit included
 type Capturer interface{ Capturing() bool }
 
-// a screen that moves left and right itself keeps the arrow keys from the tabs
-type Horizontal interface{ Horizontal(*State) bool }
-
 var named = map[string]rune{
-	"enter": tea.KeyEnter, "esc": tea.KeyEscape, "space": tea.KeySpace, "tab": tea.KeyTab,
+	"enter": tea.KeyEnter, "esc": tea.KeyEscape, "space": tea.KeySpace,
 	"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight, "backspace": tea.KeyBackspace,
 }
 

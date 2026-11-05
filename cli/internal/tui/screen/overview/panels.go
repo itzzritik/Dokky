@@ -13,12 +13,10 @@ func activity(st *core.State, w int) string {
 	a := st.Act
 	iw := w - 4
 	var total []float64
-	top := 0.0
 	for _, s := range a.History {
 		total = append(total, s.Down+s.Up)
-		top = max(top, s.Down+s.Up)
 	}
-	body := ui.Graph(iw, 4, total, top*1.15)
+	body := ui.Graph(iw, 4, total, ui.Phase(a.History, st.Now))
 	body = append(body, "")
 	var moving, waiting []api.Transfer
 	for _, t := range a.Now {

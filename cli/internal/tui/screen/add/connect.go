@@ -81,7 +81,7 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 		case r.failed != "" && m.String() == "enter":
 			return r.start(st, r.params)
 		case r.done == nil:
-		case m.String() == "left" || m.String() == "right" || m.String() == "tab":
+		case m.String() == "left" || m.String() == "right":
 			if r.done.State == api.Connected {
 				r.btn = 1 - r.btn
 			}

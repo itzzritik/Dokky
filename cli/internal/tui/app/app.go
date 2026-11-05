@@ -263,18 +263,10 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		return a.quit()
 	case "1", "2", "3", "4", "5":
 		return a.setTab(int(s[0] - '1'))
-	case "tab":
-		return a.setTab((a.active + 1) % len(a.tabs))
-	case "shift+tab":
-		return a.setTab((a.active + len(a.tabs) - 1) % len(a.tabs))
-	case "left", "right":
-		if h, ok := a.tabs[a.active].(core.Horizontal); !ok || !h.Horizontal(a.st) {
-			d := 1
-			if s == "left" {
-				d = -1
-			}
-			return a.setTab(max(0, min(len(a.tabs)-1, a.active+d)))
-		}
+	case "left":
+		return a.setTab(max(0, a.active-1))
+	case "right":
+		return a.setTab(min(len(a.tabs)-1, a.active+1))
 	}
 	return a.updateTop(k)
 }

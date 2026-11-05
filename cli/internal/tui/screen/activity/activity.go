@@ -126,53 +126,30 @@ func (s *Activity) View(st *core.State, w, h int) *lipgloss.Layer {
 	speeds := ui.L(nil).B(ui.G.Down, p.Accent).Sp(1).B(core.Speed(a.Down), p.Text).Sp(4).B(ui.G.Up, p.Accent).Sp(1).B(core.Speed(a.Up), p.Text)
 	b.Put(2, 0, speeds.Right(w-2, ui.L(nil).T(strconv.Itoa(moving)+" moving, "+strconv.Itoa(waiting)+" waiting", p.Muted)))
 	var total []float64
-	top := 0.0
 	for _, x := range a.History {
 		total = append(total, x.Down+x.Up)
-		top = max(top, x.Down+x.Up)
 	}
-	b.Lines(2, 2, ui.Graph(w-3, graphRows, total, top*1.15))
+	b.Lines(2, 2, ui.Graph(w-3, graphRows, total, ui.Phase(a.History, st.Now)))
 
-	type line struct {
-		text string
-		idx  int
+	var lines []ui.ListLine
+	head := func(t string, c color.Color) ui.ListLine {
+		return ui.ListLine{Text: ui.L(nil).Sp(2).T(t, c).String(), Item: -1}
 	}
-	var lines []line
-	lines = append(lines, line{ui.L(nil).Sp(2).T("Now", p.Muted).String(), -1})
+	lines = append(lines, head("Now", p.Muted))
 	for i, e := range now {
-		lines = append(lines, line{s.row(st, e, i, w), i})
+		lines = append(lines, ui.ListLine{Text: s.row(st, e, i, w), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}
 	if len(now) == 0 {
-		lines = append(lines, line{ui.L(nil).Sp(2).T("Nothing is moving.", p.Faint).String(), -1})
+		lines = append(lines, head("Nothing is moving.", p.Faint))
 	}
-	lines = append(lines, line{"", -1}, line{ui.L(nil).Sp(2).T("Earlier", p.Muted).String(), -1})
+	lines = append(lines, ui.ListLine{Item: -1}, head("Earlier", p.Muted))
 	for i, e := range earlier {
-		lines = append(lines, line{s.row(st, e, len(now)+i, w), len(now) + i})
+		lines = append(lines, ui.ListLine{Text: s.row(st, e, len(now)+i, w), Item: len(now) + i, ID: "row:" + strconv.Itoa(len(now)+i)})
 	}
 	if len(earlier) == 0 {
-		lines = append(lines, line{ui.L(nil).Sp(2).T("Nothing has moved yet.", p.Faint).String(), -1})
+		lines = append(lines, head("Nothing has moved yet.", p.Faint))
 	}
-	room := h - (graphRows + 3)
-	at := 0
-	for i, l := range lines {
-		if l.idx == s.sel {
-			at = i
-		}
-	}
-	if at < s.top {
-		s.top = max(0, at-1)
-	}
-	if at >= s.top+room {
-		s.top = at - room + 1
-	}
-	for i := s.top; i < len(lines) && i < s.top+room; i++ {
-		y := graphRows + 3 + i - s.top
-		if lines[i].idx >= 0 {
-			b.Hit(0, y, "row:"+strconv.Itoa(lines[i].idx), lines[i].text)
-		} else {
-			b.Put(0, y, lines[i].text)
-		}
-	}
+	ui.List(b, graphRows+3, h-(graphRows+3), &s.top, s.sel, lines)
 	return b.Layer()
 }
 

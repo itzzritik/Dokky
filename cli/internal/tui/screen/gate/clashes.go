@@ -42,9 +42,9 @@ func (c *Clashes) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			return c, nil
 		}
 		switch m.String() {
-		case "up", "shift+tab":
+		case "up":
 			c.sel = max(0, c.sel-1)
-		case "down", "tab":
+		case "down":
 			c.sel = min(n, c.sel+1)
 		case "esc":
 			c.sel = 0

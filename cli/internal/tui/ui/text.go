@@ -61,7 +61,9 @@ func (l *Line) String() string { return l.b.String() }
 // pads with the background, or cuts with an ellipsis, to exactly w
 func (l *Line) Pad(w int) string {
 	if l.w > w {
-		return ansi.Truncate(l.b.String(), w, G.Ellipsis)
+		cut := ansi.Truncate(l.b.String(), w, G.Ellipsis)
+		// a wide character that does not fit leaves one cell to fill
+		return cut + Paint(strings.Repeat(" ", max(0, w-Width(cut))), nil, l.bg, false)
 	}
 	return l.b.String() + Paint(strings.Repeat(" ", w-l.w), nil, l.bg, false)
 }

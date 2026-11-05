@@ -206,13 +206,13 @@ func (a *Add) Actions(st *core.State) []core.Action {
 		if a.sign.oauth && a.sign.question == nil {
 			return []core.Action{{Key: "enter", Label: "open browser"}, {Key: "esc", Label: "back"}}
 		}
-		return []core.Action{{Key: "tab", Label: "next"}, {Key: "enter", Label: "continue"}, {Key: "esc", Label: "back"}}
+		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "continue"}, {Key: "esc", Label: "back"}}
 	case name:
 		label := "add drive"
 		if a.edit != nil {
 			label = "save"
 		}
-		return []core.Action{{Key: "tab", Label: "next"}, {Key: "enter", Label: label}, {Key: "esc", Label: "back"}}
+		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: label}, {Key: "esc", Label: "back"}}
 	}
 	switch {
 	case a.run.working():
