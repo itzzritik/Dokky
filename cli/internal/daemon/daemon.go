@@ -412,6 +412,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		api.MDriveRemove:     decodeCtx(d.removeDrive),
 		api.MDriveConnect:    decode(d.connectDrive),
 		api.MDriveDisconnect: decode(d.disconnectDrive),
+		api.MCacheClear:      decodeCtx(func(context.Context, struct{}) (any, error) { return nil, d.clearCachedFiles() }),
 		"settings.get":       func(context.Context, json.RawMessage) (any, error) { return d.settings(), nil },
 		"settings.set":       decode(func(s store.Settings) (any, error) { return nil, d.setSettings(s) }),
 		"login.start":        decodeCtx(func(ctx context.Context, _ struct{}) (loginStartReply, error) { return d.loginStart(ctx) }),

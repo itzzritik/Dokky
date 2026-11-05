@@ -425,7 +425,7 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int) int {
 		}
 	}
 	fields := s.visible()
-	room := max(1, (maxH-7-2-3-off)/2)
+	room := max(1, (win.Room(maxH)-3-off)/2)
 	top := max(0, min(s.focus-room+1, len(fields)-room))
 	rows := off
 	for i := top; i < len(fields) && i < top+room; i++ {

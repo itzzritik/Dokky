@@ -13,14 +13,12 @@ type Confirm struct {
 	Toggle             string // optional switch, off by default
 	Run                func(st *core.State, toggled bool) tea.Cmd
 
-	on, sure bool
-	focus    int // 0 toggle, 1 buttons
+	on       bool
+	onToggle bool
+	active   int // 0 cancel, 1 do
 }
 
-func Open(c *Confirm) tea.Cmd {
-	c.focus = 1
-	return core.Open(c)
-}
+func Open(c *Confirm) tea.Cmd { return core.Open(c) }
 
 func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch m := msg.(type) {
@@ -29,42 +27,39 @@ func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		case "esc":
 			return c, core.Close(c)
 		case "left", "right":
-			if c.focus == 1 {
-				c.sure = !c.sure
-			} else {
+			if c.onToggle {
 				c.on = !c.on
+			} else {
+				c.active = 1 - c.active
 			}
 		case "up", "down":
-			if c.Toggle != "" {
-				c.focus = 1 - c.focus
-			}
+			c.onToggle = c.Toggle != "" && !c.onToggle
 		case "space":
-			if c.focus == 0 {
+			if c.onToggle {
 				c.on = !c.on
 			}
 		case "enter":
-			if c.focus == 0 {
-				c.focus = 1
+			if c.onToggle {
+				c.onToggle = false
 				return c, nil
 			}
-			return c, c.finish(st)
+			return c, c.press(st, c.active)
 		}
 	case core.Click:
 		switch m.ID {
 		case "btn:cancel":
-			return c, core.Close(c)
+			return c, c.press(st, 0)
 		case "btn:do":
-			c.sure = true
-			return c, c.finish(st)
+			return c, c.press(st, 1)
 		case "chip:toggle:0", "chip:toggle:1":
-			c.focus, c.on = 0, m.ID[len(m.ID)-1] == '1'
+			c.onToggle, c.on = true, m.ID[len(m.ID)-1] == '1'
 		}
 	}
 	return c, nil
 }
 
-func (c *Confirm) finish(st *core.State) tea.Cmd {
-	if !c.sure {
+func (c *Confirm) press(st *core.State, i int) tea.Cmd {
+	if i == 0 {
 		return core.Close(c)
 	}
 	return tea.Batch(core.Close(c), c.Run(st, c.on))
@@ -72,23 +67,24 @@ func (c *Confirm) finish(st *core.State) tea.Cmd {
 
 func (c *Confirm) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(64, maxW), H: 12, Title: c.Question, Sub: c.Line}
-	body := ui.NewBox()
-	y := 0
+	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active,
+		Buttons: []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "do", Label: c.Do, Danger: true}}}
+	if c.onToggle {
+		win.Active = -1
+	}
+	rows := 0
 	if c.Toggle != "" {
-		win.H += 2
+		body := ui.NewBox()
 		lw := ui.Width(c.Toggle) + 2
 		body.Put(0, 0, ui.L(p.Surface).T(c.Toggle, p.Muted).Pad(lw))
 		on := 0
 		if c.on {
 			on = 1
 		}
-		body.Add(lw, 0, ui.Chips("chip:toggle", []string{"No", "Yes"}, on, c.focus == 0, p.Surface))
-		y = 2
+		body.Add(lw, 0, ui.Chips("chip:toggle", []string{"No", "Yes"}, on, c.onToggle, p.Surface))
+		win.Body, rows = body, 1
 	}
-	body.Add(0, y, ui.Button("btn:cancel", "Cancel", false, false, c.focus == 1 && !c.sure))
-	body.Add(ui.ButtonWidth("Cancel")+2, y, ui.Button("btn:do", c.Do, false, true, c.focus == 1 && c.sure))
-	win.Body = body
+	win.Fit(rows, maxH)
 	return win.Layer()
 }
 

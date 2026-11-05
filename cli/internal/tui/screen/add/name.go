@@ -294,7 +294,7 @@ func (a *Add) viewName(st *core.State, win *ui.Window, maxH int) int {
 		}
 	}
 	// the body scrolls so the focused item stays in the window
-	room := max(1, maxH-7-2)
+	room := win.Room(maxH)
 	top := 0
 	for _, pc := range pieces {
 		if pc.item == cur && pc.y >= room {

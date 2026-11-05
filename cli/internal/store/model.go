@@ -44,8 +44,6 @@ type LocalMount struct {
 type Settings struct {
 	AutoUpdate       bool   `json:"autoUpdate"`
 	PinnedVersion    string `json:"pinnedVersion"`
-	Theme            string `json:"theme"`
-	Motion           string `json:"motion"`
 	NotifyDisconnect bool   `json:"notifyDisconnect"`
 	Chosen           bool   `json:"chosen"`
 }
@@ -70,7 +68,7 @@ type Data struct {
 }
 
 func Fresh() Data {
-	return Data{Local: map[string]LocalMount{}, Settings: Settings{AutoUpdate: true, NotifyDisconnect: true, Theme: "auto", Motion: "full"}}
+	return Data{Local: map[string]LocalMount{}, Settings: Settings{AutoUpdate: true, NotifyDisconnect: true}}
 }
 
 func DefaultVFS() VFS {

@@ -262,3 +262,48 @@ func (d *Daemon) sameRemote(m store.Mount) error {
 	}
 	return nil
 }
+
+// rclone cannot drop a live drive's cache, so connected drives go off and come back around it
+func (d *Daemon) clearCachedFiles() error {
+	d.opMu.Lock()
+	defer d.opMu.Unlock()
+	d.mu.Lock()
+	ms := slices.Clone(d.data.Mounts)
+	var live []store.Mount
+	for _, m := range ms {
+		if st := d.states[m.ID]; st != nil && st.name != "" {
+			live = append(live, m)
+		}
+	}
+	d.mu.Unlock()
+	counts, err := d.unsentFiles(ms)
+	if err != nil {
+		return fmt.Errorf("could not check for files not uploaded yet: %w", err)
+	}
+	switch n := sum(counts); {
+	case n == 1:
+		return errors.New("1 file is not uploaded yet, clear the cache when it is")
+	case n > 1:
+		return fmt.Errorf("%d files are not uploaded yet, clear the cache when they are", n)
+	}
+	for _, m := range live {
+		if err := d.unmountLocked(m); err != nil {
+			return err
+		}
+	}
+	err = d.clearCache()
+	for _, m := range live {
+		if merr := d.mountLocked(m); merr != nil && err == nil {
+			err = merr
+		}
+	}
+	return err
+}
+
+func sum(counts map[string]int) int {
+	n := 0
+	for _, c := range counts {
+		n += c
+	}
+	return n
+}

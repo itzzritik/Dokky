@@ -90,5 +90,5 @@ func accountLabel(s store.Service) string {
 }
 
 func apiSettings(s store.Settings) api.Settings {
-	return api.Settings{AutoUpdate: s.AutoUpdate, PinnedVersion: s.PinnedVersion, Theme: s.Theme, Motion: s.Motion, NotifyDisconnect: s.NotifyDisconnect, Chosen: s.Chosen}
+	return api.Settings{AutoUpdate: s.AutoUpdate, PinnedVersion: s.PinnedVersion, NotifyDisconnect: s.NotifyDisconnect, Chosen: s.Chosen}
 }

@@ -45,18 +45,12 @@ func (c *Clashes) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		case "up":
 			c.sel = max(0, c.sel-1)
 		case "down":
-			c.sel = min(n, c.sel+1)
-		case "esc":
-			c.sel = 0
+			c.sel = min(n-1, c.sel+1)
 		case "left", "right", "space":
 			if c.sel < n {
 				c.keep[c.sel] = 1 - c.keep[c.sel]
 			}
 		case "enter":
-			if c.sel < n {
-				c.sel = n
-				return c, nil
-			}
 			return c, c.resolve(st)
 		}
 	case core.Click:
@@ -135,10 +129,16 @@ func (c *Clashes) resolve(st *core.State) tea.Cmd {
 
 func (c *Clashes) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(76, maxW), H: min(maxH, 12+len(c.list)), Title: "Keep which copy?", Sub: "These names are on this computer and in your account."}
+	label := "Continue"
+	if c.busy() {
+		label = ui.Spin(st.T) + " Saving"
+	}
+	win := &ui.Window{W: min(76, maxW), Title: "Keep which copy?", Sub: "These names are on this computer and in your account.",
+		Buttons: []ui.Btn{{ID: "continue", Label: label, Primary: true}}}
+	win.Fit(len(c.list), maxH)
 	body := ui.NewBox()
 	cw := win.Inner()
-	for i, x := range c.list {
+	for i, x := range c.list[:min(len(c.list), win.Room(maxH))] {
 		kind := "drive"
 		if x.Kind == "service" {
 			kind = "account"
@@ -147,21 +147,12 @@ func (c *Clashes) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 		body.Put(0, i, label)
 		body.Add(cw-33, i, ui.Chips("chip:"+strconv.Itoa(i), sides, c.keep[i], c.sel == i, p.Surface))
 	}
-	y := len(c.list) + 1
-	label := "Continue"
-	if c.busy() {
-		label = ui.Spin(st.T) + " Saving"
-	}
-	body.Add(0, y, ui.Button("btn:continue", label, true, false, c.sel == len(c.list)))
 	win.Body = body
 	return win.Layer()
 }
 
 func (c *Clashes) Actions(*core.State) []core.Action {
-	if c.sel == len(c.list) {
-		return []core.Action{{Key: "enter", Label: "continue"}, {Key: "esc", Label: "back"}}
-	}
-	return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "← →", Label: "switch"}, {Key: "enter", Label: "next"}}
+	return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "← →", Label: "switch"}, {Key: "enter", Label: "continue"}}
 }
 
 func (c *Clashes) Animating(*core.State) bool { return c.busy() && !ui.Reduced() }

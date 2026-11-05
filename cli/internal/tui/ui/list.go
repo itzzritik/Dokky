@@ -77,8 +77,13 @@ func List(b *Box, y, h int, top *int, sel int, lines []ListLine) {
 
 // a solid card with half-block top and bottom edges; rows get the fill and the inner width
 func Tile(id string, w int, selected bool, rows func(bg color.Color, iw int) []string) *lipgloss.Layer {
+	return Card(id, w, selected, P().Surface, nil, rows)
+}
+
+// a card in fill over under (nil on the screen, the window colour inside one)
+func Card(id string, w int, selected bool, fill, under color.Color, rows func(bg color.Color, iw int) []string) *lipgloss.Layer {
 	p := P()
-	bg := p.Surface
+	bg := fill
 	if selected {
 		bg = p.Sel
 	}
@@ -86,7 +91,7 @@ func Tile(id string, w int, selected bool, rows func(bg color.Color, iw int) []s
 		if G.ASCII {
 			return Paint(strings.Repeat(" ", w), nil, bg, false)
 		}
-		return Paint(strings.Repeat(g, w), bg, nil, false)
+		return Paint(strings.Repeat(g, w), bg, under, false)
 	}
 	bar := Paint(" ", nil, bg, false)
 	if selected {

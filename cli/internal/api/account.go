@@ -25,8 +25,6 @@ type State struct {
 type Settings struct {
 	AutoUpdate       bool   `json:"autoUpdate"`
 	PinnedVersion    string `json:"pinnedVersion"`
-	Theme            string `json:"theme"`
-	Motion           string `json:"motion"`
 	NotifyDisconnect bool   `json:"notifyDisconnect"`
 	Chosen           bool   `json:"chosen"`
 }

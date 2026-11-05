@@ -26,7 +26,6 @@ var (
 
 	mu     sync.RWMutex
 	termBg color.Color
-	mode   = "auto"
 	pal    = build(darkBase, nil)
 )
 
@@ -54,22 +53,11 @@ func dark(c color.Color) bool {
 }
 
 func rebuild() {
-	d := termBg == nil || dark(termBg)
-	switch mode {
-	case "dark":
-		d = true
-	case "light":
-		d = false
-	}
-	b, bg := lightBase, termBg
-	if d {
+	b := lightBase
+	if termBg == nil || dark(termBg) {
 		b = darkBase
 	}
-	// a forced theme on the other kind of terminal mixes from its own background
-	if bg != nil && dark(bg) != d {
-		bg = nil
-	}
-	pal = build(b, bg)
+	pal = build(b, termBg)
 }
 
 func SetTerminal(bg color.Color) {
@@ -77,18 +65,6 @@ func SetTerminal(bg color.Color) {
 	defer mu.Unlock()
 	termBg = bg
 	rebuild()
-}
-
-func SetTheme(m string) {
-	mu.Lock()
-	defer mu.Unlock()
-	if m == "" {
-		m = "auto"
-	}
-	if m != mode {
-		mode = m
-		rebuild()
-	}
 }
 
 func P() *Palette {

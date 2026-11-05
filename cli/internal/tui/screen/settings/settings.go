@@ -6,7 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -34,30 +33,13 @@ type row struct {
 	run                 func(*core.State) tea.Cmd
 }
 
-type checked struct{ problems []string }
-
 type Settings struct {
 	sel, top int
-	doctor   []string
-	checked  bool
-	checking bool
 	syncing  bool
 	pending  *api.Settings
 }
 
 func New() *Settings { return &Settings{} }
-
-var themes = []string{"auto", "dark", "light"}
-
-func themeName(t string) string {
-	switch t {
-	case "dark":
-		return "Dark"
-	case "light":
-		return "Light"
-	}
-	return "Follow my terminal"
-}
 
 func onOff(b bool) string {
 	if b {
@@ -107,49 +89,14 @@ func (s *Settings) rows(st *core.State) []row {
 	if !set.AutoUpdate {
 		updates = "Off"
 	}
-	motion := "Full"
-	if set.Motion == "reduced" {
-		motion = "Reduced"
-	}
-	doctor, tone := "", p.Text
-	switch {
-	case s.checking:
-		doctor = ui.Spin(st.T) + " Checking"
-	case s.checked && len(s.doctor) == 0:
-		doctor, tone = ui.G.Check+" All good", p.Kelp
-	case s.checked:
-		doctor, tone = strconv.Itoa(len(s.doctor))+" to fix", p.Coral
-	}
 	rows = append(rows,
-		row{group: "General", label: "Tell me when a drive disconnects", value: onOff(set.NotifyDisconnect), kind: choice, run: func(st *core.State) tea.Cmd {
+		row{group: "General", label: "Notify when a drive disconnects", value: onOff(set.NotifyDisconnect), kind: choice, run: func(st *core.State) tea.Cmd {
 			return s.set(st, func(v *api.Settings) { v.NotifyDisconnect = !v.NotifyDisconnect })
 		}},
 		row{label: "Updates", value: updates, kind: choice, run: func(st *core.State) tea.Cmd {
 			return s.set(st, func(v *api.Settings) { v.AutoUpdate = !v.AutoUpdate })
 		}},
-		row{group: "Look", label: "Theme", value: themeName(set.Theme), kind: choice, run: func(st *core.State) tea.Cmd {
-			return s.set(st, func(v *api.Settings) {
-				i := 0
-				for k, t := range themes {
-					if t == v.Theme {
-						i = k
-					}
-				}
-				v.Theme = themes[(i+1)%len(themes)]
-			})
-		}},
-		row{label: "Motion", value: motion, kind: choice, run: func(st *core.State) tea.Cmd {
-			return s.set(st, func(v *api.Settings) {
-				v.Motion = "reduced"
-				if motion == "Reduced" {
-					v.Motion = "full"
-				}
-			})
-		}},
-		row{group: "Storage", label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: info},
-		row{label: "Cached files folder", value: home(st.Snap.CacheDir), kind: info, tone: p.Faint},
-		row{group: "Help", label: "Check this computer", value: doctor, kind: action, tone: tone, run: s.check},
-		row{label: "Version", value: "v" + st.Snap.Version, kind: info},
+		row{group: "Storage", label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
 	)
 	if acct.LoggedIn {
 		rows = append(rows,
@@ -171,19 +118,6 @@ func (s *Settings) sync(st *core.State) tea.Cmd {
 }
 
 type synced struct{ err error }
-
-func (s *Settings) check(st *core.State) tea.Cmd {
-	if s.checking || st.Deps.Doctor == nil {
-		return nil
-	}
-	s.checking = true
-	doctor := st.Deps.Doctor
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		return checked{doctor(ctx)}
-	}
-}
 
 func (s *Settings) uninstall(st *core.State) tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
@@ -208,11 +142,6 @@ func (s *Settings) uninstall(st *core.State) tea.Cmd {
 func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	rows := s.rows(st)
 	switch m := msg.(type) {
-	case checked:
-		s.checking, s.checked, s.doctor = false, true, m.problems
-		if len(m.problems) > 0 {
-			return s, core.Send(core.Toast{Text: m.problems[0] + ". Run dokky doctor for the fix.", Bad: true})
-		}
 	case setDone:
 		if m.err != nil {
 			s.pending = nil
@@ -261,7 +190,7 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 	return acts
 }
 
-func (s *Settings) Animating(*core.State) bool { return (s.checking || s.syncing) && !ui.Reduced() }
+func (s *Settings) Animating(*core.State) bool { return s.syncing && !ui.Reduced() }
 
 func initials(name, email string) string {
 	var out []rune
@@ -277,12 +206,10 @@ func initials(name, email string) string {
 	return string(out)
 }
 
-const maxW = 76
-
 func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	p := ui.P()
 	b := ui.NewBox()
-	cw := min(w, maxW)
+	cw := w
 	acct := st.Snap.Account
 	if acct.LoggedIn {
 		in := core.Safe(initials(acct.Name, acct.Email))
@@ -311,10 +238,10 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	return b.Layer()
 }
 
-// a settings row on the group's solid block: label left, value and its glyph right
+// a settings row: label left, value and its glyph right
 func (s *Settings) line(r row, on bool, w int) string {
 	p := ui.P()
-	return ui.RowLine(w, on, p.Surface, func(bg color.Color, iw int) string {
+	return ui.RowLine(w, on, nil, func(bg color.Color, iw int) string {
 		lc := p.Text
 		if r.kind == danger {
 			lc = p.Coral
