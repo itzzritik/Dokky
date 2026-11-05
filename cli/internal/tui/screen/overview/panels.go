@@ -87,7 +87,7 @@ func (o *Overview) space(st *core.State, w int) string {
 		msg := "Connect a drive to see its space."
 		for _, d := range st.Snap.Drives {
 			if d.State == api.Connected {
-				msg = "Your drives don't report free space."
+				msg = "No free space info yet."
 			}
 		}
 		body = append(body, ui.Paint(msg, p.Faint, nil, false))

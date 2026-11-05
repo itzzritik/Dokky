@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	historyLen = 120
 	earlierLen = 50
 	heartbeat  = 5 * time.Second
 	spaceEvery = 30 * time.Second
+	spaceRetry = 5 * time.Second
 )
 
 type activity struct {
@@ -64,7 +64,7 @@ func (d *Daemon) liveKeys() map[string]string {
 	return keys
 }
 
-// reports whether to publish: every second while bytes move and once when they stop, else a heartbeat
+// reports whether to publish: every second while the last two minutes moved anything, else a heartbeat
 func (d *Daemon) observe(now time.Time) bool {
 	bytes, moving, err := d.eng.Sample()
 	if err != nil {
@@ -164,9 +164,13 @@ func (d *Daemon) observe(now time.Time) bool {
 	for _, id := range keys {
 		cur.ByDrive[id] = keep(a.cur.ByDrive[id], api.Sample{At: now, Down: perDown[id], Up: perUp[id]})
 	}
-	was := a.cur.Up+a.cur.Down > 0
+	// every second while the graph still shows something, so it keeps scrolling
+	shown := false
+	for _, x := range cur.History {
+		shown = shown || x.Down+x.Up > 0
+	}
 	a.cur = cur
-	if was || total > 0 || len(moving) > 0 || now.Sub(a.sent) >= heartbeat {
+	if shown || len(moving) > 0 || now.Sub(a.sent) >= heartbeat {
 		a.sent = now
 		return true
 	}
@@ -175,7 +179,7 @@ func (d *Daemon) observe(now time.Time) bool {
 
 func keep(h []api.Sample, s api.Sample) []api.Sample {
 	h = append(h, s)
-	return slices.Clone(h[max(0, len(h)-historyLen):])
+	return slices.Clone(h[max(0, len(h)-api.HistoryLen):])
 }
 
 func (d *Daemon) activity() api.Activity {
@@ -229,14 +233,21 @@ func (d *Daemon) refreshSpace(now time.Time) {
 	for _, x := range list {
 		go func() {
 			free, total, ok := d.eng.Space(x.key)
+			if !ok {
+				// a slow or failed check keeps the last answer, and a drive with none yet asks again soon
+				d.mu.Lock()
+				if _, had := d.space[x.id]; !had {
+					d.spaceAt[x.id] = time.Now().Add(spaceRetry - spaceEvery)
+				}
+				d.mu.Unlock()
+				return
+			}
 			d.mu.Lock()
 			old, had := d.space[x.id]
-			if ok {
+			changed := !had || old != api.Space{Free: free, Total: total}
+			if d.states[x.id] != nil && d.states[x.id].state == stateMounted {
 				d.space[x.id] = api.Space{Free: free, Total: total}
-			} else {
-				delete(d.space, x.id)
 			}
-			changed := had != ok || old != d.space[x.id]
 			d.mu.Unlock()
 			if changed {
 				d.publish()

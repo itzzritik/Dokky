@@ -11,7 +11,6 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/activity"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/devices"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/drives"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/overview"
@@ -19,7 +18,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-var tabNames = []string{"Overview", "Drives", "Activity", "Devices", "Settings"}
+var tabNames = []string{"Overview", "Drives", "Activity", "Settings"}
 
 type toastGone struct{ at time.Time }
 
@@ -45,7 +44,7 @@ func New(deps core.Deps) *App {
 	return &App{
 		st:    &core.State{Deps: deps, Now: now},
 		deps:  deps,
-		tabs:  []core.Screen{overview.New(now), drives.New(), activity.New(), devices.New(), settings.New()},
+		tabs:  []core.Screen{overview.New(now), drives.New(), activity.New(), settings.New()},
 		start: now,
 	}
 }
@@ -261,7 +260,7 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 	switch s {
 	case "q":
 		return a.quit()
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4":
 		return a.setTab(int(s[0] - '1'))
 	case "left":
 		return a.setTab(max(0, a.active-1))
