@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -21,26 +22,29 @@ type kind int
 
 const (
 	action kind = iota
-	choice
+	toggle
 	info
 	danger
 )
+
+const slide = 180 * time.Millisecond
 
 type row struct {
 	group, label, value string
 	kind                kind
 	tone                color.Color
+	frac                float64 // a switch's knob, 0 off to 1 on
 	run                 func(*core.State) tea.Cmd
 }
 
 type Settings struct {
 	sel, top int
-	ys       []int // each row's body line in the last view
 	syncing  bool
 	pending  *api.Settings
+	flipped  map[string]time.Time
 }
 
-func New() *Settings { return &Settings{} }
+func New() *Settings { return &Settings{flipped: map[string]time.Time{}} }
 
 // presses faster than the daemon's echo build on the last change
 func (s *Settings) current(st *core.State) api.Settings {
@@ -73,8 +77,8 @@ func (s *Settings) rows(st *core.State) []row {
 		rows = append(rows, row{group: "Sync", label: label, kind: action, run: s.sync})
 	}
 	rows = append(rows,
-		s.choice("General", "Notify when a drive disconnects", []string{"On", "Off"}, set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
-		s.choice("", "Updates", []string{"Install automatically", "Off"}, set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
+		s.toggle(st, "General", "Notify when a drive disconnects", set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
+		s.toggle(st, "", "Automatic updates", set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
 		row{group: "Storage", label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
 	)
 	if acct.LoggedIn {
@@ -87,20 +91,18 @@ func (s *Settings) rows(st *core.State) []row {
 	return append(rows, row{label: "Uninstall dokky", kind: danger, run: s.uninstall})
 }
 
-// a two-way setting; its first option turns it on
-func (s *Settings) choice(group, label string, opts []string, on bool, set func(*api.Settings, bool)) row {
-	cur := 1
+// an on/off setting as a switch that slides when flipped
+func (s *Settings) toggle(st *core.State, group, label string, on bool, set func(*api.Settings, bool)) row {
+	frac, word := 0.0, "Off"
 	if on {
-		cur = 0
+		frac, word = 1, "On"
 	}
-	return row{group: group, label: label, value: opts[cur], kind: choice, run: func(st *core.State) tea.Cmd {
-		anchor := 0
-		if s.sel < len(s.ys) {
-			anchor = s.ys[s.sel]
-		}
-		return core.Open(&dropdown{title: label, items: opts, cur: cur, cursor: cur, anchor: anchor, choose: func(st *core.State, i int) tea.Cmd {
-			return s.set(st, func(v *api.Settings) { set(v, i == 0) })
-		}})
+	if at, ok := s.flipped[label]; ok {
+		frac = ui.Ease(1-frac, frac, at, st.Now, slide)
+	}
+	return row{group: group, label: label, value: word, kind: toggle, frac: frac, run: func(st *core.State) tea.Cmd {
+		s.flipped[label] = st.Now
+		return s.set(st, func(v *api.Settings) { set(v, !on) })
 	}}
 }
 
@@ -180,8 +182,12 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 	r := rows[min(s.sel, len(rows)-1)]
 	acts := []core.Action{{Key: "↑↓", Label: "move"}}
 	switch r.kind {
-	case choice:
-		acts = append(acts, core.Action{Key: "enter", Label: "change"})
+	case toggle:
+		label := "turn on"
+		if r.frac >= .5 {
+			label = "turn off"
+		}
+		acts = append(acts, core.Action{Key: "enter", Label: label})
 	case action:
 		acts = append(acts, core.Action{Key: "enter", Label: "run"})
 	case danger:
@@ -193,7 +199,17 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 	return acts
 }
 
-func (s *Settings) Animating(*core.State) bool { return s.syncing && !ui.Reduced() }
+func (s *Settings) Animating(st *core.State) bool {
+	if ui.Reduced() {
+		return false
+	}
+	for _, at := range s.flipped {
+		if ui.Easing(at, st.Now, slide) {
+			return true
+		}
+	}
+	return s.syncing
+}
 
 func initials(name, email string) string {
 	var out []rune
@@ -246,7 +262,6 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	rows := s.rows(st)
 	s.sel = max(0, min(s.sel, len(rows)-1))
 	var lines []ui.ListLine
-	s.ys = make([]int, len(rows))
 	for i, r := range rows {
 		if r.group != "" {
 			if len(lines) > 0 {
@@ -254,13 +269,9 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 			}
 			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Faint).String(), Item: -1})
 		}
-		s.ys[i] = len(lines)
 		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}
 	ui.List(b, y, h-y, &s.top, s.sel, lines)
-	for i := range s.ys {
-		s.ys[i] += y - s.top
-	}
 	return b.Layer()
 }
 
@@ -280,8 +291,12 @@ func (s *Settings) line(r row, on bool, w int) string {
 		}
 		right := ui.L(bg)
 		switch r.kind {
-		case choice:
-			right.T(r.value, p.Accent).Sp(2).T(ui.G.Caret, p.Muted)
+		case toggle:
+			wc := p.Faint
+			if r.frac >= .5 {
+				wc = p.Accent
+			}
+			right.T(r.value, wc).Sp(2).Raw(ui.Switch(r.frac, bg))
 		case action, danger:
 			if r.value != "" {
 				right.T(r.value, cmpColor(r.tone, p.Muted)).Sp(2)

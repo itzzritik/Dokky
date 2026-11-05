@@ -71,12 +71,12 @@ func serviceCheck(env doctor.Env, by map[string]doctor.Check) tui.Check {
 }
 
 func updatesCheck(s api.State, cli string, r daemon.Release, err error, gh doctor.Check) tui.Check {
-	c := tui.Check{Name: "Updates", Status: "Up to date", Detail: "New versions are listed on npm and download from GitHub.", Tone: tui.Good}
+	c := tui.Check{Name: "Updates", Status: "Up to date", Detail: "dokky updates with npm in the background and switches when nothing is uploading.", Tone: tui.Good}
 	cur, auto := cmp.Or(s.Version, cli), "Off"
 	if s.Settings.AutoUpdate {
 		auto = "On"
 	}
-	c.Facts = [][2]string{{"Installed", cur}, {"Latest", r.Version}, {"Auto update", auto}}
+	c.Facts = [][2]string{{"Installed", cur}, {"Latest", r.Version}, {"Automatic", auto}}
 	switch {
 	case err != nil:
 		c.Status, c.Tone, c.Fix = "Can't check", tui.Warn, "Check your internet connection, proxy and firewall."
@@ -86,7 +86,7 @@ func updatesCheck(s api.State, cli string, r daemon.Release, err error, gh docto
 	case daemon.Newer(r.Version, cur) && s.Settings.AutoUpdate:
 		c.Status, c.Detail = r.Version+" on the way", "dokky installs "+r.Version+" in the background and switches when nothing is uploading."
 	case daemon.Newer(r.Version, cur):
-		c.Status, c.Detail = r.Version+" is out", "Press u to update, or turn on auto update in Settings."
+		c.Status, c.Detail = r.Version+" is out", "Press u to update, or turn on Automatic updates in Settings."
 	}
 	return c
 }

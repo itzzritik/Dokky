@@ -45,8 +45,8 @@ func installed(t *testing.T, v string) Paths {
 
 type fakeRegistry struct{ hits atomic.Int32 }
 
-// serves every version; tamper serves a binary that doesn't match its hash
-func newRegistry(t *testing.T, latest string, tamper bool) *fakeRegistry {
+// serves every version, and a fake npm whose install writes the "binary" and version file like the postinstall; fail makes npm fail
+func newRegistry(t *testing.T, latest string, fail bool) *fakeRegistry {
 	t.Helper()
 	r := &fakeRegistry{}
 	mux := http.NewServeMux()
@@ -61,18 +61,21 @@ func newRegistry(t *testing.T, latest string, tamper bool) *fakeRegistry {
 			platformKey: map[string]string{"url": "http://" + req.Host + "/releases/download/v" + v + "/dokky-" + platformKey, "sha256": hex.EncodeToString(sum[:])},
 		}}})
 	})
-	mux.HandleFunc("GET /releases/download/{tag}/{file}", func(w http.ResponseWriter, req *http.Request) {
-		body := "dokky " + strings.TrimPrefix(req.PathValue("tag"), "v")
-		if tamper {
-			body = "evil"
-		}
-		_, _ = io.WriteString(w, body)
-	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	oldRegistry, oldBase := registry, releaseBase
+	oldRegistry, oldBase, oldNPM := registry, releaseBase, runNPM
 	registry, releaseBase = srv.URL, srv.URL+"/releases/download/"
-	t.Cleanup(func() { registry, releaseBase = oldRegistry, oldBase })
+	runNPM = func(_ context.Context, state string, args ...string) error {
+		if fail {
+			return errors.New("npm ERR! code EACCES")
+		}
+		v := strings.TrimPrefix(args[len(args)-1], "dokky@")
+		if err := os.WriteFile(filepath.Join(filepath.Dir(state), "bin", "dokky"), []byte("dokky "+v), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(state, "version"), []byte(v), 0o644)
+	}
+	t.Cleanup(func() { registry, releaseBase, runNPM = oldRegistry, oldBase, oldNPM })
 	return r
 }
 
@@ -108,67 +111,13 @@ func requireInstalled(t *testing.T, p Paths, bin, version string) {
 func requireOldBinaryKept(t *testing.T, p Paths) {
 	t.Helper()
 	requireInstalled(t, p, "0.1.0", "0.1.0")
-	require.NoFileExists(t, filepath.Join(p.State, "dokky.old"))
-	entries, err := os.ReadDir(filepath.Join(p.State, "updates"))
-	if !errors.Is(err, os.ErrNotExist) {
-		require.NoError(t, err)
-	}
-	require.Empty(t, entries, "the download must be removed")
 }
 
-func TestInstallHashMismatchKeepsOldBinary(t *testing.T) {
-	newRegistry(t, "0.2.0", true)
-	ran := fakeSelftest(t, nil)
-	p := installed(t, "0.1.0")
-	require.ErrorContains(t, Install(t.Context(), latestRelease(t), p), "sha256")
-	require.Empty(t, *ran, "an unverified binary must never run")
-	requireOldBinaryKept(t, p)
-}
-
-func TestInstallSelftestFailureKeepsOldBinary(t *testing.T) {
+func TestInstallSelftestFailureGoesBack(t *testing.T) {
 	newRegistry(t, "0.2.0", false)
 	fakeSelftest(t, errors.New("engine did not start"))
 	p := installed(t, "0.1.0")
 	require.ErrorContains(t, Install(t.Context(), latestRelease(t), p), "engine did not start")
-	requireOldBinaryKept(t, p)
-}
-
-func TestInstallKeepsOldBinaryAndWritesVersion(t *testing.T) {
-	newRegistry(t, "0.2.0", false)
-	ran := fakeSelftest(t, nil)
-	p := installed(t, "0.1.0")
-	require.NoError(t, os.WriteFile(filepath.Join(p.State, "dokky.old"), []byte("dokky 0.0.1"), 0o755))
-
-	require.NoError(t, Install(t.Context(), latestRelease(t), p))
-	require.Equal(t, []string{filepath.Join(p.State, "updates", "dokky-0.2.0")}, *ran)
-	requireInstalled(t, p, "0.2.0", "0.2.0")
-	old, err := os.ReadFile(filepath.Join(p.State, "dokky.old"))
-	require.NoError(t, err)
-	require.Equal(t, "dokky 0.1.0", string(old))
-	entries, err := os.ReadDir(filepath.Join(p.State, "updates"))
-	require.NoError(t, err)
-	require.Empty(t, entries)
-	if runtime.GOOS != "windows" {
-		fi, err := os.Stat(p.Bin)
-		require.NoError(t, err)
-		require.Equal(t, os.FileMode(0o755), fi.Mode().Perm())
-	}
-}
-
-func TestInstallRollsBackWhenMoveFails(t *testing.T) {
-	newRegistry(t, "0.2.0", false)
-	fakeSelftest(t, nil)
-	p := installed(t, "0.1.0")
-	old := rename
-	rename = func(from, to string) error {
-		if to == p.Bin && filepath.Dir(from) != p.State {
-			return errors.New("disk full")
-		}
-		return os.Rename(from, to)
-	}
-	t.Cleanup(func() { rename = old })
-
-	require.ErrorContains(t, Install(t.Context(), latestRelease(t), p), "disk full")
 	requireOldBinaryKept(t, p)
 }
 
@@ -355,7 +304,6 @@ func TestAutoUpdateRestartsOnlyWhenIdle(t *testing.T) {
 	d.idle.Observe(t0, 1, 0)
 	require.False(t, d.autoUpdate(t.Context(), t0))
 	requireInstalled(t, d.upd.paths, "0.2.0", "0.2.0")
-	require.FileExists(t, filepath.Join(d.upd.paths.State, "dokky.old"))
 
 	later := t0.Add(time.Hour)
 	require.False(t, d.autoUpdate(t.Context(), later), "uploads are running")

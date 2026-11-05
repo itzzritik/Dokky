@@ -42,7 +42,7 @@ Privacy: the server stores your credentials encrypted, but it can decrypt them t
 
 ## Updates
 
-dokky updates itself. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
+dokky updates itself in the background with npm: every hour it checks for a new version, runs `npm i -g dokky@latest` with the npm that installed it, and switches once nothing is uploading. Turn it off in Settings, Automatic updates. You can also update with `npm i -g dokky` yourself. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
 
 ## Uninstall
 
