@@ -132,7 +132,7 @@ func TestTwoMountsEjectOne(t *testing.T) {
 		assert.NoError(c, err)
 		var got []string
 		for _, m := range stats {
-			got = append(got, m.Name)
+			got = append(got, m.ID)
 		}
 		assert.Equal(c, []string{"b"}, got)
 	}, 10*time.Second, 200*time.Millisecond)

@@ -15,6 +15,7 @@ const BEARER = /^Bearer dky_[\w-]{43}$/u;
 export interface Device {
   arch: string;
   createdAt: Date;
+  driveIds?: string[];
   lastSeenAt: Date;
   name: string;
   os: string;
@@ -194,4 +195,35 @@ export async function revokeDevice(
     await audit(userId, actorDeviceId, "device.revoke", device.name, ip);
   }
   return true;
+}
+
+export async function renameDevice(
+  userId: string,
+  id: string,
+  name: string,
+  actorDeviceId: string,
+  ip: string
+): Promise<boolean> {
+  if (!ObjectId.isValid(id)) {
+    return false;
+  }
+  const { matchedCount } = await devices().updateOne(
+    { _id: new ObjectId(id), userId, revokedAt: null },
+    { $set: { name } }
+  );
+  if (matchedCount === 1) {
+    await audit(userId, actorDeviceId, "device.rename", name, ip);
+  }
+  return matchedCount === 1;
+}
+
+export async function setDeviceDrives(
+  userId: string,
+  id: string,
+  mountIds: string[]
+): Promise<void> {
+  await devices().updateOne(
+    { _id: new ObjectId(id), userId, revokedAt: null },
+    { $set: { driveIds: mountIds } }
+  );
 }

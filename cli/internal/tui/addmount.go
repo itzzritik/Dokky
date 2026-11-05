@@ -7,7 +7,6 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
 )
 
@@ -97,10 +96,6 @@ func (a *app) addKey(k tea.KeyPressMsg) tea.Cmd {
 			return cmd
 		}
 		name := strings.TrimSpace(f.name.Value())
-		if err := engine.ValidName(name); err != nil {
-			f.err = err.Error()
-			return nil
-		}
 		f.err = ""
 		m := store.Mount{Name: name, ServiceID: f.svc.ID, RemotePath: f.dir, VFS: store.DefaultVFS()}
 		return a.do("mount.put", m, func() tea.Msg { return mountSavedMsg{name} })

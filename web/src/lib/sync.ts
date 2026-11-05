@@ -49,7 +49,12 @@ export interface IdContext {
 export const services = () => db().collection<ServiceDoc>("services");
 export const mounts = () => db().collection<MountDoc>("mounts");
 export const users = () =>
-  db().collection<{ _id: ObjectId; rev?: number }>("users");
+  db().collection<{
+    _id: ObjectId;
+    email?: string | null;
+    name?: string | null;
+    rev?: number;
+  }>("users");
 
 export const seal = (c: Caller, secrets: Record<string, string>) =>
   Object.fromEntries(

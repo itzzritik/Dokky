@@ -75,6 +75,7 @@ test("list marks the calling device as current", async () => {
       "arch",
       "createdAt",
       "current",
+      "drives",
       "id",
       "lastSeenAt",
       "name",

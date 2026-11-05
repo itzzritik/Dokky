@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -14,34 +16,38 @@ const (
 	mountRootDir = "dokky"
 )
 
-var (
-	namePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	driveLetter = regexp.MustCompile(`^[A-Za-z]:\\?$`)
-)
+var driveLetter = regexp.MustCompile(`^[A-Za-z]:\\?$`)
 
 func ValidName(name string) error {
-	if len(name) > maxNameLen || !namePattern.MatchString(name) {
-		return fmt.Errorf("mount name %q must be lowercase letters, digits and hyphens, at most %d characters", name, maxNameLen)
+	name = strings.TrimSpace(name)
+	if n := utf8.RuneCountInString(name); n == 0 || n > maxNameLen || strings.ContainsFunc(name, func(r rune) bool { return r == '/' || r == ':' || unicode.IsControl(r) }) {
+		return fmt.Errorf("a drive name must be 1 to %d characters, without / or :", maxNameLen)
 	}
 	return nil
+}
+
+func SafeFolder(name, goos string) string {
+	bad := "/:"
+	if goos == "windows" {
+		bad += `<>"\|?*`
+	}
+	s := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || strings.ContainsRune(bad, r) {
+			return '-'
+		}
+		return r
+	}, strings.TrimSpace(name))
+	if s = strings.TrimRight(s, ". "); s == "" {
+		return "Drive"
+	}
+	return s
 }
 
 func DefaultMountPoint(home, name, goos string) string {
 	if goos == "windows" {
 		return "*"
 	}
-	return filepath.Join(home, mountRootDir, Label(name))
-}
-
-// Finder shows the mount folder's name, so google-drive appears as Google Drive
-func Label(name string) string {
-	words := strings.Split(name, "-")
-	for i, w := range words {
-		if w != "" {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
-		}
-	}
-	return strings.Join(words, " ")
+	return filepath.Join(home, mountRootDir, SafeFolder(name, goos))
 }
 
 func isWindowsTarget(path string) bool {

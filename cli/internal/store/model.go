@@ -46,11 +46,14 @@ type Settings struct {
 }
 
 type Account struct {
-	APIBase  string `json:"apiBase"`
-	DeviceID string `json:"deviceId"`
-	Token    string `json:"token"`
-	Rev      string `json:"rev"`
-	Pending  bool   `json:"pending"`
+	APIBase    string    `json:"apiBase"`
+	DeviceID   string    `json:"deviceId"`
+	Token      string    `json:"token"`
+	Rev        string    `json:"rev"`
+	Pending    bool      `json:"pending"`
+	Name       string    `json:"name"`
+	Email      string    `json:"email"`
+	LastSyncAt time.Time `json:"lastSyncAt"`
 }
 
 type Data struct {

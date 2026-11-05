@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
@@ -31,10 +34,64 @@ func (d *Daemon) syncNow(ctx context.Context) {
 		return
 	}
 	snap, err := d.loop.Tick(ctx, client(acct), acct.Rev)
-	if d.answer(acct, err) == nil && snap != nil {
-		d.apply(acct, saves, *snap)
+	if d.answer(acct, err) == nil {
+		d.synced(ctx, acct)
+		if snap != nil {
+			d.apply(acct, saves, *snap)
+		}
 	}
 	d.publish()
+}
+
+func (d *Daemon) synced(ctx context.Context, acct *store.Account) {
+	var me dsync.Me
+	if acct.Name == "" && acct.Email == "" {
+		var err error
+		if me, err = client(acct).Me(ctx); err != nil {
+			d.log.Warn("read account details", "err", err)
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur := d.data.Account
+	if cur == nil || cur.Token != acct.Token {
+		return
+	}
+	a := *cur
+	a.LastSyncAt = time.Now()
+	fetched := me != (dsync.Me{})
+	if fetched {
+		a.Name, a.Email = me.Name, me.Email
+	}
+	d.data.Account = &a
+	if !fetched {
+		return
+	}
+	if err := d.save(); err != nil {
+		d.log.Error("save store", "err", err)
+	}
+	go d.reportDrives()
+}
+
+func (d *Daemon) reportDrives() {
+	d.reportMu.Lock()
+	defer d.reportMu.Unlock()
+	d.mu.Lock()
+	acct, ids := d.data.Account, []string{}
+	for id, lm := range d.data.Local {
+		if lm.Mounted {
+			ids = append(ids, id)
+		}
+	}
+	d.mu.Unlock()
+	if acct == nil || acct.Pending {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	if err := client(acct).ReportDrives(ctx, ids); err != nil {
+		d.log.Warn("report drives", "err", err)
+	}
 }
 
 // a save made during the pull, or a token not yet sent, would be undone; the next pull brings both
@@ -294,6 +351,40 @@ func (d *Daemon) revokeDevice(ctx context.Context, id string) error {
 		d.opMu.Unlock()
 	}
 	return nil
+}
+
+func (d *Daemon) renameDevice(ctx context.Context, id, name string) error {
+	acct, err := d.account()
+	if err != nil {
+		return err
+	}
+	if name = strings.TrimSpace(name); name == "" || utf8.RuneCountInString(name) > maxDeviceName {
+		return fmt.Errorf("a computer name must be 1 to %d characters", maxDeviceName)
+	}
+	if id == "" || id == acct.DeviceID {
+		id = "self"
+	}
+	return d.answer(acct, client(acct).RenameDevice(ctx, id, name))
+}
+
+type accountReply struct {
+	LoggedIn   bool      `json:"loggedIn"`
+	Pending    bool      `json:"pending"`
+	Offline    bool      `json:"offline"`
+	SignedOut  bool      `json:"signedOut"`
+	Name       string    `json:"name"`
+	Email      string    `json:"email"`
+	LastSyncAt time.Time `json:"lastSyncAt"`
+}
+
+func (d *Daemon) accountInfo() accountReply {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	r := accountReply{Offline: d.offline, SignedOut: d.signedOut}
+	if a := d.data.Account; a != nil {
+		r.LoggedIn, r.Pending, r.Name, r.Email, r.LastSyncAt = true, a.Pending, a.Name, a.Email, a.LastSyncAt
+	}
+	return r
 }
 
 func (d *Daemon) account() (*store.Account, error) {

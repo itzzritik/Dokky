@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -83,10 +84,11 @@ type Daemon struct {
 	removeLater func(left []string, state string) error
 	notify      func(title, body string) error
 
-	idle   Idle
-	upd    updater
-	loop   dsync.Loop
-	syncMu sync.Mutex // one pull at a time; taken before opMu
+	idle     Idle
+	upd      updater
+	loop     dsync.Loop
+	syncMu   sync.Mutex // one pull at a time; taken before opMu
+	reportMu sync.Mutex
 
 	// serialises changes; status only TryLocks it
 	opMu        sync.Mutex
@@ -294,7 +296,8 @@ func (d *Daemon) shutdown() {
 	}
 }
 
-type nameParams struct {
+type namedParams struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
@@ -340,17 +343,25 @@ func decodeCtx[T, R any](fn func(context.Context, T) (R, error)) ipc.Handler {
 func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	return map[string]ipc.Handler{
 		"status": func(context.Context, json.RawMessage) (any, error) { return d.status(), nil },
-		"mount": decode(func(p nameParams) (any, error) {
-			if err := d.mount(p.Name); err != nil {
+		"mount": decode(func(p namedParams) (any, error) {
+			id, err := d.resolve(p)
+			if err == nil {
+				err = d.mount(id)
+			}
+			if err != nil {
 				return nil, err
 			}
-			return d.mountStatus(p.Name), nil
+			return d.mountStatus(id), nil
 		}),
-		"unmount": decode(func(p nameParams) (any, error) {
-			if err := d.unmount(p.Name); err != nil {
+		"unmount": decode(func(p namedParams) (any, error) {
+			id, err := d.resolve(p)
+			if err == nil {
+				err = d.unmount(id)
+			}
+			if err != nil {
 				return nil, err
 			}
-			return d.mountStatus(p.Name), nil
+			return d.mountStatus(id), nil
 		}),
 		"service.put": decodeCtx(func(ctx context.Context, p putParams) (idParams, error) {
 			s := p.Service
@@ -403,6 +414,8 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"sync.now":       decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { d.syncNow(ctx); return nil, nil }),
 		"devices.list":   decodeCtx(func(ctx context.Context, _ struct{}) ([]dsync.Device, error) { return d.devices(ctx) }),
 		"devices.revoke": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.revokeDevice(ctx, p.ID) }),
+		"devices.rename": decodeCtx(func(ctx context.Context, p namedParams) (any, error) { return nil, d.renameDevice(ctx, p.ID, p.Name) }),
+		"account.get":    func(context.Context, json.RawMessage) (any, error) { return d.accountInfo(), nil },
 		"update": decodeCtx(func(ctx context.Context, p updateParams) (updateReply, error) {
 			r, err := d.update(ctx, p)
 			if err == nil && r.Updated {
@@ -462,9 +475,9 @@ func (d *Daemon) status() StatusReply {
 	return r
 }
 
-func (d *Daemon) mountStatus(name string) MountStatus {
+func (d *Daemon) mountStatus(id string) MountStatus {
 	for _, m := range d.status().Mounts {
-		if m.Name == name {
+		if m.ID == id {
 			return m
 		}
 	}
@@ -543,6 +556,7 @@ func (d *Daemon) deleteService(ctx context.Context, id string) error {
 }
 
 func (d *Daemon) putMount(ctx context.Context, m store.Mount) error {
+	m.Name = strings.TrimSpace(m.Name)
 	if err := engine.ValidName(m.Name); err != nil {
 		return err
 	}
@@ -586,15 +600,44 @@ func (d *Daemon) mountSlot(m store.Mount) (int, error) {
 		return -1, fmt.Errorf("no service with id %q", m.ServiceID)
 	}
 	i := -1
+	folder := engine.SafeFolder(m.Name, runtime.GOOS)
 	for j, x := range d.data.Mounts {
 		switch {
 		case x.ID == m.ID:
 			i = j
-		case x.Name == m.Name:
-			return -1, fmt.Errorf("a mount named %q already exists", m.Name)
+		case strings.EqualFold(engine.SafeFolder(x.Name, runtime.GOOS), folder):
+			return -1, fmt.Errorf("another drive already uses the folder %s", folder)
 		}
 	}
 	return i, nil
+}
+
+func (d *Daemon) resolve(p namedParams) (string, error) {
+	if p.ID != "" {
+		return p.ID, nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	name := strings.TrimSpace(p.Name)
+	var exact, ids []string
+	for _, m := range d.data.Mounts {
+		switch {
+		case m.ID == name || m.Name == name:
+			exact = append(exact, m.ID)
+		case strings.EqualFold(m.Name, name):
+			ids = append(ids, m.ID)
+		}
+	}
+	if len(exact) > 0 {
+		ids = exact
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("no drive named %q", p.Name)
+	case 1:
+		return ids[0], nil
+	}
+	return "", fmt.Errorf("more than one drive is named %q: %s", p.Name, strings.Join(ids, ", "))
 }
 
 func (d *Daemon) upsertMount(m store.Mount) error {

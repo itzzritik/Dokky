@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -34,7 +35,7 @@ func synced(t *testing.T) (*fakeAPI, *Daemon, *fakeEngine, *store.Store) {
 	}
 	d, f, st := newTestDaemon(t, data)
 	d.start()
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	return api, d, f, st
 }
 
@@ -68,10 +69,10 @@ func TestPullAppliesAndSaves(t *testing.T) {
 	require.Equal(t, `"5"`, saved.Account.Rev)
 	require.True(t, saved.Local["m1"].Mounted)
 	require.Equal(t, "box-secret-value", f.services["s2"].Secrets["pass"])
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.Equal(t, mountedAt, f.mountedAt, "a change to a live mount waits for its next mount")
-	require.True(t, d.mountStatus("media").RemountToApply)
-	require.False(t, d.mountStatus("photos").RemountToApply)
+	require.True(t, d.mountStatus("m1").RemountToApply)
+	require.False(t, d.mountStatus("m3").RemountToApply)
 	require.NotContains(t, logx.Redact("pass box-secret-value"), "box-secret-value")
 
 	require.NoError(t, call(t, d, "sync.now", nil, nil))
@@ -80,7 +81,7 @@ func TestPullAppliesAndSaves(t *testing.T) {
 
 	require.NoError(t, call(t, d, "unmount", map[string]string{"name": "media"}, nil))
 	require.NoError(t, call(t, d, "mount", map[string]string{"name": "media"}, nil))
-	require.False(t, d.mountStatus("media").RemountToApply)
+	require.False(t, d.mountStatus("m1").RemountToApply)
 }
 
 func TestPullIgnoresBadResponses(t *testing.T) {
@@ -91,7 +92,10 @@ func TestPullIgnoresBadResponses(t *testing.T) {
 		"500": {h: func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, apiError("internal"))
 		}},
-		"timeout": {offline: true, h: func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }},
+		"timeout": {offline: true, h: func(_ http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done()
+		}},
 		"malformed": {h: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("ETag", `"9"`)
 			_, _ = w.Write([]byte(`{"rev":9,"services":[{"id":"x","name":`))
@@ -114,7 +118,7 @@ func TestPullIgnoresBadResponses(t *testing.T) {
 			d.syncNow(ctx)
 
 			require.Equal(t, before, load(t, st))
-			require.Contains(t, f.mounted, "media")
+			require.Contains(t, f.mounted, "m1")
 			require.Contains(t, f.services, "s1")
 			require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
 			s := d.status()
@@ -167,7 +171,7 @@ func TestRevokedWipeForcesBusyMount(t *testing.T) {
 	t.Cleanup(srv.Close)
 	d, f, _ := newTestDaemon(t, loggedIn(srv.URL))
 	d.start()
-	point := d.mountStatus("media").MountPoint
+	point := d.mountStatus("m1").MountPoint
 	f.mu.Lock()
 	f.failUnmount = 1 << 20
 	f.mu.Unlock()
@@ -270,7 +274,7 @@ func TestSavesGoToServerFirst(t *testing.T) {
 	require.Equal(t, []string{"m1", id.ID}, mountIDs(load(t, st)))
 
 	err := call(t, d, "mount.put", store.Mount{ID: "m7", Name: "media", ServiceID: "s1", VFS: store.DefaultVFS()}, nil)
-	require.ErrorContains(t, err, "already exists")
+	require.ErrorContains(t, err, "already uses the folder")
 	api.set(func() {
 		api.mounts["other"] = store.Mount{ID: "other", Name: "music", ServiceID: "s1", Version: 1}
 	})
@@ -288,7 +292,7 @@ func TestSavesGoToServerFirst(t *testing.T) {
 		require.Equal(t, "offline", codeOf(t, call(t, d, method, params, nil)), method)
 	}
 	require.Equal(t, before, load(t, st), "nothing is saved locally while offline")
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.Contains(t, f.services, "s1")
 	require.NotContains(t, f.services, "s5")
 
@@ -332,8 +336,8 @@ func TestRemovedMountKeepsServiceUntilUnmounted(t *testing.T) {
 	require.True(t, saved.Local["m1"].RemovedRemotely)
 	require.Len(t, saved.Services, 1)
 	require.Contains(t, f.services, "s1")
-	require.Contains(t, f.mounted, "media")
-	require.Equal(t, stateRemoved, d.mountStatus("media").State)
+	require.Contains(t, f.mounted, "m1")
+	require.Equal(t, stateRemoved, d.mountStatus("m1").State)
 
 	require.NoError(t, call(t, d, "unmount", map[string]string{"name": "media"}, nil))
 	saved = load(t, st)

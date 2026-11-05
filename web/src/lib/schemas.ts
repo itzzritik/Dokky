@@ -30,8 +30,10 @@ export const USER_CODE =
 export const entityId = z.uuid();
 const mountName = z
   .string()
-  .max(40)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
+  .trim()
+  .min(1)
+  .regex(/^[^/:\p{Cc}]+$/u)
+  .refine((s) => [...s].length <= 40, "at most 40 characters");
 const serviceName = z.string().min(1).max(64);
 
 export const loginStartBody = z.object({
@@ -39,6 +41,14 @@ export const loginStartBody = z.object({
   os: platform,
   arch: platform,
   version: z.string().max(64),
+});
+
+export const deviceRenameBody = z.object({
+  name: z.string().trim().min(1).max(64),
+});
+
+export const deviceDrivesBody = z.object({
+  mountIds: z.array(entityId).max(200),
 });
 
 export const loginPollBody = z.object({

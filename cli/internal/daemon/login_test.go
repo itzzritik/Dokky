@@ -344,6 +344,8 @@ func TestLoginUploadsLocalItems(t *testing.T) {
 	require.Equal(t, []string{"service nas 0", "mount media 0", "mount docs 0"}, api.putLog())
 
 	saved := load(t, st)
+	require.False(t, saved.Account.LastSyncAt.IsZero())
+	saved.Account.LastSyncAt = time.Time{}
 	require.Equal(t, &store.Account{APIBase: api.srv.URL, DeviceID: "dev1", Token: testToken, Rev: `"3"`}, saved.Account, "a pull runs as soon as the login finishes")
 	require.Equal(t, int64(1), saved.Services[0].Version)
 	require.False(t, saved.Services[0].UpdatedAt.IsZero())
@@ -365,7 +367,7 @@ func clashAccount(t *testing.T) (*fakeAPI, *Daemon, *fakeEngine, *store.Store, s
 	d, f, st := newTestDaemon(t, data)
 	noOpen(d)
 	d.start()
-	require.NoError(t, d.mount("media"))
+	require.NoError(t, d.mount("m1"))
 	return api, d, f, st, point
 }
 
@@ -377,14 +379,14 @@ func TestLoginClashKeepAccountDeletesLocalCopy(t *testing.T) {
 	require.Equal(t, []string{"service nas 0"}, api.putLog(), "mounts of a clashing service wait for it")
 	require.True(t, load(t, st).Account.Pending)
 	require.True(t, d.status().Pending)
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 
 	var rr struct {
 		Clashes []dsync.Clash `json:"clashes"`
 	}
 	require.NoError(t, call(t, d, "login.resolve", map[string]string{"kind": "service", "name": "nas", "keep": "account"}, &rr))
 	require.Equal(t, []dsync.Clash{{Kind: "mount", Name: "media", LocalID: "m1", RemoteID: "rm1", Local: "service nas, path /", Account: "service nas, path /"}}, rr.Clashes)
-	require.NotContains(t, f.mounted, "media", "a mount whose service is replaced is unmounted first")
+	require.NotContains(t, f.mounted, "m1", "a mount whose service is replaced is unmounted first")
 	require.NotContains(t, f.services, "s1")
 	saved := load(t, st)
 	require.Empty(t, saved.Services)
@@ -417,7 +419,7 @@ func TestResolveRefusesWhileMountUploads(t *testing.T) {
 		err := call(t, d, "login.resolve", map[string]string{"kind": "service", "name": "nas", "keep": keep}, nil)
 		require.ErrorContains(t, err, "2 uploads on media still running")
 	}
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.Contains(t, f.services, "s1")
 	require.Equal(t, []string{"service nas 0"}, api.putLog())
 	require.Equal(t, "s1", load(t, st).Mounts[0].ServiceID)
@@ -437,7 +439,7 @@ func setUploads(f *fakeEngine, n int) {
 
 func requireUnmoved(t *testing.T, f *fakeEngine, st *store.Store) {
 	t.Helper()
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.Contains(t, f.services, "s1")
 	saved := load(t, st)
 	require.Equal(t, "s1", saved.Services[0].ID)
@@ -502,7 +504,7 @@ func TestLogoutRecheckKeepsCacheForNewUpload(t *testing.T) {
 	}
 	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
 	require.NotNil(t, load(t, st).Account)
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.False(t, api.wasRevoked())
 
 	setUploads(f, 0)
@@ -585,7 +587,7 @@ func TestLogoutRefusesPausedUploads(t *testing.T) {
 	require.ErrorContains(t, err, "mount docs to finish, or use --force")
 	require.NotNil(t, load(t, st).Account)
 	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.False(t, api.wasRevoked())
 
 	require.NoError(t, call(t, d, "logout", map[string]bool{"force": true}, nil))
@@ -792,7 +794,7 @@ func TestLogoutWaitsForUploads(t *testing.T) {
 	d, f, st := newTestDaemon(t, loggedIn(api.srv.URL))
 	d.start()
 	fillCache(t, d)
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	f.mu.Lock()
 	f.uploads = 2
 	f.mu.Unlock()
@@ -804,7 +806,7 @@ func TestLogoutWaitsForUploads(t *testing.T) {
 	require.ErrorContains(t, err, "2 uploads")
 	require.NotNil(t, load(t, st).Account)
 	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
-	require.Contains(t, f.mounted, "media")
+	require.Contains(t, f.mounted, "m1")
 	require.False(t, api.wasRevoked())
 
 	done := make(chan error, 1)

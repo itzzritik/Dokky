@@ -13,7 +13,7 @@ func TestMountParamsDarwin(t *testing.T) {
 	require.Equal(t, "/u/dokky/nas", p["mountPoint"])
 	require.Equal(t, "dokky", p["mountType"])
 	require.Equal(t, []string{"rsize=1048576", "wsize=1048576", "readahead=16"}, p["mountOpt"].(map[string]any)["ExtraOptions"])
-	require.Equal(t, "Nas", p["volname"])
+	require.Equal(t, "nas", p["volname"])
 	require.Equal(t, true, p["vfs_fast_fingerprint"])
 	require.Equal(t, "full", p["vfs_cache_mode"])
 	require.Equal(t, "5m", p["dir_cache_time"])
@@ -36,10 +36,10 @@ func TestMountParamsLinux(t *testing.T) {
 }
 
 func TestMountParamsWindowsUsesNetworkModeAndLabel(t *testing.T) {
-	p := MountParams("svc:", "*", "nas", store.DefaultVFS(), "windows")
+	p := MountParams("svc:", "*", `Work\Drive?`, store.DefaultVFS(), "windows")
 	require.Equal(t, "cmount", p["mountType"])
 	require.Equal(t, true, p["network_mode"])
-	require.Equal(t, "Nas", p["volname"])
+	require.Equal(t, "Work-Drive-", p["volname"])
 	require.Equal(t, "*", p["mountPoint"])
 	require.NotContains(t, p, "mountOpt")
 }

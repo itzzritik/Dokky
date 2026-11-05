@@ -86,6 +86,12 @@ type Device struct {
 	LastSeenAt time.Time `json:"lastSeenAt"`
 	CreatedAt  time.Time `json:"createdAt"`
 	Current    bool      `json:"current"`
+	Drives     int       `json:"drives"`
+}
+
+type Me struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -278,6 +284,23 @@ func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 
 func (c *Client) Revoke(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, "/devices/"+url.PathEscape(id), true, nil, nil, http.StatusNoContent)
+}
+
+func (c *Client) Me(ctx context.Context) (Me, error) {
+	var out Me
+	err := c.call(ctx, http.MethodGet, "/me", true, nil, &out, http.StatusOK)
+	return out, err
+}
+
+func (c *Client) RenameDevice(ctx context.Context, id, name string) error {
+	return c.call(ctx, http.MethodPatch, "/devices/"+url.PathEscape(id), true, map[string]string{"name": name}, nil, http.StatusNoContent)
+}
+
+func (c *Client) ReportDrives(ctx context.Context, mountIDs []string) error {
+	if mountIDs == nil {
+		mountIDs = []string{}
+	}
+	return c.call(ctx, http.MethodPut, "/devices/self/drives", true, map[string][]string{"mountIds": mountIDs}, nil, http.StatusNoContent)
 }
 
 func Offline(err error) bool {

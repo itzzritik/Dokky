@@ -18,6 +18,7 @@ export async function GET(req: Request): Promise<Response> {
       lastSeenAt: d.lastSeenAt,
       createdAt: d.createdAt,
       current: String(d._id) === who.deviceId,
+      drives: d.driveIds?.length ?? 0,
     }))
   );
 }
