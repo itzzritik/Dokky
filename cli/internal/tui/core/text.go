@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -16,6 +17,13 @@ func Safe(s string) string {
 		}
 		return r
 	}, ansi.Strip(s))
+}
+
+func Home(path string) string {
+	if h, err := os.UserHomeDir(); err == nil && strings.HasPrefix(path, h) {
+		return "~" + strings.TrimPrefix(path, h)
+	}
+	return path
 }
 
 func Fit(s string, w int) string {

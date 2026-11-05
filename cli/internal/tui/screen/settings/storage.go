@@ -77,7 +77,7 @@ func (s *storage) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 		body.Put(0, 0, win.Text("Nothing is cached right now.", p.Faint))
 		y = 1
 	}
-	body.Put(0, y+1, ui.L(p.Surface).T("Location", p.Faint).Right(cw, ui.L(p.Surface).T(home(st.Snap.CacheDir), p.Muted)))
+	body.Put(0, y+1, ui.L(p.Surface).T("Location", p.Faint).Right(cw, ui.L(p.Surface).T(core.Home(st.Snap.CacheDir), p.Muted)))
 	win.Fit(y+2, maxH)
 	win.Body = body
 	return win.Layer()

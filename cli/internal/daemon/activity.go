@@ -110,7 +110,12 @@ func (d *Daemon) observe(now time.Time) bool {
 		} else {
 			perDown[id] += speed
 		}
-		cur.Now = append(cur.Now, api.Transfer{DriveID: id, Name: m.Name, Up: m.Up, Size: m.Size, Done: m.Done, ETA: m.ETA})
+		done := m.Done
+		if m.Size > 0 {
+			// rclone counts bytes once buffered, which can run past the size
+			done = min(done, m.Size)
+		}
+		cur.Now = append(cur.Now, api.Transfer{DriveID: id, Name: m.Name, Up: m.Up, Size: m.Size, Done: done, ETA: m.ETA})
 	}
 	// a transfer that ended between samples still moved its last bytes in this one
 	for _, f := range finished {

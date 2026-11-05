@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image/color"
-	"os"
 	"strconv"
 	"strings"
 
@@ -62,13 +61,6 @@ func (s *Settings) set(st *core.State, change func(*api.Settings)) tea.Cmd {
 
 type setDone struct{ err error }
 
-func home(path string) string {
-	if h, err := os.UserHomeDir(); err == nil && strings.HasPrefix(path, h) {
-		return "~" + strings.TrimPrefix(path, h)
-	}
-	return path
-}
-
 func (s *Settings) rows(st *core.State) []row {
 	p := ui.P()
 	set, acct := s.current(st), st.Snap.Account
@@ -87,7 +79,7 @@ func (s *Settings) rows(st *core.State) []row {
 	)
 	if acct.LoggedIn {
 		rows = append(rows,
-			row{group: "Account", label: "Devices", value: "Your computers", kind: action, tone: p.Faint, run: devices.Open},
+			row{group: "Account", label: "Devices", value: "Your devices", kind: action, tone: p.Faint, run: devices.Open},
 			row{label: "Sign out", kind: action, run: func(*core.State) tea.Cmd { return devices.SignOut() }})
 	} else {
 		rows = append(rows, row{group: "Account", label: "Sign in", kind: action, run: gate.Open})

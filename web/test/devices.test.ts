@@ -80,6 +80,7 @@ test("list marks the calling device as current", async () => {
       "lastSeenAt",
       "name",
       "os",
+      "osName",
       "version",
     ].sort()
   );

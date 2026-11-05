@@ -2,6 +2,8 @@ package health
 
 import (
 	"image/color"
+	"path"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,56 +31,114 @@ func New() *Health { return &Health{} }
 
 // live checks from the daemon's state, then the computer's own
 func checks(st *core.State) []core.Check {
-	out := []core.Check{drives(st), sync(st)}
+	out := []core.Check{drives(st), uploads(st), sync(st)}
 	if len(st.Checks) == 0 && st.Checking {
-		return append(out, core.Check{Name: "This computer", Status: "Checking", Detail: "Looking at the file system driver, the background service, the keychain, the network and free space.", Tone: core.Busy})
+		return append(out, core.Check{Name: "This computer", Status: "Checking", Detail: "Looking at the background service, updates, the cache and the keychain.", Tone: core.Busy})
 	}
 	return append(out, st.Checks...)
 }
 
 func drives(st *core.State) core.Check {
-	c := core.Check{Name: "Drives", Tone: core.Good}
+	c := core.Check{Name: "Drives", Detail: "Each drive and whether it is open in " + core.FileManager() + ".", Tone: core.Good}
 	if len(st.Snap.Drives) == 0 {
 		c.Status, c.Detail = "No drives yet", "Add a drive from Overview."
 		return c
 	}
 	on := 0
-	var lines, failed []string
+	var failed, stale []string
 	for _, d := range st.Snap.Drives {
-		s := ui.DriveStatus(d, st.T)
-		lines = append(lines, d.Name+": "+s.Words)
+		words := ui.DriveStatus(d, st.T).Words
 		switch d.State {
 		case api.Connected:
 			on++
 		case api.Failed:
 			failed = append(failed, d.Name)
-		case api.Reconnect:
-			if c.Tone == core.Good {
-				c.Tone = core.Warn
+			if d.Error != "" {
+				words = d.Error
 			}
+		case api.Reconnect:
+			stale = append(stale, d.Name)
+		}
+		c.Facts = append(c.Facts, [2]string{d.Name, words})
+	}
+	c.Status = strconv.Itoa(on) + " of " + strconv.Itoa(len(st.Snap.Drives)) + " connected"
+	switch {
+	case len(failed) > 0:
+		c.Tone, c.Status = core.Bad, strings.Join(failed, ", ")+" can't connect"
+		c.Fix = "Make sure the server is on and reachable, then press r on Overview to reconnect."
+	case len(stale) > 0:
+		c.Tone, c.Status = core.Warn, strings.Join(stale, ", ")+" needs a reconnect"
+		c.Fix = "Press r on Overview to reconnect and apply the new settings."
+	}
+	return c
+}
+
+func uploads(st *core.State) core.Check {
+	c := core.Check{Name: "Uploads", Status: "All saved", Detail: "What you save to a drive stays on this computer until it reaches the cloud.", Tone: core.Good}
+	moving, waiting := 0, 0
+	var left int64
+	for _, t := range st.Act.Now {
+		if !t.Up {
+			continue
+		}
+		left += max(0, t.Size-t.Done)
+		if t.Waiting {
+			waiting++
+		} else {
+			moving++
 		}
 	}
-	c.Status = core.Count(on, "drive") + " connected"
-	if len(failed) > 0 {
-		c.Tone, c.Status = core.Bad, strings.Join(failed, ", ")+" can't connect"
+	var failed []api.Transfer
+	last := ""
+	for _, t := range st.Act.Earlier {
+		switch {
+		case !t.Up:
+		case t.Error != "":
+			failed = append(failed, t)
+		case last == "":
+			last = path.Base(t.Name) + ", " + core.Ago(t.At, st.Now)
+		}
 	}
-	c.Detail = strings.Join(lines, "\n")
+	size := ""
+	if left > 0 {
+		size = core.Size(left)
+	}
+	c.Facts = [][2]string{{"Uploading", strconv.Itoa(moving)}, {"Waiting", strconv.Itoa(waiting)}, {"Left", size},
+		{"Failed", strconv.Itoa(len(failed))}, {"Last saved", last}}
+	switch {
+	case len(failed) > 0:
+		c.Tone, c.Status = core.Warn, strconv.Itoa(len(failed))+" failed"
+		c.Facts = append(c.Facts, [2]string{"Error", path.Base(failed[0].Name) + ": " + failed[0].Error})
+		c.Fix = "dokky tries again on its own. To try now, pick the file in Activity and press enter."
+	case moving+waiting > 0:
+		c.Tone, c.Status = core.Busy, strconv.Itoa(moving+waiting)+" to upload"
+	}
 	return c
 }
 
 func sync(st *core.State) core.Check {
 	a := st.Snap.Account
+	c := core.Check{Name: "Sync", Detail: "Your drives and settings follow you to every computer you sign in on.", Tone: core.Good}
+	c.Facts = [][2]string{{"Account", a.Email}, {"Last synced", ""}, {"Server", "dokky.ritik.me"}}
 	switch {
 	case !a.LoggedIn:
-		return core.Check{Name: "Sync", Status: "This computer only", Detail: "Sign in from Settings to bring your drives to every computer.", Tone: core.Good}
+		c.Status, c.Detail = "This computer only", "Sign in from Settings to bring your drives and settings to every computer."
+		c.Facts[0][1] = "Not signed in"
+		return c
 	case a.Pending:
-		return core.Check{Name: "Sync", Status: "Signing in", Detail: "Finishing the sign-in.", Tone: core.Busy}
+		c.Status, c.Tone = "Signing in", core.Busy
+		return c
 	case a.SignedOut:
-		return core.Check{Name: "Sync", Status: "Signed out", Detail: "This computer was signed out of your account. Sign in again from Settings.", Tone: core.Warn}
+		c.Status, c.Tone, c.Fix = "Signed out", core.Warn, "This computer was signed out of your account. Sign in again from Settings."
 	case a.Offline:
-		return core.Check{Name: "Sync", Status: "Offline", Detail: "dokky.ritik.me can't be reached. Your drives keep working and sync when it is back.", Tone: core.Warn}
+		c.Status, c.Tone, c.Fix = "Offline", core.Warn, "dokky.ritik.me can't be reached. Your drives keep working and sync when it is back."
+	default:
+		c.Status = "Synced " + core.Ago(a.LastSyncAt, st.Now)
 	}
-	return core.Check{Name: "Sync", Status: "Synced " + core.Ago(a.LastSyncAt, st.Now), Detail: "Signed in as " + a.Email + ". Drives and settings follow you to every computer.", Tone: core.Good}
+	if !a.LastSyncAt.IsZero() {
+		c.Facts[1][1] = core.Ago(a.LastSyncAt, st.Now)
+	}
+	return c
 }
 
 // the first problem is shown until the person moves
@@ -126,8 +186,11 @@ func report(st *core.State, cs []core.Check) string {
 	for _, c := range cs {
 		mark := map[core.Tone]string{core.Good: "ok", core.Warn: "warn", core.Bad: "fail", core.Busy: "busy"}[c.Tone]
 		b.WriteString(mark + "  " + c.Name + ": " + c.Status + "\n")
-		for _, l := range strings.Split(c.Detail, "\n") {
-			b.WriteString("      " + l + "\n")
+		for _, f := range c.Facts {
+			b.WriteString("      " + f[0] + ": " + f[1] + "\n")
+		}
+		if c.Fix != "" {
+			b.WriteString("      To fix it: " + c.Fix + "\n")
 		}
 	}
 	return b.String()
@@ -141,7 +204,17 @@ func (h *Health) Actions(st *core.State) []core.Action {
 	return acts
 }
 
-func (h *Health) Animating(st *core.State) bool { return st.Checking && !ui.Reduced() }
+func (h *Health) Animating(st *core.State) bool {
+	if ui.Reduced() {
+		return false
+	}
+	for _, c := range checks(st) {
+		if c.Tone == core.Busy {
+			return true
+		}
+	}
+	return false
+}
 
 func tone(t core.Tone) (string, ui.Status) {
 	p := ui.P()
@@ -187,28 +260,63 @@ func (h *Health) View(st *core.State, w, ht int) *lipgloss.Layer {
 			rule[i] = ui.Paint(ui.G.V, p.Line, nil, false)
 		}
 		b.Lines(lw+1, y, rule)
-		b.Put(lw+3, y, ui.Paint(core.Fit(c.Name, dw), p.Text, nil, true))
-		b.Lines(lw+3, y+2, wrap(c.Detail, dw, room-2))
+		b.Lines(lw+3, y, detail(st, c, dw, room))
 		return b.Layer()
 	}
 	if n := min(len(cs), room); room-n >= 4 {
 		dy := y + n + 1
 		b.Put(0, dy, ui.Paint(strings.Repeat(ui.G.H, w), p.Line, nil, false))
-		b.Put(3, dy+1, ui.Paint(core.Fit(c.Name, w-6), p.Text, nil, true))
-		b.Lines(3, dy+2, wrap(c.Detail, w-6, room-n-3))
+		b.Lines(3, dy+1, detail(st, c, w-6, room-n-1))
 	}
 	return b.Layer()
 }
 
-func wrap(s string, w, limit int) []string {
+// the name and status, what the check means, its facts in a fixed order, then the fix
+func detail(st *core.State, c core.Check, w, limit int) []string {
 	p := ui.P()
+	g, s := tone(c.Tone)
+	if c.Tone == core.Busy {
+		g, s.Fg = ui.Spin(st.T), ui.SpinFg(st.T)
+	}
+	out := []string{ui.L(nil).B(c.Name, p.Text).Right(w, ui.L(nil).B(g, s.Fg).Sp(1).T(c.Status, s.WordsFg)), ""}
+	out = append(out, wrap(c.Detail, w, p.Muted)...)
+	kw := 11
+	for _, f := range c.Facts {
+		kw = max(kw, ui.Width(f[0])+2)
+	}
+	kw = min(kw, w/2)
+	if len(c.Facts) > 0 {
+		out = append(out, "")
+	}
+	for _, f := range c.Facts {
+		v, vc := f[1], p.Text
+		if v == "" {
+			v, vc = ui.G.Dash, p.Faint
+		}
+		lines := strings.Split(ansi.Wrap(core.Safe(v), w-kw, ""), "\n")
+		for i, l := range lines[:min(3, len(lines))] {
+			k := ""
+			if i == 0 {
+				k = core.Fit(f[0], kw-2)
+			}
+			out = append(out, ui.L(nil).Raw(ui.L(nil).T(k, p.Faint).Pad(kw)).T(l, vc).String())
+		}
+	}
+	if c.Fix != "" {
+		out = append(out, "", ui.Paint("To fix it", s.Fg, nil, true))
+		out = append(out, wrap(c.Fix, w, p.Text)...)
+	}
+	return out[:min(len(out), max(0, limit))]
+}
+
+func wrap(s string, w int, fg color.Color) []string {
 	var out []string
 	for _, para := range strings.Split(s, "\n") {
 		for _, l := range strings.Split(ansi.Wordwrap(core.Safe(para), w, ""), "\n") {
-			out = append(out, ui.Paint(l, p.Muted, nil, false))
+			out = append(out, ui.Paint(l, fg, nil, false))
 		}
 	}
-	return out[:min(len(out), max(0, limit))]
+	return out
 }
 
 func row(st *core.State, c core.Check, w int, on bool) string {

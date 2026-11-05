@@ -1,7 +1,6 @@
 package drives
 
 import (
-	"os"
 	"strconv"
 	"strings"
 
@@ -9,13 +8,6 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
-
-func home(path string) string {
-	if h, err := os.UserHomeDir(); err == nil && strings.HasPrefix(path, h) {
-		return "~" + strings.TrimPrefix(path, h)
-	}
-	return path
-}
 
 func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int, grow float64) {
 	p := ui.P()
@@ -48,7 +40,7 @@ func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int, grow float64) 
 		added = d.AddedAt.Local().Format("2 January 2006")
 	}
 	// every drive shows the same facts in the same places
-	facts := [][2]string{{"Account", d.Account}, {"Folder", home(d.Folder)}, {"At login", at},
+	facts := [][2]string{{"Account", d.Account}, {"Folder", core.Home(d.Folder)}, {"At login", at},
 		{"Added", added}, {"Cache", cache}, {"Also on", strings.Join(d.AlsoOn, ", ")}}
 	two := w >= 70
 	colW, per := w, len(facts)

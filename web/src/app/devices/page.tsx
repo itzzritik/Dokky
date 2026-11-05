@@ -35,7 +35,7 @@ export default async function DevicesPage() {
               <tr className="border-t" key={String(d._id)}>
                 <td className="py-2">{d.name}</td>
                 <td>
-                  {d.os} / {d.arch}
+                  {d.osName || d.os} / {d.arch}
                 </td>
                 <td>{d.version}</td>
                 <td>{fmt(d.lastSeenAt)} UTC</td>

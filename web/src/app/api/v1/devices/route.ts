@@ -13,6 +13,7 @@ export async function GET(req: Request): Promise<Response> {
       id: String(d._id),
       name: d.name,
       os: d.os,
+      osName: d.osName ?? "",
       arch: d.arch,
       version: d.version,
       lastSeenAt: d.lastSeenAt,
