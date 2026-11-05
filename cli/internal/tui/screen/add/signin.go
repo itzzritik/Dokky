@@ -350,7 +350,7 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 			s.err = core.Report(m.Err)
 			return nil
 		}
-		a.goTo(name, st)
+		a.goTo(name)
 		return core.Say("Sign-in saved")
 	}
 	return nil
@@ -360,7 +360,7 @@ func (a *Add) signedIn(st *core.State) tea.Cmd {
 	s := &a.sign
 	if a.edit == nil {
 		a.named.reset(unique(st, a.prov.Name))
-		a.goTo(name, st)
+		a.goTo(name)
 		return nil
 	}
 	s.saveReq = core.NextReq()

@@ -148,6 +148,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.onRestartNow()
 	case core.FixAll:
 		return a.fixAll(m.Auto)
+	case core.Recheck:
+		a.fixedOnOpen = false
+		return a.runChecks()
 	case fixed:
 		return a.onFixed(m)
 	case core.DriveDone:

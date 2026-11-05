@@ -17,15 +17,28 @@ type Btn struct {
 	Primary, Danger bool
 }
 
-// every modal: a surface with a rounded border, the title in its top edge, text, body, buttons at the bottom right
+type StepState int
+
+const (
+	StepNext StepState = iota
+	StepNow
+	StepDone
+	StepSkipped
+)
+
+// one stop in a window's stepper
+type Step struct {
+	Label string
+	State StepState
+}
+
+// every modal: a surface with a rounded border, the title in its top edge, a stepper, text, body, buttons at the bottom right
 type Window struct {
 	W, H            int
 	Title, Sub      string
-	Step            string
-	Progress        float64
+	Steps           []Step
 	Ok, Bad, SubBad bool
 	Body            *Box
-	Shimmer         float64
 	Buttons         []Btn
 	Active          int
 }
@@ -34,7 +47,7 @@ func (w *Window) Inner() int { return w.W - 2*WindowPad }
 
 func (w *Window) top() int {
 	t := 3
-	if w.Step != "" {
+	if len(w.Steps) > 0 {
 		t += 2
 	}
 	if w.Sub != "" {
@@ -79,12 +92,8 @@ func (w *Window) Layer() *lipgloss.Layer {
 	}
 	title.B(core.Fit(w.Title, w.W-12), tc)
 	tl := L(bg).Sp(1).Raw(title.String()).Sp(1)
-	rl := L(bg)
-	if w.Step != "" {
-		rl.Sp(1).T(w.Step, p.Faint).Sp(1)
-	}
-	run := max(0, w.W-6-tl.Width()-rl.Width())
-	top := blank(1) + line(G.TL+G.H) + tl.String() + line(strings.Repeat(G.H, run)) + rl.String() + line(G.H+G.TR) + blank(1)
+	run := max(0, w.W-6-tl.Width())
+	top := blank(1) + line(G.TL+G.H) + tl.String() + line(strings.Repeat(G.H, run)) + line(G.H+G.TR) + blank(1)
 
 	fill := make([]string, w.H)
 	for i := range fill {
@@ -108,17 +117,8 @@ func (w *Window) Layer() *lipgloss.Layer {
 
 	b := NewBox()
 	y := 3
-	if w.Step != "" {
-		var bar strings.Builder
-		n := int(float64(cw)*w.Progress + .5)
-		for i := 0; i < cw; i++ {
-			c := Mix(p.Surface, p.Text, .12)
-			if i < n {
-				c = Mix(p.Accent, p.Ramp[4], Wave(i, .3, 5, w.Shimmer))
-			}
-			bar.WriteString(Paint(G.Heavy, c, bg, false))
-		}
-		b.Put(WindowPad, y, bar.String())
+	if len(w.Steps) > 0 {
+		b.Put(WindowPad, y, stepper(w.Steps, cw, bg))
 		y += 2
 	}
 	if w.Sub != "" {
@@ -156,4 +156,59 @@ func (w *Window) Index(id string) int {
 		}
 	}
 	return -1
+}
+
+// the steps in a row joined by lines that fill the width; the walked part of the line is teal, and only the current label stays when the row is tight
+func stepper(steps []Step, w int, bg color.Color) string {
+	p := P()
+	mark := func(s Step) (string, color.Color, color.Color) {
+		switch s.State {
+		case StepDone:
+			return G.Check, p.Kelp, p.Muted
+		case StepNow:
+			return G.Here, p.Accent, p.Text
+		case StepSkipped:
+			return G.Dash, p.Faint, p.Faint
+		}
+		return G.Ring, p.Faint, p.Faint
+	}
+	gaps := max(1, len(steps)-1)
+	label := func(s Step, all bool) bool { return all || s.State == StepNow }
+	width := func(all bool) int {
+		n := 0
+		for _, s := range steps {
+			n++
+			if label(s, all) {
+				n += 1 + Width(s.Label)
+			}
+		}
+		return n
+	}
+	all := w-width(true) >= gaps*5
+	free := max(gaps*3, w-width(all))
+	l := L(bg)
+	for i, s := range steps {
+		g, gc, tc := mark(s)
+		l.B(g, gc)
+		if label(s, all) {
+			if s.State == StepNow {
+				l.Sp(1).B(s.Label, tc)
+			} else {
+				l.Sp(1).T(s.Label, tc)
+			}
+		}
+		if i == len(steps)-1 {
+			break
+		}
+		n := free / gaps
+		if i < free%gaps {
+			n++
+		}
+		lc := p.Line
+		if s.State == StepDone || s.State == StepSkipped {
+			lc = Mix(bg, p.Accent, .6)
+		}
+		l.Sp(1).T(strings.Repeat(G.H, max(1, n-2)), lc).Sp(1)
+	}
+	return l.Pad(w)
 }

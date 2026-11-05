@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 	"maps"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,15 +162,52 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 		m.VFS.CacheMaxSize = u.CacheMaxSize
 	}
 	m.VFS.CacheMaxAge = cmp.Or(u.CacheMaxAge, m.VFS.CacheMaxAge)
-	if m != old {
-		if err := d.putMount(ctx, m); err != nil {
+
+	d.mu.Lock()
+	st := d.state(u.ID)
+	live, flagged := st.state == stateMounted, d.data.Local[u.ID].Mounted
+	moved := u.LocalFolder != nil && strings.TrimSpace(*u.LocalFolder) != d.data.Local[u.ID].MountPoint
+	waiting := 0
+	if live {
+		s := d.stats[st.name]
+		waiting = s.UploadsQueued + s.UploadsInProgress
+	}
+	d.mu.Unlock()
+	// the cache is kept per remote folder, so moving the drive under queued uploads would strand them
+	if live && waiting > 0 && m.RemotePath != old.RemotePath {
+		return api.Drive{}, fmt.Errorf("%s still uploading to %s, change its folder once they finish", uploadsLeft(waiting), old.Name)
+	}
+	// a change the live mount can't take: take it down, save, and bring it back, instead of waiting on "Reconnect to apply"
+	remount := live && (dsync.MountNeedsRemount(old, m) || moved)
+	if remount {
+		if err := d.unmount(u.ID); err != nil {
 			return api.Drive{}, err
 		}
 	}
-	if u.LocalFolder != nil {
-		if err := d.setLocal(u.ID, strings.TrimSpace(*u.LocalFolder)); err != nil {
-			return api.Drive{}, err
+	err := func() error {
+		if m != old {
+			if err := d.putMount(ctx, m); err != nil {
+				return err
+			}
 		}
+		if u.LocalFolder != nil {
+			return d.setLocal(u.ID, strings.TrimSpace(*u.LocalFolder))
+		}
+		return nil
+	}()
+	if remount {
+		if merr := d.mount(u.ID); merr != nil && err == nil {
+			err = fmt.Errorf("saved, but %s could not connect again: %w", m.Name, merr)
+		}
+		// mounting marks it to connect at login; keep what it was
+		d.mu.Lock()
+		d.setMounted(u.ID, flagged)
+		serr := d.save()
+		d.mu.Unlock()
+		err = cmp.Or(err, serr)
+	}
+	if err != nil {
+		return api.Drive{}, err
 	}
 	if u.AtLogin != nil {
 		d.mu.Lock()
@@ -306,4 +345,11 @@ func sum(counts map[string]int) int {
 		n += c
 	}
 	return n
+}
+
+func uploadsLeft(n int) string {
+	if n == 1 {
+		return "1 file is"
+	}
+	return strconv.Itoa(n) + " files are"
 }

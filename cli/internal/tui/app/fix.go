@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
@@ -18,6 +19,10 @@ type fixed struct {
 
 // every repair in turn, off the update loop; the pass on open says nothing when nothing needed it
 func (a *App) fixAll(auto bool) tea.Cmd {
+	// like DOKKY_NO_UPDATE: the pass on open can be turned off; f on Health still works
+	if auto && os.Getenv("DOKKY_NO_FIX") == "1" {
+		return nil
+	}
 	todo := health.Repairs(a.st, auto)
 	if a.st.Fixing || len(todo) == 0 {
 		return nil

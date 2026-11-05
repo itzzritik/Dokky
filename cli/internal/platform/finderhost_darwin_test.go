@@ -22,21 +22,22 @@ func fakeHost(t *testing.T, addrs []string) *[]string {
 	return &asked
 }
 
-func TestEnsureFinderHostAsksWhileMissing(t *testing.T) {
+func TestEnsureFinderHostsAsksWhileMissing(t *testing.T) {
 	asked := fakeHost(t, nil)
 
-	require.NoError(t, EnsureFinderHost())
+	require.NoError(t, EnsureFinderHosts([]string{"Google Drive"}))
 	require.Len(t, *asked, 1)
-	require.Contains(t, (*asked)[0], "127.0.0.1 Dokky # dokky")
+	require.Contains(t, (*asked)[0], "127.0.0.1 Dokky Google\u00a0Drive Google-Drive # dokky")
 	require.Contains(t, (*asked)[0], "with administrator privileges")
 
-	require.NoError(t, EnsureFinderHost())
+	require.NoError(t, EnsureFinderHosts(nil))
 	require.Len(t, *asked, 2, "a removed line is asked for again")
 }
 
-func TestEnsureFinderHostSkipsWhenResolved(t *testing.T) {
+func TestEnsureFinderHostsSkipsWhenResolved(t *testing.T) {
 	asked := fakeHost(t, []string{"127.0.0.1"})
 	require.True(t, FinderHostReady())
-	require.NoError(t, EnsureFinderHost())
+	require.NoError(t, EnsureFinderHosts([]string{"Jarvis"}))
 	require.Empty(t, *asked)
+	require.Equal(t, "Jarvis", MountHost("Jarvis"))
 }

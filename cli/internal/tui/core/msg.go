@@ -46,6 +46,9 @@ type Reopen struct{}
 // repair every problem that can be; Auto is the pass dokky runs by itself when it opens
 type FixAll struct{ Auto bool }
 
+// a drive was added or renamed: check again and fix what that needs, like its own name in Finder
+type Recheck struct{}
+
 type Req uint64
 
 var reqs atomic.Uint64
