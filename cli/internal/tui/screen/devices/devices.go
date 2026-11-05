@@ -11,21 +11,21 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-const tab = 3
-
+// the computers on the account, opened from Settings
 type Devices struct {
 	list   []api.Device
 	req    core.Req
 	sel    int
 	rename *ui.Field
-	shown  bool
 }
 
-func New() *Devices { return &Devices{} }
+func Open(st *core.State) tea.Cmd {
+	d := &Devices{}
+	return tea.Sequence(core.Open(d), d.load(st))
+}
 
 func (s *Devices) load(st *core.State) tea.Cmd {
 	if !st.Snap.Account.LoggedIn || st.Snap.Account.Pending {
@@ -35,20 +35,11 @@ func (s *Devices) load(st *core.State) tea.Cmd {
 	return core.Do(st, s.req, func(ctx context.Context, c *client.Client) (any, error) { return c.Devices(ctx) })
 }
 
-func (s *Devices) Capturing() bool { return s.rename != nil }
-
 func (s *Devices) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch m := msg.(type) {
-	case core.SwitchTab:
-		s.shown = m.Tab == tab
-		if s.shown {
-			return s, s.load(st)
-		}
 	case core.Reconnected:
 		s.list, s.rename = nil, nil
-		if s.shown {
-			return s, s.load(st)
-		}
+		return s, s.load(st)
 	case core.Reply:
 		if m.Req != s.req {
 			return s, nil
@@ -75,11 +66,8 @@ func (s *Devices) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 
 func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	k := m.String()
-	if !st.Snap.Account.LoggedIn {
-		if k == "s" {
-			return gate.Open(st)
-		}
-		return nil
+	if k == "esc" && s.rename == nil {
+		return core.Close(s)
 	}
 	if s.rename != nil {
 		switch k {
@@ -120,7 +108,7 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 		s.rename = ui.NewField("", d.Name, "Computer name", false)
 	case "s":
 		if d.Current {
-			return SignOut()
+			return tea.Batch(core.Close(s), SignOut())
 		}
 	case "x":
 		if !d.Current {
@@ -174,12 +162,10 @@ func (s *Devices) remove(d api.Device) tea.Cmd {
 
 func (s *Devices) Actions(st *core.State) []core.Action {
 	switch {
-	case !st.Snap.Account.LoggedIn:
-		return []core.Action{{Key: "s", Label: "sign in"}}
 	case s.rename != nil:
 		return []core.Action{{Key: "enter", Label: "save"}, {Key: "esc", Label: "cancel"}}
 	case len(s.list) == 0:
-		return nil
+		return []core.Action{{Key: "esc", Label: "close"}}
 	}
 	acts := []core.Action{{Key: "↑↓", Label: "move"}}
 	if s.list[min(s.sel, len(s.list)-1)].Current {
@@ -187,7 +173,7 @@ func (s *Devices) Actions(st *core.State) []core.Action {
 	} else {
 		acts = append(acts, core.Action{Key: "x", Label: "remove", Danger: true})
 	}
-	return append(acts, core.Action{Key: "r", Label: "rename"})
+	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "esc", Label: "close"})
 }
 
 func (s *Devices) Animating(*core.State) bool { return s.req != 0 && s.list == nil && !ui.Reduced() }
@@ -204,48 +190,47 @@ func osName(o string) string {
 	return o
 }
 
-func (s *Devices) View(st *core.State, w, h int) *lipgloss.Layer {
+func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	b := ui.NewBox()
-	if !st.Snap.Account.LoggedIn {
-		b.Put(2, 0, ui.Paint("Sign in to see your other computers.", p.Muted, nil, false))
-		return b.Layer()
-	}
-	if s.list == nil {
-		b.Put(2, 0, ui.L(nil).B(ui.Spin(st.T), p.Accent).Sp(1).T("Loading", p.Muted).String())
-		return b.Layer()
-	}
-	b.Put(2, 0, ui.L(nil).T(core.Count(len(s.list), "computer"), p.Muted).Right(w-2, ui.L(nil).T(st.Snap.Account.Email, p.Faint)))
-	s.sel = max(0, min(s.sel, len(s.list)-1))
-	for i, d := range s.list {
-		if 2+i >= h-2 {
-			break
+	win := &ui.Window{W: min(84, maxW), Title: "Your computers", Sub: "Your drives sync to all of these."}
+	cw := win.Inner()
+	body := ui.NewBox()
+	rows := 1
+	switch {
+	case s.list == nil:
+		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), p.Accent).Sp(1).T("Loading", p.Muted).Pad(cw))
+	default:
+		s.sel = max(0, min(s.sel, len(s.list)-1))
+		room := max(1, maxH-7-2)
+		top := max(0, s.sel-room+1)
+		for i := top; i < len(s.list) && i < top+room; i++ {
+			d, on, y := s.list[i], i == s.sel, i-top
+			if on && s.rename != nil {
+				body.Add(0, y, s.rename.View("rename", cw, true, p.Surface))
+				continue
+			}
+			body.Add(0, y, ui.Row("row:"+d.ID, cw, on, p.Surface, func(bg color.Color, iw int) string {
+				name := ui.L(bg)
+				if on {
+					name.B(d.Name, p.Text)
+				} else {
+					name.T(d.Name, p.Text)
+				}
+				if d.Current {
+					name.Sp(2).T("this computer", p.Accent)
+				}
+				col := max(20, iw-10-10-12)
+				l := ui.L(bg).Raw(name.Pad(col)).Raw(ui.L(bg).T(osName(d.OS), p.Muted).Pad(10)).T(core.Count(d.Drives, "drive"), p.Muted)
+				seen := ui.L(bg).T(core.Ago(d.LastSeenAt, st.Now), p.Faint)
+				if d.Current {
+					seen = ui.L(bg).T("Active now", p.Kelp)
+				}
+				return l.Right(iw, seen)
+			}))
+			rows = y + 1
 		}
-		on := i == s.sel
-		if on && s.rename != nil {
-			b.Add(0, 2+i, s.rename.View("rename", w, true, nil))
-			continue
-		}
-		b.Add(0, 2+i, ui.Row("row:"+d.ID, w, on, nil, func(bg color.Color, iw int) string {
-			name := ui.L(bg)
-			if on {
-				name.B(d.Name, p.Text)
-			} else {
-				name.T(d.Name, p.Text)
-			}
-			if d.Current {
-				name.Sp(2).T("this computer", p.Accent)
-			}
-			drives := core.Count(d.Drives, "drive")
-			col := max(24, iw*2/5)
-			l := ui.L(bg).Raw(name.Pad(col)).Raw(ui.L(bg).T(osName(d.OS), p.Muted).Pad(18)).T(drives, p.Muted)
-			seen := ui.L(bg).T("Seen "+core.Ago(d.LastSeenAt, st.Now), p.Faint)
-			if d.Current {
-				seen = ui.L(bg).T("Active now", p.Kelp)
-			}
-			return l.Right(iw, seen)
-		}))
 	}
-	b.Put(2, 3+len(s.list), ui.Paint("Your drives sync to all of these.", p.Faint, nil, false))
-	return b.Layer()
+	win.H = min(maxH, 7+rows+2)
+	win.Body = body
+	return win.Layer()
 }

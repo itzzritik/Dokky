@@ -45,6 +45,16 @@ func ThickBar(w int, frac, t float64, tone color.Color) string {
 
 var dots = [2][4]int{{1, 2, 4, 64}, {8, 16, 32, 128}}
 
+// whether the last two minutes show anything, so the graph keeps gliding
+func Showing(h []api.Sample) bool {
+	for _, s := range h {
+		if s.Down+s.Up > 0 {
+			return !Reduced()
+		}
+	}
+	return false
+}
+
 // how far the newest sample has slid left since it arrived, 0..1
 func Phase(h []api.Sample, now time.Time) float64 {
 	if len(h) == 0 || Reduced() {
@@ -69,13 +79,15 @@ func smooth(s []float64) []float64 {
 	return out
 }
 
-// braille area chart over the full width, newest on the right, brighter towards the top, a one-dot water line at rest
+// braille area chart of the last two minutes at a fixed scale, newest on the right, brighter towards the top, a one-dot water line at rest
 func Graph(w, rows int, samples []float64, phase float64) []string {
 	out := make([]string, rows)
 	if w <= 0 || rows <= 0 {
 		return out
 	}
-	s := smooth(samples)
+	// a short history starts on the right, so the graph always scrolls at one speed
+	padded := make([]float64, max(0, api.HistoryLen-len(samples)), api.HistoryLen)
+	s := smooth(append(padded, samples[max(0, len(samples)-api.HistoryLen):]...))
 	top := 0.0
 	for _, v := range s {
 		top = math.Max(top, v)

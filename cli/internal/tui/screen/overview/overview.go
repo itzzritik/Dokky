@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	cardH   = 4
 	panelH  = 10
 	spaceW  = 37
 	growFor = 1200 * time.Millisecond
@@ -149,7 +150,7 @@ func (o *Overview) Animating(st *core.State) bool {
 			return true
 		}
 	}
-	return len(st.Snap.Drives) > 0 && (st.Act.Down > 0 || st.Act.Up > 0 || ui.Easing(o.shown, st.Now, growFor))
+	return len(st.Snap.Drives) > 0 && (ui.Showing(st.Act.History) || ui.Easing(o.shown, st.Now, growFor))
 }
 
 func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
@@ -181,7 +182,7 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	b.Put(0, 1, ui.Paint(strings.Join(says, " "), p.Muted, nil, false))
 	y := 3
-	if h >= 3+panelH+1+1+3 {
+	if h >= 3+panelH+1+1+2*cardH {
 		aw := w
 		if st.Wide {
 			aw = w - spaceW - 2
@@ -190,39 +191,67 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 		b.Put(0, y, activity(st, aw))
 		y += panelH + 1
 	}
-	var lines []ui.ListLine
-	lines = append(lines, ui.ListLine{Text: ui.Paint("Your drives", p.Muted, nil, false), Item: -1})
-	for i, it := range o.items(st) {
-		lines = append(lines, ui.ListLine{Text: row(st, it, w, i == o.sel), Item: i, ID: it.id})
+	b.Put(0, y, ui.Paint("Your drives", p.Muted, nil, false))
+	items := o.items(st)
+	fit := max(1, (h-y-1)/cardH)
+	o.top = max(0, min(o.top, len(items)-fit))
+	if o.sel < o.top {
+		o.top = o.sel
 	}
-	ui.List(b, y, h-y, &o.top, o.sel, lines)
+	if o.sel >= o.top+fit {
+		o.top = o.sel - fit + 1
+	}
+	for i := o.top; i < len(items) && i < o.top+fit; i++ {
+		b.Add(0, y+1+(i-o.top)*cardH, card(st, items[i], w, i == o.sel))
+	}
 	return b.Layer()
 }
 
+// a drive as a solid card: name and status, then what it is and what it is doing
+func card(st *core.State, it item, w int, sel bool) *lipgloss.Layer {
+	p := ui.P()
+	return ui.Tile(it.id, w, sel, func(bg color.Color, iw int) []string {
+		if it.drive == nil {
+			nc := p.Muted
+			if sel {
+				nc = p.Text
+			}
+			return []string{ui.L(bg).B("+ Add a drive", nc).Pad(iw), ui.L(bg).T(strconv.Itoa(len(st.Catalog))+" services", p.Faint).Pad(iw)}
+		}
+		d := *it.drive
+		about := ui.L(bg).T(kind(st, d), p.Muted)
+		if d.Account != "" && d.Account != d.ServiceName {
+			about.T("  ·  "+d.Account, p.Faint)
+		}
+		right := ui.L(bg)
+		switch {
+		case d.Uploads > 0:
+			right.T(core.Count(d.Uploads, "upload")+" waiting", p.Accent)
+		case d.Space != nil && d.Space.Total > 0:
+			right.T(core.Size(d.Space.Free)+" free", p.Faint)
+		}
+		return []string{
+			ui.L(bg).B(d.Name, p.Text).Right(iw, ui.DriveStatus(d, st.T).Line(bg, true)),
+			about.Right(iw, right),
+		}
+	})
+}
+
+// a service in the welcome list
 func row(st *core.State, it item, w int, sel bool) string {
 	p := ui.P()
 	return ui.RowLine(w, sel, nil, func(bg color.Color, iw int) string {
-		name := func(s string, c color.Color) *ui.Line {
-			if sel {
-				return ui.L(bg).B(s, c)
-			}
-			return ui.L(bg).T(s, c)
+		name, hint := "More services", "Search "+strconv.Itoa(max(0, len(st.Catalog)-11))+"+"
+		if it.prov != nil {
+			name, hint = it.prov.Name, it.prov.Hint
 		}
-		col := min(30, iw/3)
-		switch {
-		case it.drive != nil:
-			d := *it.drive
-			return ui.L(bg).Raw(name(d.Name, p.Text).Pad(col)).Sp(2).T(kind(st, d), p.Muted).Right(iw, ui.DriveStatus(d, st.T).Line(bg, true))
-		case it.prov != nil:
-			return ui.L(bg).Raw(name(it.prov.Name, p.Text).Pad(col)).Sp(2).T(it.prov.Hint, p.Muted).Pad(iw)
-		case it.more:
-			return ui.L(bg).Raw(name("More services", p.Text).Pad(col)).Sp(2).T("Search "+strconv.Itoa(max(0, len(st.Catalog)-11))+"+", p.Muted).Pad(iw)
-		}
-		nc := p.Muted
+		l := ui.L(bg)
 		if sel {
-			nc = p.Text
+			l.B(name, p.Text)
+		} else {
+			l.T(name, p.Text)
 		}
-		return ui.L(bg).Raw(name("+ Add a drive", nc).Pad(col)).Sp(2).T(strconv.Itoa(len(st.Catalog))+" services", p.Faint).Pad(iw)
+		return ui.L(bg).Raw(l.Pad(min(30, iw/3))).Sp(2).T(hint, p.Muted).Pad(iw)
 	})
 }
 

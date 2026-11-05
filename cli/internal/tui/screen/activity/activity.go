@@ -107,7 +107,7 @@ func (s *Activity) Actions(st *core.State) []core.Action {
 }
 
 func (s *Activity) Animating(st *core.State) bool {
-	return !ui.Reduced() && (st.Act.Down > 0 || st.Act.Up > 0)
+	return ui.Showing(st.Act.History)
 }
 
 func (s *Activity) View(st *core.State, w, h int) *lipgloss.Layer {

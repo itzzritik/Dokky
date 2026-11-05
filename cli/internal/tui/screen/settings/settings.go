@@ -149,10 +149,12 @@ func (s *Settings) rows(st *core.State) []row {
 		row{group: "Storage", label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: info},
 		row{label: "Cached files folder", value: home(st.Snap.CacheDir), kind: info, tone: p.Faint},
 		row{group: "Help", label: "Check this computer", value: doctor, kind: action, tone: tone, run: s.check},
-		row{label: "Version", value: st.Snap.Version, kind: info},
+		row{label: "Version", value: "v" + st.Snap.Version, kind: info},
 	)
 	if acct.LoggedIn {
-		rows = append(rows, row{group: "Account", label: "Sign out", kind: action, run: func(*core.State) tea.Cmd { return devices.SignOut() }})
+		rows = append(rows,
+			row{group: "Account", label: "Devices", value: "Your computers", kind: action, tone: p.Faint, run: devices.Open},
+			row{label: "Sign out", kind: action, run: func(*core.State) tea.Cmd { return devices.SignOut() }})
 	} else {
 		rows = append(rows, row{group: "Account", label: "Sign in", kind: action, run: gate.Open})
 	}
@@ -275,18 +277,20 @@ func initials(name, email string) string {
 	return string(out)
 }
 
+const maxW = 76
+
 func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	p := ui.P()
 	b := ui.NewBox()
+	cw := min(w, maxW)
 	acct := st.Snap.Account
 	if acct.LoggedIn {
 		in := core.Safe(initials(acct.Name, acct.Email))
 		blank := ui.Paint("      ", nil, p.Accent, false)
-		tile := []string{blank, ui.Paint("  "+in+strings.Repeat(" ", max(0, 4-ui.Width(in))), p.OnAccent, p.Accent, true), blank}
-		b.Lines(2, 0, tile)
+		b.Lines(2, 0, []string{blank, ui.Paint("  "+in+strings.Repeat(" ", max(0, 4-ui.Width(in))), p.OnAccent, p.Accent, true), blank})
 		b.Put(10, 0, ui.Paint(core.Safe(cmpOr(acct.Name, acct.Email)), p.Text, nil, true))
 		b.Put(10, 1, ui.Paint(core.Safe(acct.Email), p.Muted, nil, false))
-		b.Put(10, 2, ui.Paint("Synced "+core.Ago(acct.LastSyncAt, st.Now), p.Muted, nil, false))
+		b.Put(10, 2, ui.L(nil).B(ui.G.Check, p.Kelp).Sp(1).T("Synced "+core.Ago(acct.LastSyncAt, st.Now), p.Faint).String())
 	} else {
 		b.Put(2, 0, ui.Paint("This computer only", p.Text, nil, true))
 		b.Put(2, 1, ui.Paint("Your drives stay on this computer.", p.Muted, nil, false))
@@ -299,21 +303,19 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 			if len(lines) > 0 {
 				lines = append(lines, ui.ListLine{Item: -1})
 			}
-			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Muted).String(), Item: -1})
+			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Faint).String(), Item: -1})
 		}
-		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, w), Item: i, ID: "row:" + strconv.Itoa(i)})
+		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}
 	ui.List(b, 4, h-4, &s.top, s.sel, lines)
 	return b.Layer()
 }
 
+// a settings row on the group's solid block: label left, value and its glyph right
 func (s *Settings) line(r row, on bool, w int) string {
 	p := ui.P()
-	return ui.RowLine(w, on, nil, func(bg color.Color, iw int) string {
-		lc := ui.Mix(p.Muted, p.Text, .7)
-		if on {
-			lc = p.Text
-		}
+	return ui.RowLine(w, on, p.Surface, func(bg color.Color, iw int) string {
+		lc := p.Text
 		if r.kind == danger {
 			lc = p.Coral
 		}
@@ -323,23 +325,19 @@ func (s *Settings) line(r row, on bool, w int) string {
 		} else {
 			l.T(r.label, lc)
 		}
-		tone := r.tone
-		if tone == nil {
-			tone = p.Text
-		}
 		right := ui.L(bg)
 		switch r.kind {
 		case choice:
-			right.T(r.value, tone).Sp(2).T(ui.G.Caret, p.Muted)
+			right.T(r.value, p.Accent).Sp(2).T(ui.G.Caret, p.Muted)
 		case action, danger:
 			if r.value != "" {
-				right.T(r.value, tone).Sp(2)
+				right.T(r.value, cmpColor(r.tone, p.Muted)).Sp(2)
 			}
-			right.T(ui.G.Arrow, p.Muted)
+			right.T(ui.G.Arrow, p.Faint)
 		default:
-			right.T(r.value, cmpColor(r.tone, p.Faint))
+			right.T(r.value, cmpColor(r.tone, p.Muted))
 		}
-		return l.Right(iw, right)
+		return l.Right(iw-1, right)
 	})
 }
 

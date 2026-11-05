@@ -74,3 +74,28 @@ func List(b *Box, y, h int, top *int, sel int, lines []ListLine) {
 		}
 	}
 }
+
+// a solid card with half-block top and bottom edges; rows get the fill and the inner width
+func Tile(id string, w int, selected bool, rows func(bg color.Color, iw int) []string) *lipgloss.Layer {
+	p := P()
+	bg := p.Surface
+	if selected {
+		bg = p.Sel
+	}
+	edge := func(g string) string {
+		if G.ASCII {
+			return Paint(strings.Repeat(" ", w), nil, bg, false)
+		}
+		return Paint(strings.Repeat(g, w), bg, nil, false)
+	}
+	bar := Paint(" ", nil, bg, false)
+	if selected {
+		bar = Paint(G.Bar, p.Accent, bg, false)
+	}
+	lines := []string{edge(G.Top)}
+	for _, r := range rows(bg, w-4) {
+		lines = append(lines, L(bg).Raw(bar).Sp(1).Raw(r).Pad(w))
+	}
+	lines = append(lines, edge(G.Bottom))
+	return lipgloss.NewLayer(strings.Join(lines, "\n")).ID(id)
+}

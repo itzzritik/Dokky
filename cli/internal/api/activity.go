@@ -2,6 +2,9 @@ package api
 
 import "time"
 
+// samples kept, one a second
+const HistoryLen = 120
+
 type Sample struct {
 	At   time.Time `json:"at"`
 	Down float64   `json:"down"`
