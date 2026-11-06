@@ -66,8 +66,7 @@ type DriveUpdate struct {
 }
 
 type DriveRemove struct {
-	ID            string `json:"id"`
-	ForgetAccount bool   `json:"forgetAccount"`
+	ID string `json:"id"`
 }
 
 type AddProgress struct {

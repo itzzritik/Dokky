@@ -37,24 +37,24 @@ func (a *Add) nameItems() []int { return []int{fName, fFolder, fLogin} }
 
 func (a *Add) remove() tea.Cmd {
 	d := *a.edit
-	c := &confirm.Confirm{
+	line := "Its folder leaves this computer. Your files stay."
+	if d.AccountDrives == 1 {
+		line = "Its folder and sign-in are removed. Your files stay."
+	}
+	return confirm.Open(&confirm.Confirm{
 		Question: "Remove " + core.Safe(d.Name) + "?",
-		Line:     "Its folder leaves this computer. Your files stay.",
+		Line:     line,
 		Do:       "Remove",
-		Run: func(st *core.State, forget bool) tea.Cmd {
+		Run: func(st *core.State) tea.Cmd {
 			cl, id, name := st.C, d.ID, core.Safe(d.Name)
 			return tea.Batch(core.Close(a), func() tea.Msg {
-				if err := cl.RemoveDrive(context.Background(), api.DriveRemove{ID: id, ForgetAccount: forget}); err != nil {
+				if err := cl.RemoveDrive(context.Background(), api.DriveRemove{ID: id}); err != nil {
 					return core.Toast{Text: core.Report(err), Bad: true}
 				}
 				return core.Toast{Text: name + " removed"}
 			})
 		},
-	}
-	if d.AccountDrives == 1 {
-		c.Toggle = "Also forget the sign-in"
-	}
-	return confirm.Open(c)
+	})
 }
 
 // cloud sign-ins go through the browser; their details are not edited here

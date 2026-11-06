@@ -10,16 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
-// sha256 of the upstream file each patch was made from; a mismatch means the patch must be redone
+// sha256 of the upstream file each patch was made from; a mismatch means the patch must be redone.
+// A patch sits at _patches/<repo>/<file>.
 var patches = map[string]string{
-	"vfs/file.go": "0411d72fbd6b9e4e73f1e904e0e3d082add590560439a9c3755c17f29c8aa223",
+	"github.com/rclone/rclone/vfs/file.go": "0411d72fbd6b9e4e73f1e904e0e3d082add590560439a9c3755c17f29c8aa223",
+	"github.com/willscott/go-nfs/conn.go":  "a62885ef2f7ff40355c3fe8112832e86456342c6f07d2016788c0ca87a254e6e",
 }
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "rclone overlay:", err)
+		fmt.Fprintln(os.Stderr, "overlay:", err)
 		os.Exit(1)
 	}
 }
@@ -34,15 +37,16 @@ func run() error {
 	}
 	replace := map[string]string{}
 	for file, want := range patches {
-		upstream := filepath.Join(here, "vendor", "github.com", "rclone", "rclone", filepath.FromSlash(file))
+		upstream := filepath.Join(here, "vendor", filepath.FromSlash(file))
+		patch := strings.SplitN(file, "/", 3)[2]
 		b, err := os.ReadFile(upstream)
 		if err != nil {
 			return err
 		}
 		if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != want {
-			return fmt.Errorf("%s changed upstream, redo _patches/rclone/%s against the new version", file, file)
+			return fmt.Errorf("%s changed upstream, redo _patches/%s against the new version", file, patch)
 		}
-		replace[upstream] = filepath.Join(here, "_patches", "rclone", filepath.FromSlash(file))
+		replace[upstream] = filepath.Join(here, "_patches", filepath.FromSlash(patch))
 	}
 	b, err := json.Marshal(map[string]any{"Replace": replace})
 	if err != nil {

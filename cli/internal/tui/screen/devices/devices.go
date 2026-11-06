@@ -139,7 +139,7 @@ func SignOut() tea.Cmd {
 		Question: "Sign out of dokky?",
 		Line:     "Drives from your account leave this computer.",
 		Do:       "Sign out",
-		Run: func(st *core.State, _ bool) tea.Cmd {
+		Run: func(st *core.State) tea.Cmd {
 			c := st.C
 			return func() tea.Msg {
 				warn, err := c.Logout(context.Background(), false)
@@ -157,7 +157,7 @@ func (s *Devices) signOut(d api.Device) tea.Cmd {
 		Question: "Sign out " + core.Safe(shown(d.Name)) + "?",
 		Line:     "Your drives leave that computer. Your files stay.",
 		Do:       "Sign out",
-		Run: func(st *core.State, _ bool) tea.Cmd {
+		Run: func(st *core.State) tea.Cmd {
 			c, id := st.C, d.ID
 			return tea.Sequence(func() tea.Msg {
 				if err := c.RevokeDevice(context.Background(), id); err != nil {

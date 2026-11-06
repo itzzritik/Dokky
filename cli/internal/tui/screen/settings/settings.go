@@ -105,7 +105,7 @@ func (s *Settings) uninstall(st *core.State) tea.Cmd {
 		Question: "Uninstall dokky?",
 		Line:     "dokky cleans up after itself in about 10 minutes.",
 		Do:       "Uninstall",
-		Run: func(st *core.State, _ bool) tea.Cmd {
+		Run: func(st *core.State) tea.Cmd {
 			run := st.Deps.Uninstall
 			return func() tea.Msg {
 				if run == nil {
