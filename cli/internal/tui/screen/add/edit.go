@@ -15,6 +15,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/remove"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -169,7 +170,7 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 				return a.toSignIn(st)
 			}
 		case "d":
-			return a.remove()
+			return remove.Open(st, *a.edit, a)
 		}
 	}
 	return nil

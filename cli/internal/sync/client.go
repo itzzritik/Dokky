@@ -9,8 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
@@ -89,6 +91,7 @@ type Device struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	Current    bool      `json:"current"`
 	Drives     int       `json:"drives"`
+	Mounted    []string  `json:"mounted"`
 }
 
 type Me struct {
@@ -304,6 +307,16 @@ func (c *Client) ReportDrives(ctx context.Context, mountIDs []string) error {
 		mountIDs = []string{}
 	}
 	return c.call(ctx, http.MethodPut, "/devices/self/drives", true, map[string][]string{"mountIds": mountIDs}, nil, http.StatusNoContent)
+}
+
+func (c *Client) PostEvents(ctx context.Context, events []api.Event) error {
+	return c.call(ctx, http.MethodPost, "/events", true, map[string][]api.Event{"entries": events}, nil, http.StatusNoContent)
+}
+
+func (c *Client) Events(ctx context.Context, limit int) ([]api.Event, error) {
+	var out struct{ Items []api.Event }
+	err := c.call(ctx, http.MethodGet, "/events?limit="+strconv.Itoa(limit), true, nil, &out, http.StatusOK)
+	return out.Items, err
 }
 
 func Offline(err error) bool {

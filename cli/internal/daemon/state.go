@@ -42,7 +42,7 @@ func (d *Daemon) drive(m store.Mount) api.Drive {
 	dr := api.Drive{
 		ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: driveStates[st.state], Error: logx.Redact(st.err),
 		Folder: d.mountPoint(m), AtLogin: lm.Mounted, AddedAt: m.CreatedAt, LocalFolder: lm.MountPoint,
-		CacheMaxSize: m.VFS.CacheMaxSize, CacheMaxAge: m.VFS.CacheMaxAge, SubPath: m.RemotePath, AlsoOn: []string{},
+		CacheMaxSize: d.effective(m).VFS.CacheMaxSize, CacheMaxAge: d.effective(m).VFS.CacheMaxAge, SubPath: m.RemotePath, AlsoOn: d.alsoOn(m.ID),
 	}
 	if i := slices.IndexFunc(d.data.Services, func(s store.Service) bool { return s.ID == m.ServiceID }); i >= 0 {
 		svc := d.data.Services[i]
@@ -63,8 +63,11 @@ func (d *Daemon) drive(m store.Mount) api.Drive {
 	if sp, ok := d.space[m.ID]; ok {
 		dr.Space = &sp
 	}
-	if lm.RemovedRemotely {
-		dr.State = api.Removed
+	if lm.Removing {
+		dr.State = api.Leaving
+	}
+	if p, ok := d.purging[m.ID]; ok {
+		dr.State, dr.Progress = api.Removing, p
 	}
 	return dr
 }

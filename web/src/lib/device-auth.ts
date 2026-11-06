@@ -5,10 +5,11 @@ import type { z } from "zod";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { apiError } from "@/lib/errors";
+import { record } from "@/lib/events";
 import { type loginStartBody, USER_CODE } from "@/lib/schemas";
 
 const LOGIN_TTL_MS = 600_000;
-const SEEN_EVERY_MS = 300_000;
+const SEEN_EVERY_MS = 60_000;
 const CODE_CHARS = "BCDFGHJKLMNPQRSTVWXZ";
 const BEARER = /^Bearer dky_[\w-]{43}$/u;
 const OS_NAME = /^[^\p{Cc}]{1,64}$/u;
@@ -114,6 +115,17 @@ export async function pollLogin(
   });
   const deviceId = String(insertedId);
   await audit(claimed.userId, deviceId, "login", claimed.deviceName, ip);
+  await record(claimed.userId, [
+    {
+      kind: "device.added",
+      deviceId,
+      target: deviceId,
+      name: claimed.deviceName,
+      ok: true,
+      reason: "",
+      at: now,
+    },
+  ]);
   return { status: "approved", token, deviceId };
 }
 
@@ -203,6 +215,17 @@ export async function revokeDevice(
   );
   if (modifiedCount === 1) {
     await audit(userId, actorDeviceId, "device.revoke", device.name, ip);
+    await record(userId, [
+      {
+        kind: "device.removed",
+        deviceId: actorDeviceId,
+        target: id,
+        name: device.name,
+        ok: true,
+        reason: "",
+        at: now,
+      },
+    ]);
   }
   return true;
 }
@@ -223,6 +246,17 @@ export async function renameDevice(
   );
   if (matchedCount === 1) {
     await audit(userId, actorDeviceId, "device.rename", name, ip);
+    await record(userId, [
+      {
+        kind: "device.renamed",
+        deviceId: actorDeviceId,
+        target: id,
+        name,
+        ok: true,
+        reason: "",
+        at: new Date(),
+      },
+    ]);
   }
   return matchedCount === 1;
 }

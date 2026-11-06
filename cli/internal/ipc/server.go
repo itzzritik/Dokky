@@ -33,6 +33,13 @@ func NewServer(ln net.Listener, handlers map[string]Handler) *Server {
 	return &Server{ln: ln, handlers: handlers, conns: map[net.Conn]struct{}{}, subs: map[chan Event]struct{}{}}
 }
 
+// Watching reports whether any client, such as the TUI, is listening for events.
+func (s *Server) Watching() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.subs) > 0
+}
+
 // Publish drops the event for any subscriber whose buffer is full.
 func (s *Server) Publish(ev Event) {
 	s.mu.Lock()

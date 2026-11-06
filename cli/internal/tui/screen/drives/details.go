@@ -35,16 +35,22 @@ func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int, grow float64) 
 	if d.CacheBytes > 0 {
 		cache = core.Size(d.CacheBytes)
 	}
-	added, also := "", "Only this device"
+	added := ""
 	if !d.AddedAt.IsZero() {
 		added = d.AddedAt.Local().Format("2 January 2006")
 	}
-	if len(d.AlsoOn) > 0 {
-		also = strings.Join(d.AlsoOn, ", ")
+	var on []string
+	if d.State == api.Connected {
+		on = append(on, "This device")
+	}
+	on = append(on, d.AlsoOn...)
+	mounted := "Nowhere"
+	if len(on) > 0 {
+		mounted = strings.Join(on, ", ")
 	}
 	// every drive shows the same facts in the same places, each label over its value
 	facts := [][2]string{{"Account", d.Account}, {"Folder", core.Home(d.Folder)}, {"At login", at},
-		{"Added", added}, {"Cache", cache}, {"Also on", also}}
+		{"Added", added}, {"Cache", cache}, {"Mounted on", mounted}}
 	cols := 3
 	if w < 84 {
 		cols = 2

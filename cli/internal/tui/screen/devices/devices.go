@@ -17,8 +17,8 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-// the daemon talks to the server every 30 s and the server notes it at most every 5 min
-const activeFor = 10 * time.Minute
+// one background sync is 15 minutes, so a device seen in the last 16 is still on
+const activeFor = 16 * time.Minute
 
 // the devices on the account as a table, opened from Settings
 type Devices struct {
@@ -197,7 +197,7 @@ func osName(o string) string {
 	return o
 }
 
-const cardH = 4
+const cardH = 5
 
 // hostnames end in .local on macOS; the name people know doesn't
 func shown(name string) string { return strings.TrimSuffix(name, ".local") }
@@ -273,6 +273,21 @@ func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.L
 		if d.Version != "" {
 			meta.T("v"+d.Version, p.Faint)
 		}
-		return []string{name.Right(iw, status), system.Right(iw, meta)}
+		return []string{name.Right(iw, status), system.Right(iw, meta), mountedLine(st, d, iw, bg)}
 	})
+}
+
+// the drives this device has mounted, by name
+func mountedLine(st *core.State, d api.Device, w int, bg color.Color) string {
+	p := ui.P()
+	var names []string
+	for _, id := range d.Mounted {
+		if x, ok := st.Drive(id); ok {
+			names = append(names, x.Name)
+		}
+	}
+	if len(names) == 0 {
+		return ui.L(bg).T("No drives mounted", p.Faint).String()
+	}
+	return ui.L(bg).T("Mounted ", p.Faint).T(core.Fit(strings.Join(names, ", "), w-8), p.Muted).String()
 }

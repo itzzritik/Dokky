@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
-	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 )
 
 const (
@@ -21,7 +21,8 @@ const (
 	stateMounting  = "mounting"
 	stateMounted   = "mounted"
 	stateError     = "error"
-	stateRemoved   = "removed"
+	stateLeaving   = "leaving"
+	stateRemoving  = "removing"
 
 	commandTimeout = 20 * time.Second
 	maxBackoffStep = 5
@@ -62,6 +63,7 @@ type mountState struct {
 	failures    int
 	retryAt     time.Time
 	remount     bool // a pulled change waits for the next mount
+	logged      bool // its failure is in the activity log
 }
 
 func byID(id string) func(store.Mount) bool {
@@ -72,6 +74,9 @@ func (d *Daemon) mount(id string) error {
 	m, ok := d.findMount(byID(id))
 	if !ok {
 		return fmt.Errorf("no drive with id %q", id)
+	}
+	if d.leaving(id) {
+		return &codedError{"removing", m.Name + " is being removed"}
 	}
 	// the drive shows connecting from the press, not only once the remote has answered
 	d.mu.Lock()
@@ -141,6 +146,7 @@ func (d *Daemon) mountLocked(m store.Mount) error {
 	// a sign-in clash can move a live mount to a new id while rclone still holds the old one
 	engineID := cmp.Or(st.name, m.ID)
 	st.state, st.err = stateMounting, ""
+	m = d.effective(m)
 	d.mu.Unlock()
 	d.publish()
 
@@ -150,6 +156,12 @@ func (d *Daemon) mountLocked(m store.Mount) error {
 	if err != nil {
 		d.fail(m, st, err)
 	} else {
+		switch {
+		case st.logged:
+			d.eventLocked("drive.recovered", m.ID, m.Name, "", true)
+		case d.loginMounts:
+			d.eventLocked("drive.mounted", m.ID, m.Name, "At login", true)
+		}
 		*st = mountState{state: stateMounted, name: m.ID, point: actual}
 		// a fresh mount asks for its space on the next tick, whatever an unmounted check scheduled
 		delete(d.spaceAt, m.ID)
@@ -171,6 +183,16 @@ func (d *Daemon) fail(m store.Mount, st *mountState, err error) {
 	st.failures++
 	st.retryAt = time.Now().Add(retryBase << min(st.failures-1, maxBackoffStep))
 	d.log.Error("mount failed", "name", m.Name, "err", err)
+	// one entry per run of failures; a network blip at login gets a few tries before it counts
+	if msg := err.Error(); !st.logged && (api.FailKind(msg) != "offline" || st.failures >= 3) {
+		st.logged = true
+		d.eventLocked("drive.mountFailed", m.ID, m.Name, msg, false)
+		if api.FailKind(msg) == "signin" {
+			if i := slices.IndexFunc(d.data.Services, func(s store.Service) bool { return s.ID == m.ServiceID }); i >= 0 {
+				d.eventLocked("signin.expired", m.ServiceID, d.data.Services[i].Name, msg, false)
+			}
+		}
+	}
 }
 
 func (d *Daemon) attach(m store.Mount, engineID, point string, ours bool) (string, error) {
@@ -311,11 +333,13 @@ func (d *Daemon) refreshStats() error {
 	d.mu.Lock()
 	d.stats = live
 	var gone, names []string
+	var ejected []store.Mount
 	for id, st := range d.states {
 		if _, ok := live[st.name]; st.state == stateMounted && !ok {
 			gone = append(gone, st.point)
 			if i := slices.IndexFunc(d.data.Mounts, byID(id)); i >= 0 {
 				names = append(names, d.data.Mounts[i].Name)
+				ejected = append(ejected, d.data.Mounts[i])
 			}
 			*st = mountState{state: stateUnmounted}
 			d.markUnmounted(id)
@@ -325,6 +349,9 @@ func (d *Daemon) refreshStats() error {
 		if err := d.save(); err != nil {
 			d.log.Error("save store", "err", err)
 		}
+	}
+	for _, m := range ejected {
+		d.eventLocked("drive.unmounted", m.ID, m.Name, "Ejected", true)
 	}
 	quiet := !d.data.Settings.NotifyDisconnect
 	d.mu.Unlock()
@@ -347,6 +374,7 @@ func (d *Daemon) remountFlagged() {
 	d.mu.Lock()
 	var due []store.Mount
 	for _, m := range d.data.Mounts {
+		// a drive being removed still mounts again here, so its unsent uploads finish
 		if st := d.state(m.ID); d.data.Local[m.ID].Mounted && st.state != stateMounted && !now.Before(st.retryAt) {
 			due = append(due, m)
 		}
@@ -369,7 +397,7 @@ func (d *Daemon) applyPulled() {
 	d.mu.Lock()
 	var due []string
 	for id, st := range d.states {
-		if s := d.stats[st.name]; st.state == stateMounted && st.remount && s.UploadsQueued+s.UploadsInProgress == 0 {
+		if s := d.stats[st.name]; st.state == stateMounted && st.remount && !d.data.Local[id].Removing && s.UploadsQueued+s.UploadsInProgress == 0 {
 			due = append(due, id)
 		}
 	}
@@ -424,13 +452,17 @@ func (d *Daemon) setMounted(id string, on bool) {
 	d.data.Local[id] = lm
 }
 
-// caller holds mu; a mount deleted on another device goes once it is unmounted here
+// caller holds mu
 func (d *Daemon) markUnmounted(id string) {
 	d.setMounted(id, false)
-	if d.data.Local[id].RemovedRemotely {
-		d.data = dsync.DropRemoved(d.data, id)
-		delete(d.states, id)
-	}
+}
+
+// cache size and age are this device's own; the shared value is only the starting point
+func (d *Daemon) effective(m store.Mount) store.Mount {
+	lm := d.data.Local[m.ID]
+	m.VFS.CacheMaxSize = cmp.Or(lm.CacheMaxSize, m.VFS.CacheMaxSize)
+	m.VFS.CacheMaxAge = cmp.Or(lm.CacheMaxAge, m.VFS.CacheMaxAge)
+	return m
 }
 
 func (d *Daemon) defaultPoint(name string) string {

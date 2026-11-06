@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -85,12 +86,24 @@ type Daemon struct {
 	removeLater func(left []string, state string) error
 	notify      func(title, body string) error
 
-	idle     Idle
-	act      activity
-	upd      updater
-	loop     dsync.Loop
-	syncMu   sync.Mutex // one pull at a time; taken before opMu
-	reportMu sync.Mutex
+	idle        Idle
+	act         activity
+	upd         updater
+	loop        dsync.Loop
+	syncMu      sync.Mutex // one pull at a time; taken before opMu
+	reportMu    sync.Mutex
+	kicks       chan struct{}
+	reportDue   atomic.Bool
+	reported    string                 // guarded by mu
+	unsent      map[string]unsentCount // guarded by mu
+	purging     map[string]float64     // guarded by mu; removal progress
+	draining    map[string]bool        // guarded by mu
+	stuckSince  map[string]time.Time   // guarded by mu
+	newestEvent time.Time              // guarded by mu
+	flushMu     sync.Mutex
+	peers       []dsync.Device // guarded by mu
+	// guarded by mu; mounts made now are the ones at login
+	loginMounts bool
 
 	// serialises changes; status only TryLocks it
 	opMu        sync.Mutex
@@ -193,6 +206,8 @@ func Run(ctx context.Context, p Paths) (err error) {
 	}
 	restart := make(chan struct{}, 1)
 	d.srv = ipc.NewServer(ln, d.handlers(restart))
+	go d.syncLoop(ctx)
+	d.resumeRemovals()
 	srvCtx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- d.srv.Serve(srvCtx) }()
@@ -262,6 +277,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
 		unmountedAt: map[string]time.Time{}, cleaned: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 		space: map[string]api.Space{}, spaceAt: map[string]time.Time{}, spaceFails: map[string]int{},
+		kicks: make(chan struct{}, 1), unsent: map[string]unsentCount{}, purging: map[string]float64{}, draining: map[string]bool{}, stuckSince: map[string]time.Time{},
 	}
 }
 
@@ -275,11 +291,32 @@ func (d *Daemon) start() {
 			d.log.Error("load service", "service", s.Name, "err", err)
 		}
 	}
+	// a restart for an update remounts too, but only a start soon after boot is a login
+	d.mu.Lock()
+	d.loginMounts = bootedRecently()
+	d.mu.Unlock()
 	d.remountFlagged()
+	d.mu.Lock()
+	d.loginMounts = false
+	d.mu.Unlock()
+}
+
+// a removal from another device picks up where it stopped before a restart
+func (d *Daemon) resumeRemovals() {
+	d.mu.Lock()
+	var leaving []string
+	for id, lm := range d.data.Local {
+		if lm.Removing {
+			leaving = append(leaving, id)
+		}
+	}
+	d.mu.Unlock()
+	for _, id := range leaving {
+		go d.drain(id)
+	}
 }
 
 func (d *Daemon) tick(ctx context.Context) {
-	d.syncNow(ctx)
 	d.opMu.Lock()
 	statsErr := d.refresh()
 	d.opMu.Unlock()
@@ -287,6 +324,7 @@ func (d *Daemon) tick(ctx context.Context) {
 	d.cleanupUploads(time.Now())
 	d.remountFlagged()
 	d.applyPulled()
+	d.reportIfChanged()
 	d.publish()
 }
 
@@ -348,7 +386,7 @@ func decodeCtx[T, R any](fn func(context.Context, T) (R, error)) ipc.Handler {
 }
 
 func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
-	return map[string]ipc.Handler{
+	h := map[string]ipc.Handler{
 		"status": func(context.Context, json.RawMessage) (any, error) { return d.status(), nil },
 		api.MState: func(context.Context, json.RawMessage) (any, error) {
 			d.tryRefresh()
@@ -357,7 +395,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"mount": decode(func(p namedParams) (any, error) {
 			id, err := d.resolve(p)
 			if err == nil {
-				err = d.mount(id)
+				err = d.mountByPerson(id)
 			}
 			if err != nil {
 				return nil, err
@@ -367,7 +405,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		"unmount": decode(func(p namedParams) (any, error) {
 			id, err := d.resolve(p)
 			if err == nil {
-				err = d.unmount(id)
+				err = d.unmountIdle(id)
 			}
 			if err != nil {
 				return nil, err
@@ -381,7 +419,15 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 				return idParams{}, fmt.Errorf("editOf %q must be the id of the service being saved", p.EditOf)
 			}
 			s.Options, _ = d.keepSecrets(p.EditOf, s.Type, s.Options)
-			return idParams{ID: s.ID}, d.putService(ctx, s)
+			if err := d.putService(ctx, s); err != nil {
+				return idParams{}, err
+			}
+			if p.EditOf != "" {
+				d.event("signin.fixed", s.ID, s.Name, "", true)
+			} else {
+				d.event("signin.added", s.ID, s.Name, "", true)
+			}
+			return idParams{ID: s.ID}, nil
 		}),
 		"service.delete": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.deleteService(ctx, p.ID) }),
 		"service.list":   func(context.Context, json.RawMessage) (any, error) { return d.serviceList(), nil },
@@ -413,6 +459,9 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		api.MDriveAdd:        decodeCtx(d.addDrive),
 		api.MDriveUpdate:     decodeCtx(d.updateDrive),
 		api.MDriveRemove:     decodeCtx(d.removeDrive),
+		api.MDriveCheck:      decodeCtx(d.checkDrive),
+		api.MEvents:          decodeCtx(func(ctx context.Context, _ struct{}) (api.Events, error) { return d.events(ctx) }),
+		api.MEventsSeen:      func(context.Context, json.RawMessage) (any, error) { return nil, d.eventsSeen() },
 		api.MDriveConnect:    decode(d.connectDrive),
 		api.MDriveDisconnect: decode(d.disconnectDrive),
 		api.MCacheClear:      decodeCtx(func(context.Context, struct{}) (any, error) { return nil, d.clearCachedFiles() }),
@@ -430,7 +479,8 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			return r, err
 		}),
 		"logout":         decodeCtx(d.logout),
-		"sync.now":       decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { d.syncNow(ctx); return nil, nil }),
+		"sync.now":       decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { _ = d.syncNow(ctx); return nil, nil }),
+		api.MSyncKick:    func(context.Context, json.RawMessage) (any, error) { d.kick(); return nil, nil },
 		"devices.list":   decodeCtx(func(ctx context.Context, _ struct{}) ([]dsync.Device, error) { return d.devices(ctx) }),
 		"devices.revoke": decodeCtx(func(ctx context.Context, p idParams) (any, error) { return nil, d.revokeDevice(ctx, p.ID) }),
 		"devices.rename": decodeCtx(func(ctx context.Context, p namedParams) (any, error) { return nil, d.renameDevice(ctx, p.ID, p.Name) }),
@@ -454,6 +504,24 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			requestRestart(restart)
 			return nil, nil
 		},
+	}
+	for _, m := range kickAfter {
+		h[m] = d.kicked(h[m])
+	}
+	return h
+}
+
+// a change made here pulls right after, so this device also sees what others changed
+var kickAfter = []string{"mount", "unmount", "service.put", "service.delete", "mount.put", "mount.delete", "service.configure", "settings.set", "devices.revoke", "devices.rename",
+	api.MDriveAdd, api.MDriveUpdate, api.MDriveRemove, api.MDriveConnect, api.MDriveDisconnect}
+
+func (d *Daemon) kicked(h ipc.Handler) ipc.Handler {
+	return func(ctx context.Context, raw json.RawMessage) (any, error) {
+		out, err := h(ctx, raw)
+		if err == nil {
+			d.kick()
+		}
+		return out, err
 	}
 }
 
@@ -488,14 +556,17 @@ func (d *Daemon) status() StatusReply {
 	r.Offline, r.SignedOut = d.offline, d.signedOut
 	for _, m := range d.data.Mounts {
 		st := d.state(m.ID)
-		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m), CacheMaxAge: m.VFS.CacheMaxAge}
+		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m), CacheMaxAge: d.effective(m).VFS.CacheMaxAge}
 		if st.state == stateMounted {
 			s := d.stats[st.name]
 			ms.MountPoint, ms.CacheBytes, ms.UploadsQueued, ms.UploadsInProgress = st.point, s.CacheBytes, s.UploadsQueued, s.UploadsInProgress
 			ms.RemountToApply = st.remount
 		}
-		if d.data.Local[m.ID].RemovedRemotely {
-			ms.State = stateRemoved
+		if d.data.Local[m.ID].Removing {
+			ms.State = stateLeaving
+		}
+		if _, ok := d.purging[m.ID]; ok {
+			ms.State = stateRemoving
 		}
 		var free fs.SizeSuffix
 		if free.Set(m.VFS.CacheMinFreeSpace) == nil && free > 0 {

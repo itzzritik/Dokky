@@ -42,5 +42,15 @@ export async function ensureIndexes(): Promise<void> {
     d
       .collection("audit")
       .createIndex({ at: 1 }, { expireAfterSeconds: 31_536_000 }),
+    d.collection("events").createIndexes([
+      { key: { userId: 1, at: -1 } },
+      { key: { userId: 1, key: 1, open: 1 } },
+      {
+        key: { userId: 1, clientId: 1 },
+        unique: true,
+        partialFilterExpression: { clientId: { $exists: true } },
+      },
+      { key: { at: 1 }, expireAfterSeconds: 7_776_000 },
+    ]),
   ]);
 }

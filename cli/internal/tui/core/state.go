@@ -38,6 +38,7 @@ type Check struct {
 type State struct {
 	Snap      api.State
 	Act       api.Activity
+	Log       api.Events // the activity log, kept fresh while dokky is open
 	Catalog   []api.Provider
 	W, H      int
 	Wide      bool

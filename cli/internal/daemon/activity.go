@@ -31,6 +31,9 @@ type activity struct {
 	at, sent time.Time
 	done     map[string]int64
 	cur      api.Activity
+	lastRead map[string]time.Time
+	// a drive whose upload queue couldn't be read counts as busy
+	queueErr map[string]time.Time
 }
 
 type retryParams struct {
@@ -76,9 +79,12 @@ func (d *Daemon) observe(now time.Time) bool {
 	finished, _ := d.eng.Finished()
 	keys := d.liveKeys()
 	queued := map[string][]engine.QueueItem{}
+	var unread []string
 	for key, id := range keys {
 		if items, err := d.eng.Queue(key); err == nil {
 			queued[id] = items
+		} else {
+			unread = append(unread, id)
 		}
 	}
 
@@ -168,6 +174,17 @@ func (d *Daemon) observe(now time.Time) bool {
 		cur.Earlier = append(cur.Earlier, t)
 	}
 
+	if a.lastRead == nil {
+		a.lastRead, a.queueErr = map[string]time.Time{}, map[string]time.Time{}
+	}
+	for _, id := range unread {
+		a.queueErr[id] = now
+	}
+	for id, down := range perDown {
+		if down > 0 {
+			a.lastRead[id] = now
+		}
+	}
 	cur.History = keep(a.cur.History, api.Sample{At: now, Down: cur.Down, Up: cur.Up})
 	for _, id := range keys {
 		cur.ByDrive[id] = keep(a.cur.ByDrive[id], api.Sample{At: now, Down: perDown[id], Up: perUp[id]})
@@ -234,7 +251,7 @@ func (d *Daemon) refreshSpace(now time.Time) {
 	for _, m := range d.data.Mounts {
 		kept[m.ID] = true
 		st := d.states[m.ID]
-		if d.data.Local[m.ID].RemovedRemotely || st != nil && st.state == stateMounting || now.Before(d.spaceAt[m.ID]) {
+		if d.data.Local[m.ID].Removing || st != nil && st.state == stateMounting || now.Before(d.spaceAt[m.ID]) {
 			continue
 		}
 		x := due{m: m, every: spaceIdle}

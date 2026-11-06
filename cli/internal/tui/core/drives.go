@@ -61,7 +61,7 @@ func OpenFolder(path string) tea.Cmd {
 	}
 }
 
-// what m does to a drive in its state; a drive removed on another computer leaves this one with d
+// what m does to a drive in its state
 func MountLabel(d api.Drive) string {
 	switch d.State {
 	case api.Connected:
@@ -82,8 +82,6 @@ func RunMount(st *State, d api.Drive) tea.Cmd {
 		return Disconnect(st, d.ID)
 	case api.Off, api.Failed:
 		return Connect(st, d.ID)
-	case api.Removed:
-		return Disconnect(st, d.ID)
 	case api.Reconnect:
 		return drive(st, d.ID, doReconnect)
 	}

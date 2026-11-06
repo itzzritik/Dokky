@@ -108,7 +108,7 @@ test("an old or missing version is never refused", async () => {
   expect(await authDevice(noHeader)).not.toBeInstanceOf(Response);
 });
 
-test("lastSeenAt is written at most once per 5 minutes", async () => {
+test("lastSeenAt is written at most once a minute", async () => {
   const { token, deviceId } = await seed();
   const lastSeen = async () =>
     (
@@ -119,19 +119,19 @@ test("lastSeenAt is written at most once per 5 minutes", async () => {
         })
     )?.lastSeenAt;
 
-  await authDevice(bearer(token), minutes(1));
-  await authDevice(bearer(token), minutes(4));
+  await authDevice(bearer(token), minutes(0.25));
+  await authDevice(bearer(token), minutes(0.75));
   expect(await lastSeen()).toEqual(t0);
 
-  expect(await authDevice(bearer(token), minutes(5))).toEqual({
+  expect(await authDevice(bearer(token), minutes(1))).toEqual({
     userId: "user-1",
     deviceId,
   });
-  expect(await lastSeen()).toEqual(minutes(5));
+  expect(await lastSeen()).toEqual(minutes(1));
 
-  await authDevice(bearer(token), minutes(9));
-  expect(await lastSeen()).toEqual(minutes(5));
+  await authDevice(bearer(token), minutes(1.5));
+  expect(await lastSeen()).toEqual(minutes(1));
 
-  await authDevice(bearer(token), minutes(11));
-  expect(await lastSeen()).toEqual(minutes(11));
+  await authDevice(bearer(token), minutes(2));
+  expect(await lastSeen()).toEqual(minutes(2));
 });

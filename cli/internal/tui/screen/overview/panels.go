@@ -44,7 +44,7 @@ func activity(st *core.State, w, h int) string {
 		}
 	}
 	speeds := ui.G.Down + " " + core.Speed(a.Down) + "   " + ui.G.Up + " " + core.Speed(a.Up)
-	return ui.Panel(w, h, "Activity", speeds, body)
+	return ui.Panel(w, h, "Transfers", speeds, body)
 }
 
 // "2 min ago", the peak, "now" under the graph
@@ -90,7 +90,7 @@ func files(st *core.State, w, n int) []string {
 	show := len(all)
 	if show > n {
 		show = n - 1
-		out[n-1] = ui.Paint(strconv.Itoa(len(all)-show)+" more in Activity", p.Faint, nil, false)
+		out[n-1] = ui.Paint(strconv.Itoa(len(all)-show)+" more in Transfers", p.Faint, nil, false)
 	}
 	for i, f := range all[:show] {
 		out[i] = fileLine(st, f, w)

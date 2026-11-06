@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	xdr2 "github.com/rasky/go-xdr/xdr2"
@@ -70,17 +72,24 @@ func (c *conn) serve(ctx context.Context) {
 const busyAfter = 4 * time.Second
 
 func (c *conn) answer(ctx context.Context, w *response) {
-	done := make(chan error, 1)
-	go func() { done <- c.handle(ctx, w) }()
+	key := flightKey{c.Server, w.req.sum()}
+	f, fresh := joinFlight(key)
+	if fresh {
+		// dokky: the call outlives this connection, so a retry on a new one still gets its answer
+		run := context.WithoutCancel(ctx)
+		go func() {
+			err := c.handle(run, w)
+			f.land(w.writer.Bytes(), err)
+		}()
+	}
 	t := time.NewTimer(busyAfter)
 	defer t.Stop()
-	var err error
 	select {
-	case err = <-done:
+	case <-f.done:
 	case <-t.C:
 		body, ok := busyBody(w.req)
 		if !ok {
-			err = <-done
+			<-f.done
 			break
 		}
 		busy := &response{conn: c, req: w.req, writer: bytes.NewBuffer([]byte{}), errorFmt: errFormatterWithBody(body)}
@@ -89,17 +98,76 @@ func (c *conn) answer(ctx context.Context, w *response) {
 		}
 		return
 	}
-	respErr := w.finish(ctx)
-	if err != nil {
-		Log.Errorf("error handling req: %v", err)
+	dropFlight(key, f)
+	if f.err != nil {
+		Log.Errorf("error handling req: %v", f.err)
 		// failure to handle at a level needing to close the connection.
 		c.Close()
 		return
 	}
-	if respErr != nil {
-		Log.Errorf("error sending response: %v", respErr)
+	reply := append([]byte(nil), f.reply...)
+	if len(reply) >= 4 {
+		binary.BigEndian.PutUint32(reply, w.req.xid)
+	}
+	select {
+	case c.writeSerializer <- reply:
+	case <-ctx.Done():
+		Log.Errorf("error sending response: %v", ctx.Err())
 		c.Close()
 	}
+}
+
+// dokky: a call still running when its busy reply went out keeps going; macOS retries the same call
+// and gets that answer, instead of starting it again and waiting forever on a slow or failing cloud
+const flightKeep = time.Minute
+
+type flightKey struct {
+	srv *Server
+	sum [sha256.Size]byte
+}
+
+type flight struct {
+	done   chan struct{}
+	reply  []byte
+	err    error
+	landed time.Time
+}
+
+var flights = struct {
+	sync.Mutex
+	m map[flightKey]*flight
+}{m: map[flightKey]*flight{}}
+
+func joinFlight(k flightKey) (*flight, bool) {
+	flights.Lock()
+	defer flights.Unlock()
+	now := time.Now()
+	for key, f := range flights.m {
+		if !f.landed.IsZero() && now.Sub(f.landed) > flightKeep {
+			delete(flights.m, key)
+		}
+	}
+	if f, ok := flights.m[k]; ok {
+		return f, false
+	}
+	f := &flight{done: make(chan struct{})}
+	flights.m[k] = f
+	return f, true
+}
+
+func (f *flight) land(reply []byte, err error) {
+	flights.Lock()
+	f.reply, f.err, f.landed = reply, err, time.Now()
+	flights.Unlock()
+	close(f.done)
+}
+
+func dropFlight(k flightKey, f *flight) {
+	flights.Lock()
+	if flights.m[k] == f {
+		delete(flights.m, k)
+	}
+	flights.Unlock()
 }
 
 // dokky: the zeroed failure data each NFSv3 reply carries after its status (RFC 1813)
@@ -217,6 +285,17 @@ type request struct {
 	xid uint32
 	rpc.Header
 	Body io.Reader
+	raw  []byte
+}
+
+// dokky: the same call sent again has the same program, procedure and arguments
+func (r *request) sum() [sha256.Size]byte {
+	h := sha256.New()
+	_ = binary.Write(h, binary.BigEndian, [3]uint32{r.Header.Prog, r.Header.Vers, r.Header.Proc})
+	h.Write(r.raw)
+	var out [sha256.Size]byte
+	copy(out[:], h.Sum(nil))
+	return out
 }
 
 func (r *request) String() string {
@@ -358,9 +437,9 @@ func (c *conn) readRequestHeader(ctx context.Context, reader *bufio.Reader) (w *
 	}
 
 	req := request{
-		xid,
-		rpc.Header{},
-		&r,
+		xid:    xid,
+		Header: rpc.Header{},
+		Body:   &r,
 	}
 	if err = xdr.Read(&r, &req.Header); err != nil {
 		return nil, err
@@ -371,6 +450,7 @@ func (c *conn) readRequestHeader(ctx context.Context, reader *bufio.Reader) (w *
 		return nil, err
 	}
 	req.Body = &io.LimitedReader{R: bytes.NewReader(body), N: int64(len(body))}
+	req.raw = body
 
 	w = &response{
 		conn:     c,

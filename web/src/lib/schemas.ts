@@ -92,6 +92,22 @@ export const tokenBody = z.object({
   expiry: z.iso.datetime({ offset: true }).pipe(z.coerce.date()),
 });
 
+const eventIn = z.object({
+  id: z.string().max(64).optional(),
+  kind: z
+    .string()
+    .max(64)
+    .regex(/^[a-z]+\.[A-Za-z]+$/u),
+  target: z.string().max(128),
+  name: z.string().max(256),
+  ok: z.boolean(),
+  reason: z.string().max(500),
+  at: z.iso.datetime({ offset: true }),
+  key: z.string().max(200).optional(),
+});
+
+export const eventsBody = z.object({ entries: z.array(eventIn).max(100) });
+
 export async function readBody<T extends z.ZodType>(
   req: Request,
   schema: T

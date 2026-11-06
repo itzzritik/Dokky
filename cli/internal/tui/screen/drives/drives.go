@@ -121,16 +121,15 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				s.open = true
 				return s, nil
 			}
+			if leaving(d) {
+				return s, nil
+			}
 			return s, add.Edit(st, d)
 		case "m":
 			return s, core.RunMount(st, d)
 		case "v":
 			if d.State == api.Connected {
 				return s, core.OpenFolder(d.Folder)
-			}
-		case "d":
-			if d.State == api.Removed {
-				return s, core.RunMount(st, d)
 			}
 		case "s":
 			if ui.LoginFailed(d) {
@@ -164,6 +163,9 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 	if s.open && !st.Wide {
 		acts = []core.Action{{Key: "esc", Label: "back"}}
 	}
+	if leaving(d) {
+		return acts
+	}
 	acts = append(acts, core.Action{Key: "enter", Label: "edit"})
 	login := ui.LoginFailed(d)
 	if login {
@@ -172,11 +174,8 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 	if m := core.MountLabel(d); m != "" {
 		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount" && !login})
 	}
-	switch d.State {
-	case api.Connected:
+	if d.State == api.Connected {
 		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel()})
-	case api.Removed:
-		acts = append(acts, core.Action{Key: "d", Label: "remove here", Danger: true})
 	}
 	if st.Wide {
 		acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})
@@ -189,7 +188,7 @@ func (s *Drives) Animating(st *core.State) bool {
 		return false
 	}
 	for _, d := range st.Snap.Drives {
-		if d.State == api.Connecting {
+		if d.State == api.Connecting || d.State == api.Removing {
 			return true
 		}
 	}
@@ -263,3 +262,6 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	return b.Layer()
 }
+
+// removed on another device: this one is finishing with it, so it can't be changed
+func leaving(d api.Drive) bool { return d.State == api.Leaving || d.State == api.Removing }

@@ -67,6 +67,7 @@ type Event struct {
 	State    *api.State
 	Activity *api.Activity
 	Progress *api.AddProgress
+	Log      bool // the activity log changed
 }
 
 func Dial(ctx context.Context) (*Client, error) {
@@ -216,6 +217,22 @@ func (c *Client) SyncNow(ctx context.Context) error {
 	return c.call(ctx, slow, "sync.now", nil, nil)
 }
 
+func (c *Client) CheckDrive(ctx context.Context, id string) (api.DriveCheck, error) {
+	return get[api.DriveCheck](c, ctx, slow, api.MDriveCheck, map[string]string{"id": id})
+}
+
+func (c *Client) ActivityLog(ctx context.Context) (api.Events, error) {
+	return get[api.Events](c, ctx, slow, api.MEvents, nil)
+}
+
+func (c *Client) ActivitySeen(ctx context.Context) error {
+	return c.call(ctx, quick, api.MEventsSeen, nil, nil)
+}
+
+func (c *Client) SyncKick(ctx context.Context) error {
+	return c.call(ctx, quick, api.MSyncKick, nil, nil)
+}
+
 func (c *Client) Devices(ctx context.Context) ([]api.Device, error) {
 	return get[[]api.Device](c, ctx, quick, "devices.list", nil)
 }
@@ -283,6 +300,14 @@ func (c *Client) Events(ctx context.Context) (<-chan Event, error) {
 			e := Event{Kind: ev.Event}
 			var target any
 			switch ev.Event {
+			case api.EEvents:
+				e.Log = true
+				select {
+				case out <- e:
+				case <-ctx.Done():
+					return
+				}
+				continue
 			case api.EState:
 				e.State = &api.State{}
 				target = e.State

@@ -27,7 +27,10 @@ type SwitchTab struct {
 	Drive string
 }
 
-const DrivesTab = 1
+const (
+	DrivesTab   = 1
+	ActivityTab = 3
+)
 
 type Progress api.AddProgress
 
