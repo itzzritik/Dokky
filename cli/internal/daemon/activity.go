@@ -225,8 +225,8 @@ func (d *Daemon) retry(p retryParams) (any, error) {
 
 func (d *Daemon) refreshSpace(now time.Time) {
 	type due struct {
-		m       store.Mount
-		mounted bool
+		m     store.Mount
+		every time.Duration
 	}
 	var list []due
 	d.mu.Lock()
@@ -237,17 +237,18 @@ func (d *Daemon) refreshSpace(now time.Time) {
 		if d.data.Local[m.ID].RemovedRemotely || st != nil && st.state == stateMounting || now.Before(d.spaceAt[m.ID]) {
 			continue
 		}
-		x, every := due{m: m, mounted: st != nil && st.state == stateMounted}, spaceIdle
-		if x.mounted {
-			every = spaceEvery
+		x := due{m: m, every: spaceIdle}
+		if st != nil && st.state == stateMounted {
+			x.every = spaceEvery
 		}
-		d.spaceAt[m.ID] = now.Add(every)
+		d.spaceAt[m.ID] = now.Add(x.every)
 		list = append(list, x)
 	}
-	for id := range d.space {
+	for id := range d.spaceAt {
 		if !kept[id] {
 			delete(d.space, id)
 			delete(d.spaceAt, id)
+			delete(d.spaceFails, id)
 		}
 	}
 	d.mu.Unlock()
@@ -257,13 +258,16 @@ func (d *Daemon) refreshSpace(now time.Time) {
 			free, total, ok := d.eng.Space(m)
 			d.mu.Lock()
 			if !ok {
-				// a failed check keeps the last answer; only a mounted drive asks again soon, since for an unmounted one each try is a fresh sign-in, and MEGA blocks accounts that sign in too often
-				if _, had := d.space[m.ID]; !had && x.mounted {
-					d.spaceAt[m.ID] = time.Now().Add(spaceRetry)
+				// a failed check keeps the last answer; with none yet it asks again sooner, backing off to the usual wait,
+				// since an unmounted check signs in again and MEGA blocks accounts that sign in too often
+				if _, had := d.space[m.ID]; !had {
+					d.spaceFails[m.ID] = min(d.spaceFails[m.ID]+1, 5)
+					d.spaceAt[m.ID] = time.Now().Add(min(x.every, spaceRetry<<(d.spaceFails[m.ID]-1)))
 				}
 				d.mu.Unlock()
 				return
 			}
+			delete(d.spaceFails, m.ID)
 			old, had := d.space[m.ID]
 			sp := api.Space{Free: free, Total: total}
 			d.space[m.ID] = sp

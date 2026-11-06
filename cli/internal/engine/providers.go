@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rclone/rclone/fs/cache"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/store"
@@ -197,7 +196,7 @@ func (e *Engine) Reachable(s store.Service, remotePath string) error {
 	if remotePath == "" {
 		ctx, cancel := context.WithTimeout(context.Background(), testRemoteTimeout)
 		defer cancel()
-		f, err := cache.Get(ctx, s.ID+":")
+		f, err := getFs(ctx, s.ID+":")
 		if err == nil && f.Features().About != nil {
 			_, err = f.Features().About(ctx)
 		}

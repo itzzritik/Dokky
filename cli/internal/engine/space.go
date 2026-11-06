@@ -14,7 +14,7 @@ import (
 const spaceFile = ".dokky-space"
 
 func useServerSpace(ctx context.Context, fsName string) {
-	f, err := cache.Get(ctx, fsName)
+	f, err := getFs(ctx, fsName)
 	if err != nil || f.Features().About != nil {
 		return
 	}
@@ -25,6 +25,25 @@ func useServerSpace(ctx context.Context, fsName string) {
 	}
 	// ponytail: patches the backend's own feature set, which the mount reads; wrap the backend if rclone ever copies it
 	f.Features().About = func(ctx context.Context) (*fs.Usage, error) { return readSpace(ctx, f) }
+}
+
+// rclone keeps the context an fs is made with for its later token refreshes, so the fs is made on one that is never canceled
+func getFs(ctx context.Context, name string) (fs.Fs, error) {
+	type made struct {
+		f   fs.Fs
+		err error
+	}
+	ch := make(chan made, 1)
+	go func() {
+		f, err := cache.Get(context.Background(), name)
+		ch <- made{f, err}
+	}()
+	select {
+	case m := <-ch:
+		return m.f, m.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func readSpace(ctx context.Context, f fs.Fs) (*fs.Usage, error) {
