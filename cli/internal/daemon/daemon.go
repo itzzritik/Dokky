@@ -105,9 +105,11 @@ type Daemon struct {
 	stats   map[string]engine.MountStats
 	space   map[string]api.Space
 	spaceAt map[string]time.Time
-	flow    *loginFlow
-	clashes []dsync.Clash
-	saves   uint64 // a pull that started before a save is dropped
+	// failed checks in a row for a drive with no space yet
+	spaceFails map[string]int
+	flow       *loginFlow
+	clashes    []dsync.Clash
+	saves      uint64 // a pull that started before a save is dropped
 
 	offline, signedOut bool
 }
@@ -259,7 +261,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
 		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
 		unmountedAt: map[string]time.Time{}, cleaned: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
-		space: map[string]api.Space{}, spaceAt: map[string]time.Time{},
+		space: map[string]api.Space{}, spaceAt: map[string]time.Time{}, spaceFails: map[string]int{},
 	}
 }
 

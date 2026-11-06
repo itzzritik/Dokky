@@ -151,6 +151,9 @@ func (d *Daemon) mountLocked(m store.Mount) error {
 		d.fail(m, st, err)
 	} else {
 		*st = mountState{state: stateMounted, name: m.ID, point: actual}
+		// a fresh mount asks for its space on the next tick, whatever an unmounted check scheduled
+		delete(d.spaceAt, m.ID)
+		delete(d.spaceFails, m.ID)
 		d.setMounted(m.ID, true)
 		err = d.save()
 		go d.reportDrives()
