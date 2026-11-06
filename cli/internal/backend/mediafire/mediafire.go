@@ -3,7 +3,9 @@ package mediafire
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,6 +36,45 @@ type Options struct {
 	AppID             string               `config:"app_id"`
 	UploadConcurrency int                  `config:"upload_concurrency"`
 	Enc               encoder.MultiEncoder `config:"encoding"`
+}
+
+type Fs struct {
+	name  string
+	root  string
+	opt   Options
+	srv   *rest.Client
+	pacer *fs.Pacer
+	sess  *session
+}
+
+type apiResult interface{ Err() error }
+
+func (f *Fs) call(ctx context.Context, method string, params url.Values, result apiResult) error {
+	for attempt := 0; ; attempt++ {
+		token, err := f.sess.Token(ctx)
+		if err != nil {
+			return err
+		}
+		p := maps.Clone(params)
+		if p == nil {
+			p = url.Values{}
+		}
+		p.Set("session_token", token)
+		p.Set("response_format", "json")
+		env := struct {
+			Response any `json:"response"`
+		}{result}
+		err = postForm(ctx, f.srv, f.pacer, method, p, &env)
+		if err == nil {
+			err = result.Err()
+		}
+		var apiErr *api.Error
+		if attempt == 0 && errors.As(err, &apiErr) && apiErr.Code == api.CodeSessionInvalid {
+			f.sess.Invalidate(token)
+			continue
+		}
+		return err
+	}
 }
 
 func newPacer(ctx context.Context) *fs.Pacer {

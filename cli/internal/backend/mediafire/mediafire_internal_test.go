@@ -3,12 +3,14 @@ package mediafire
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/backend/mediafire/api"
 	"github.com/rclone/rclone/fs/fshttp"
@@ -160,4 +162,155 @@ func TestSessionReplacedWhenPasswordChanges(t *testing.T) {
 	b := getSession("user@example.com", "new", defaultAppID, testClient(ctx), newPacer(ctx))
 	assert.NotSame(t, a, b)
 	assert.Equal(t, "new", b.password)
+}
+
+type fakeClock struct {
+	mu  sync.Mutex
+	cur time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cur
+}
+
+func (c *fakeClock) Add(d time.Duration) {
+	c.mu.Lock()
+	c.cur = c.cur.Add(d)
+	c.mu.Unlock()
+}
+
+func stubTime(t *testing.T) *fakeClock {
+	c := &fakeClock{cur: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)}
+	oldNow, oldSleep := now, sleep
+	now = c.Now
+	sleep = func(time.Duration) { select {} }
+	t.Cleanup(func() { now, sleep = oldNow, oldSleep })
+	return c
+}
+
+func newTestFs(t *testing.T, fake *fakeAPI) *Fs {
+	ctx := context.Background()
+	f := &Fs{name: "TestFake", srv: testClient(ctx), pacer: newPacer(ctx)}
+	f.opt.Email, f.opt.Password, f.opt.AppID = "user@example.com", "password", defaultAppID
+	f.sess = getSession(f.opt.Email, f.opt.Password, f.opt.AppID, f.srv, f.pacer)
+	return f
+}
+
+func tokens(fake *fakeAPI, name, field string) {
+	n := 0
+	var mu sync.Mutex
+	fake.handle(name, func(url.Values, *http.Request) any {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		return success(field, fmt.Sprintf("tok%d", n))
+	})
+}
+
+func TestTokenRenewsWhenExpired(t *testing.T) {
+	ctx := context.Background()
+	clock := stubTime(t)
+	fake := newFakeAPI(t)
+	tokens(fake, "user/get_session_token", "session_token")
+	fake.handle("user/renew_session_token", func(url.Values, *http.Request) any {
+		return success("session_token", "renewed")
+	})
+	f := newTestFs(t, fake)
+	tok, err := f.sess.Token(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "tok1", tok)
+	clock.Add(9 * time.Minute)
+	tok, err = f.sess.Token(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "renewed", tok)
+	assert.Equal(t, 1, fake.count("user/renew_session_token"))
+	assert.Equal(t, "tok1", fake.last("user/renew_session_token").Get("session_token"))
+	assert.Equal(t, 1, fake.count("user/get_session_token"))
+}
+
+func TestTokenAfterSleepSignsIn(t *testing.T) {
+	ctx := context.Background()
+	clock := stubTime(t)
+	fake := newFakeAPI(t)
+	tokens(fake, "user/get_session_token", "session_token")
+	fake.handle("user/renew_session_token", func(url.Values, *http.Request) any {
+		return apiError(105, "The supplied Session Token is expired or invalid")
+	})
+	f := newTestFs(t, fake)
+	_, err := f.sess.Token(ctx)
+	require.NoError(t, err)
+	clock.Add(2 * time.Hour)
+	tok, err := f.sess.Token(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "tok2", tok)
+	assert.Equal(t, 0, fake.count("user/renew_session_token"))
+	assert.Equal(t, 2, fake.count("user/get_session_token"))
+}
+
+func TestCallRetriesOnceOnSessionError(t *testing.T) {
+	ctx := context.Background()
+	stubTime(t)
+	fake := newFakeAPI(t)
+	tokens(fake, "user/get_session_token", "session_token")
+	n := 0
+	fake.handle("folder/get_content", func(url.Values, *http.Request) any {
+		n++
+		if n == 1 {
+			return apiError(105, "The supplied Session Token is expired or invalid")
+		}
+		return success()
+	})
+	f := newTestFs(t, fake)
+	var out api.FolderContent
+	require.NoError(t, f.call(ctx, "folder/get_content", url.Values{"content_type": {"files"}}, &out))
+	assert.Equal(t, 2, fake.count("user/get_session_token"))
+	assert.Equal(t, 2, fake.count("folder/get_content"))
+	form := fake.last("folder/get_content")
+	assert.Equal(t, "tok2", form.Get("session_token"))
+	assert.Equal(t, "json", form.Get("response_format"))
+	assert.Equal(t, "files", form.Get("content_type"))
+}
+
+func TestCallGivesUpAfterSecondSessionError(t *testing.T) {
+	ctx := context.Background()
+	stubTime(t)
+	fake := newFakeAPI(t)
+	tokens(fake, "user/get_session_token", "session_token")
+	fake.handle("folder/get_content", func(url.Values, *http.Request) any {
+		return apiError(105, "The supplied Session Token is expired or invalid")
+	})
+	f := newTestFs(t, fake)
+	var out api.FolderContent
+	err := f.call(ctx, "folder/get_content", nil, &out)
+	var apiErr *api.Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, api.CodeSessionInvalid, apiErr.Code)
+	assert.Equal(t, 2, fake.count("folder/get_content"))
+}
+
+func TestKeepAliveRenewsWhileUsedAndStopsWhenIdle(t *testing.T) {
+	ctx := context.Background()
+	clock := stubTime(t)
+	fake := newFakeAPI(t)
+	tokens(fake, "user/get_session_token", "session_token")
+	tokens(fake, "user/renew_session_token", "session_token")
+	f := newTestFs(t, fake)
+	_, err := f.sess.Token(ctx)
+	require.NoError(t, err)
+	assert.True(t, f.sess.running())
+
+	clock.Add(9 * time.Minute)
+	assert.True(t, f.sess.keepAliveStep(ctx))
+	assert.Equal(t, 1, fake.count("user/renew_session_token"))
+
+	clock.Add(idleStop)
+	assert.False(t, f.sess.keepAliveStep(ctx))
+	assert.False(t, f.sess.running())
+	assert.Equal(t, 1, fake.count("user/renew_session_token"))
+
+	_, err = f.sess.Token(ctx)
+	require.NoError(t, err)
+	assert.True(t, f.sess.running())
 }
