@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -90,8 +88,7 @@ func (a *App) restartWhenIdle() tea.Cmd {
 		a.st.Updating = "Update ready"
 		return nil
 	}
-	a.restartOpen, a.st.Updating = true, ""
-	a.windows = append(a.windows, &restarting{version: a.pendingRestart, at: a.st.Now})
+	a.restartOpen, a.restartAt, a.st.Updating = true, a.st.Now, ""
 	return tea.Tick(restartIn, func(time.Time) tea.Msg { return restartNow{} })
 }
 
@@ -114,29 +111,6 @@ func (a *App) onLatest(m latest) {
 	if a.updateReady() && a.gate == nil {
 		a.windows = append([]core.Screen{&update{btn: 1}}, a.windows...)
 	}
-}
-
-// can't be closed: a red bar drains for restartIn, then dokky restarts on the new version
-type restarting struct {
-	version string
-	at      time.Time
-}
-
-func (r *restarting) Update(tea.Msg, *core.State) (core.Screen, tea.Cmd) { return r, nil }
-func (r *restarting) Capturing() bool                                    { return true }
-func (r *restarting) Actions(*core.State) []core.Action                  { return nil }
-func (r *restarting) Animating(*core.State) bool                         { return true }
-
-func (r *restarting) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
-	p := ui.P()
-	left := max(0, restartIn-st.Now.Sub(r.at))
-	win := &ui.Window{W: min(56, maxW), Title: "dokky updated to " + r.version, Ok: true,
-		Sub: "Restarting in " + strconv.Itoa(int(math.Ceil(left.Seconds()))) + " s"}
-	body := ui.NewBox()
-	body.Put(0, 0, ui.ThinBar(win.Inner(), float64(left)/float64(restartIn), st.T, p.Coral, p.Surface))
-	win.Body = body
-	win.Fit(1, maxH)
-	return win.Layer()
 }
 
 type update struct {

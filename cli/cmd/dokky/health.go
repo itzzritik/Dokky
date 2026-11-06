@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
+	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/doctor"
 	"github.com/itzzritik/dokky/cli/internal/engine"
@@ -88,9 +89,9 @@ func updatesCheck(s api.State, cli string, r daemon.Release, err error, gh docto
 		c.Facts = append(c.Facts, [2]string{"Error", err.Error()})
 	case !gh.OK:
 		c.Status, c.Tone, c.Fix = "Can't download", tui.Warn, "github.com can't be reached. Check your internet connection, proxy and firewall."
-	case daemon.Newer(r.Version, cur) && s.Settings.AutoUpdate:
+	case buildinfo.Newer(r.Version, cur) && s.Settings.AutoUpdate:
 		c.Status, c.Detail = r.Version+" on the way", "dokky installs "+r.Version+" in the background and switches when nothing is uploading."
-	case daemon.Newer(r.Version, cur):
+	case buildinfo.Newer(r.Version, cur):
 		c.Status, c.Detail = r.Version+" is out", "Press u to update, or turn on Automatic updates in Settings."
 	}
 	return c

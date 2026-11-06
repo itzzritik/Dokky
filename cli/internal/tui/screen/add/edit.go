@@ -69,7 +69,10 @@ func (a *Add) live(st *core.State) api.Drive {
 	return *a.edit
 }
 
-func (a *Add) canSignIn() bool { return a.edit.ServiceType != "" && !oauthType(a.edit.ServiceType) }
+// browser sign-ins are only redone when the login failed
+func (a *Add) canSignIn(st *core.State) bool {
+	return a.edit.ServiceType != "" && (!oauthType(a.edit.ServiceType) || ui.LoginFailed(a.live(st)))
+}
 
 func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 	e := &a.ed
@@ -162,7 +165,7 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 				return core.OpenFolder(d.Folder)
 			}
 		case "s":
-			if a.canSignIn() {
+			if a.canSignIn(st) {
 				return a.toSignIn(st)
 			}
 		case "d":
@@ -417,14 +420,15 @@ func (a *Add) editActions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "enter", Label: "edit"})
 	}
 	d := a.live(st)
+	login := ui.LoginFailed(d)
 	if m := core.MountLabel(d); m != "" {
-		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount"})
+		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount" && !login})
 	}
 	if d.State == api.Connected {
 		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel()})
 	}
-	if a.canSignIn() {
-		acts = append(acts, core.Action{Key: "s", Label: "sign-in"})
+	if a.canSignIn(st) {
+		acts = append(acts, core.Action{Key: "s", Label: "sign in", Accent: login})
 	}
 	return append(acts, core.Action{Key: "d", Label: "remove", Danger: true}, core.Action{Key: "esc", Label: "close"})
 }

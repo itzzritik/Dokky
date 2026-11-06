@@ -132,6 +132,10 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			if d.State == api.Removed {
 				return s, core.RunMount(st, d)
 			}
+		case "s":
+			if ui.LoginFailed(d) {
+				return s, add.SignIn(st, d)
+			}
 		}
 	}
 	return s, nil
@@ -161,8 +165,12 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 		acts = []core.Action{{Key: "esc", Label: "back"}}
 	}
 	acts = append(acts, core.Action{Key: "enter", Label: "edit"})
+	login := ui.LoginFailed(d)
+	if login {
+		acts = append(acts, core.Action{Key: "s", Label: "sign in", Accent: true})
+	}
 	if m := core.MountLabel(d); m != "" {
-		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount"})
+		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount" && !login})
 	}
 	switch d.State {
 	case api.Connected:
