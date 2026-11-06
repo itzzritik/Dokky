@@ -105,10 +105,14 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, le
 	}
 
 	if check.HashExists == "yes" {
-		p := maps.Clone(target)
-		p.Set("filename", name)
-		p.Set("size", strconv.FormatInt(size, 10))
-		p.Set("hash", sum)
+		// instant ignores quick_key in a folder and makes a new root file without one, so replace by name
+		p := url.Values{
+			"folder_key":          {dirID},
+			"action_on_duplicate": {"replace"},
+			"filename":            {name},
+			"size":                {strconv.FormatInt(size, 10)},
+			"hash":                {sum},
+		}
 		var out api.Instant
 		if err := o.fs.call(ctx, "upload/instant", p, &out); err != nil {
 			return fmt.Errorf("couldn't upload: %w", err)
@@ -241,7 +245,13 @@ func (o *Object) uploadUnit(ctx context.Context, id int, buf []byte, wrap accoun
 		if err != nil {
 			return err
 		}
-		return out.Err()
+		if err := out.Err(); err != nil {
+			return err
+		}
+		if r := out.Doupload.Result; r != "" && r != "0" {
+			return fmt.Errorf("mediafire: part %d rejected with result %s: %s", id, r, out.Doupload.Description)
+		}
+		return nil
 	})
 	return out.Doupload.Key, err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"sync"
 	"time"
@@ -14,11 +15,13 @@ import (
 )
 
 var (
-	now             = time.Now
+	// wall clock: the monotonic one stops while the computer sleeps
+	now             = func() time.Time { return time.Now().Round(0) }
 	sleep           = time.Sleep
 	sessionLifetime = 10 * time.Minute
 	renewMargin     = 2 * time.Minute
 	idleStop        = time.Hour
+	loginBackoff    = 5 * time.Minute
 
 	sessionsMu sync.Mutex
 	sessions   = map[string]*session{}
@@ -32,6 +35,8 @@ type session struct {
 	token                  string
 	expires, lastUse       time.Time
 	alive                  bool
+	loginErr               error
+	loginErrAt             time.Time
 }
 
 func signature(email, password, appID string) string {
@@ -52,6 +57,9 @@ func getSession(email, password, appID string, srv *rest.Client, p *fs.Pacer) *s
 }
 
 func (s *session) login(ctx context.Context) error {
+	if s.loginErr != nil && now().Sub(s.loginErrAt) < loginBackoff {
+		return s.loginErr
+	}
 	params := url.Values{
 		"email":           {s.email},
 		"password":        {s.password},
@@ -63,12 +71,19 @@ func (s *session) login(ctx context.Context) error {
 	var out struct {
 		Response api.SessionToken `json:"response"`
 	}
-	if err := postForm(ctx, s.srv, s.pacer, "user/get_session_token", params, &out); err != nil {
+	err := postForm(ctx, s.srv, s.pacer, "user/get_session_token", params, &out)
+	if err == nil {
+		err = out.Response.Err()
+	}
+	var apiErr *api.Error
+	if errors.As(err, &apiErr) {
+		s.loginErr, s.loginErrAt = err, now()
 		return err
 	}
-	if err := out.Response.Err(); err != nil {
+	if err != nil {
 		return err
 	}
+	s.loginErr = nil
 	s.token = out.Response.SessionToken
 	s.expires = now().Add(sessionLifetime)
 	return nil

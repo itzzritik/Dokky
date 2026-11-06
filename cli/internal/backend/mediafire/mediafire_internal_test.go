@@ -850,3 +850,61 @@ func TestOpenFetchesFreshLinkAfterManyResets(t *testing.T) {
 	assert.Equal(t, "hello", string(b))
 	assert.Equal(t, 2, fake.count("file/get_links"))
 }
+
+func TestClockUsesWallTime(t *testing.T) {
+	t0 := now()
+	assert.Equal(t, t0.Round(0), t0)
+}
+
+func TestUploadUnitRejectedFails(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	fakeUpload(t, fake, resumable(1, 16), finished)
+	fake.handle("upload/resumable", func(url.Values, *http.Request) any {
+		return success("doupload", map[string]any{"result": "-14", "key": ""})
+	})
+	f := newTestFs(t, fake)
+	o, err := f.Put(ctx, strings.NewReader(content), srcInfo(content, true))
+	assert.ErrorContains(t, err, "-14")
+	assert.Nil(t, o)
+	assert.Equal(t, 0, fake.count("upload/poll_upload"))
+}
+
+func TestBadPasswordBacksOff(t *testing.T) {
+	ctx := context.Background()
+	clock := stubTime(t)
+	fake := newFakeAPI(t)
+	fake.handle("user/get_session_token", func(url.Values, *http.Request) any {
+		return apiError(107, "The Credentials you entered are invalid")
+	})
+	f := newTestFs(t, fake)
+	for range 3 {
+		_, err := f.sess.Token(ctx)
+		assert.ErrorContains(t, err, "Credentials")
+	}
+	assert.Equal(t, 1, fake.count("user/get_session_token"))
+	clock.Add(loginBackoff + time.Second)
+	_, err := f.sess.Token(ctx)
+	assert.Error(t, err)
+	assert.Equal(t, 2, fake.count("user/get_session_token"))
+}
+
+func TestUpdateInstantReplacesByName(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	fakeUpload(t, fake, map[string]any{"hash_exists": "yes"}, finished)
+	fake.handle("upload/instant", func(url.Values, *http.Request) any {
+		return success("quickkey", "q0")
+	})
+	f := newTestFs(t, fake)
+	o := &Object{fs: f, remote: "v.bin", id: "q0", size: 3}
+	require.NoError(t, o.Update(ctx, strings.NewReader(content), srcInfo(content, true)))
+	form := fake.last("upload/instant")
+	assert.Empty(t, form.Get("quick_key"))
+	assert.Equal(t, "replace", form.Get("action_on_duplicate"))
+	assert.Equal(t, "myfiles", form.Get("folder_key"))
+	assert.Equal(t, "v.bin", form.Get("filename"))
+	assert.Equal(t, "q0", o.id)
+}
