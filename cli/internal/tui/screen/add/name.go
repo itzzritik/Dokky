@@ -14,7 +14,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-var atLogin = []string{"Connect", "Stay off"}
+var atLogin = []string{"Mount", "Stay off"}
 
 type nameForm struct {
 	name, folder *ui.Field

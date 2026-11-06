@@ -99,12 +99,6 @@ func (o *Overview) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			if !st.Snap.Account.LoggedIn {
 				return o, gate.Open(st)
 			}
-		case "r":
-			var cmds []tea.Cmd
-			for _, d := range needy(st) {
-				cmds = append(cmds, core.RunMount(st, d))
-			}
-			return o, tea.Batch(cmds...)
 		}
 	}
 	return o, nil
@@ -133,9 +127,6 @@ func (o *Overview) Actions(st *core.State) []core.Action {
 	}
 	if len(st.Snap.Drives) > 0 {
 		acts = append(acts, core.Action{Key: "a", Label: "add drive"})
-	}
-	if len(needy(st)) > 0 {
-		acts = append(acts, core.Action{Key: "r", Label: "remount"})
 	}
 	if !st.Snap.Account.LoggedIn {
 		acts = append(acts, core.Action{Key: "s", Label: "sign in"})
@@ -170,14 +161,6 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 	p := ui.P()
 	b := ui.NewBox()
 	y := 0
-	if needs := needy(st); len(needs) > 0 {
-		bh := 1
-		if h >= 21 {
-			bh = 3
-		}
-		b.Lines(0, 0, banner(needs, w, bh))
-		y = bh + 1
-	}
 	ph := panelH
 	if w < splitW && h >= y+stackH+1+1+2*cardH {
 		ph = stackH
@@ -204,32 +187,6 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 		b.Add(0, y+1+(i-o.top)*cardH, card(st, items[i], w, i == o.sel, grow))
 	}
 	return b.Layer()
-}
-
-// drives that can't connect or wait for a reconnect
-func needy(st *core.State) []api.Drive {
-	var out []api.Drive
-	for _, d := range st.Snap.Drives {
-		if d.State == api.Failed || d.State == api.Reconnect {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func banner(needs []api.Drive, w, h int) []string {
-	bad := false
-	for _, d := range needs {
-		bad = bad || d.State == api.Failed
-	}
-	text := core.Count(len(needs), "drive") + " need you"
-	if len(needs) == 1 {
-		text = needs[0].Name + " can't connect"
-		if !bad {
-			text = needs[0].Name + " needs a reconnect"
-		}
-	}
-	return ui.Banner(w, h, bad, text, "r", "remount")
 }
 
 // a drive as a solid card: name, what it is and its status on the left, its space meter on the right

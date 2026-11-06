@@ -1,19 +1,12 @@
 package health
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"image/color"
-	"path"
-	"slices"
-	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
@@ -33,122 +26,13 @@ type Health struct {
 
 func New() *Health { return &Health{} }
 
-// Checks: live checks from the daemon's state, then the computer's own
+// dokky itself only: a drive that can't connect shows on its own card, not here
 func Checks(st *core.State) []core.Check {
-	out := []core.Check{drives(st), uploads(st), sync(st)}
+	out := []core.Check{sync(st)}
 	if len(st.Checks) == 0 && st.Checking {
 		return append(out, core.Check{Name: "This computer", Status: "Checking", Detail: "Looking at the background service, updates, the cache and the keychain.", Tone: core.Busy})
 	}
 	return append(out, st.Checks...)
-}
-
-func drives(st *core.State) core.Check {
-	c := core.Check{Name: "Drives", Detail: "Each drive and whether it is open in " + core.FileManager() + ".", Tone: core.Good}
-	if len(st.Snap.Drives) == 0 {
-		c.Status, c.Detail = "No drives yet", "Add a drive from Overview."
-		return c
-	}
-	on := 0
-	var failed, stale []string
-	var broken []api.Drive
-	for _, d := range st.Snap.Drives {
-		words := ui.DriveStatus(d, st.T).Words
-		switch d.State {
-		case api.Connected:
-			on++
-		case api.Failed:
-			failed, broken = append(failed, d.Name), append(broken, d)
-			if d.Error != "" {
-				words = d.Error
-			}
-		case api.Reconnect:
-			stale, broken = append(stale, d.Name), append(broken, d)
-		}
-		c.Facts = append(c.Facts, [2]string{d.Name, words})
-	}
-	c.Status = strconv.Itoa(on) + " of " + strconv.Itoa(len(st.Snap.Drives)) + " connected"
-	switch {
-	case len(failed) > 0:
-		c.Tone, c.Status = core.Bad, strings.Join(failed, ", ")+" can't connect"
-	case len(stale) > 0:
-		c.Tone, c.Status = core.Warn, strings.Join(stale, ", ")+" needs a reconnect"
-	}
-	if len(broken) > 0 {
-		names := make([]string, len(broken))
-		for i, d := range broken {
-			names[i] = d.Name
-		}
-		cl := st.C
-		c.Auto = "Fix all reconnects " + strings.Join(names, ", ") + "."
-		c.Repair = func() error {
-			var errs []error
-			for _, d := range broken {
-				ctx := context.Background()
-				if d.State == api.Reconnect {
-					if _, err := cl.Disconnect(ctx, d.ID); err != nil {
-						errs = append(errs, err)
-						continue
-					}
-				}
-				if _, err := cl.Connect(ctx, d.ID); err != nil {
-					errs = append(errs, fmt.Errorf("%s: %w", d.Name, err))
-				}
-			}
-			return errors.Join(errs...)
-		}
-	}
-	return c
-}
-
-func uploads(st *core.State) core.Check {
-	c := core.Check{Name: "Uploads", Status: "All saved", Detail: "What you save to a drive stays on this computer until it reaches the cloud.", Tone: core.Good}
-	moving, waiting := 0, 0
-	var left int64
-	for _, t := range st.Act.Now {
-		if !t.Up {
-			continue
-		}
-		left += max(0, t.Size-t.Done)
-		if t.Waiting {
-			waiting++
-		} else {
-			moving++
-		}
-	}
-	var failed []api.Transfer
-	last := ""
-	for _, t := range st.Act.Earlier {
-		switch {
-		case !t.Up:
-		case t.Error != "":
-			failed = append(failed, t)
-		case last == "":
-			last = path.Base(t.Name) + ", " + core.Ago(t.At, st.Now)
-		}
-	}
-	size := ""
-	if left > 0 {
-		size = core.Size(left)
-	}
-	c.Facts = [][2]string{{"Uploading", strconv.Itoa(moving)}, {"Waiting", strconv.Itoa(waiting)}, {"Left", size},
-		{"Failed", strconv.Itoa(len(failed))}, {"Last saved", last}}
-	switch {
-	case len(failed) > 0:
-		c.Tone, c.Status = core.Warn, strconv.Itoa(len(failed))+" failed"
-		c.Facts = append(c.Facts, [2]string{"Error", path.Base(failed[0].Name) + ": " + failed[0].Error})
-		cl := st.C
-		c.Auto = "Fix all tries the failed uploads again."
-		c.Repair = func() error {
-			var errs []error
-			for _, t := range failed {
-				errs = append(errs, cl.Retry(context.Background(), t.DriveID, t.Name))
-			}
-			return errors.Join(errs...)
-		}
-	case moving+waiting > 0:
-		c.Tone, c.Status = core.Busy, strconv.Itoa(moving+waiting)+" to upload"
-	}
-	return c
 }
 
 func sync(st *core.State) core.Check {
@@ -427,10 +311,10 @@ func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
 	return ui.Banner(w, h, bad, text, key, action)
 }
 
-// the problems Fix all can repair: this computer's first, then drives and uploads, anything that reopens dokky last; the pass on open skips reopening twice
+// the problems Fix all can repair, anything that reopens dokky last; the pass on open skips reopening twice
 func Repairs(st *core.State, auto bool) []core.Check {
 	var now, last []core.Check
-	for _, c := range append(slices.Clone(st.Checks), drives(st), uploads(st)) {
+	for _, c := range st.Checks {
 		switch {
 		case c.Repair == nil || c.Tone != core.Warn && c.Tone != core.Bad:
 		case c.Reopen && auto && st.Deps.Reopened:

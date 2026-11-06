@@ -105,7 +105,7 @@ func (a *Add) viewConnect(st *core.State, win *ui.Window) int {
 	r := &a.run
 	cw := win.Inner()
 	name := r.params.Name
-	win.Title, win.Sub = "Connecting "+name, "This takes a few seconds."
+	win.Title, win.Sub = "Mounting "+name, "This takes a few seconds."
 	switch {
 	case r.done != nil && r.done.State == api.Connected:
 		win.Ok, win.Title, win.Sub = true, name+" is ready", "It is in "+core.FileManager()+" now."
@@ -113,7 +113,7 @@ func (a *Add) viewConnect(st *core.State, win *ui.Window) int {
 			win.Sub = "It is in Finder now, under Dokky."
 		}
 	case r.done != nil:
-		win.Ok, win.Title, win.Sub = true, name+" is added", "Connect it when you need it."
+		win.Ok, win.Title, win.Sub = true, name+" is added", "Mount it when you need it."
 	case r.failed != "":
 		win.Bad, win.Title, win.Sub = true, "Could not add "+name, r.failed
 	}

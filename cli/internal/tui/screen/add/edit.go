@@ -231,7 +231,7 @@ func (a *Add) remountSave(st *core.State, d api.Drive, u api.DriveUpdate, rename
 	name := core.Safe(d.Name)
 	return confirm.Open(&confirm.Confirm{
 		Question: "Save and remount " + name + "?",
-		Line:     name + " disconnects for a moment to remount.",
+		Line:     name + " unmounts for a moment to remount.",
 		Do:       "Save",
 		Positive: true,
 		Run: func(st *core.State, _ bool) tea.Cmd {
@@ -343,7 +343,7 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 	body.Put(0, 2, service.Pad(cw))
 	line(3, eSource, "Source folder", text(eSource, d.SubPath, "Whole account"))
 	line(4, eMount, "Mount folder", text(eMount, d.LocalFolder, core.Home(d.Folder)))
-	line(5, eLogin, "Connect at login", func(rb color.Color, w int) string {
+	line(5, eLogin, "Mount at login", func(rb color.Color, w int) string {
 		on := d.AtLogin
 		if e.login != nil {
 			on = *e.login

@@ -38,8 +38,9 @@ var (
 	releaseBase = "https://github.com/itzzritik/dokky/releases/download/"
 	executable  = os.Executable
 	runNPM      = func(ctx context.Context, state string, args ...string) error {
-		// npm 11.19+ skips install scripts it wasn't told to allow, and dokky's postinstall is what puts the new binary in place
-		cmd, err := NPM(ctx, state, append(args, "--allow-scripts=dokky", "--no-fund", "--no-audit", "--loglevel=error")...)
+		// npm 11.19+ skips install scripts it wasn't told to allow, and dokky's postinstall is what puts the new binary in place;
+		// prefer-online skips npm's 5 minute metadata cache, which can still say a just-published version doesn't exist
+		cmd, err := NPM(ctx, state, append(args, "--allow-scripts=dokky", "--prefer-online", "--no-fund", "--no-audit", "--loglevel=error")...)
 		if err != nil {
 			return err
 		}

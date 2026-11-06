@@ -14,6 +14,7 @@ type Account struct {
 
 type State struct {
 	Version    string   `json:"version"`
+	Build      string   `json:"build,omitempty"`
 	Account    Account  `json:"account"`
 	Drives     []Drive  `json:"drives"`
 	Clashes    []Clash  `json:"clashes"`

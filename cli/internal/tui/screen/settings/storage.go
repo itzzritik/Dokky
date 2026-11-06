@@ -35,7 +35,7 @@ func (s *storage) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 func clearCache() tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
 		Question: "Clear cached files?",
-		Line:     "Connected drives reconnect for a moment.",
+		Line:     "Mounted drives remount for a moment.",
 		Do:       "Clear",
 		Run: func(st *core.State, _ bool) tea.Cmd {
 			c := st.C

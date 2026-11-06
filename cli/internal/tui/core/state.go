@@ -75,13 +75,8 @@ func FileManager() string {
 	return "Files"
 }
 
-// problems across drives and the last health checks; bad when something is broken, not just worth a look
+// problems from the last health checks; bad when something is broken, not just worth a look
 func (s *State) Problems() (n int, bad bool) {
-	for _, d := range s.Snap.Drives {
-		if d.State == api.Failed {
-			n, bad = n+1, true
-		}
-	}
 	for _, c := range s.Checks {
 		switch c.Tone {
 		case Bad:

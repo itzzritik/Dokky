@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
-	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/health"
 	"github.com/spf13/cobra"
@@ -25,13 +24,8 @@ func newFixCmd() *cobra.Command {
 			if err := call(api.MState, nil, &s); err != nil {
 				return messageOnly(err)
 			}
-			c, err := client.Dial(ctx)
-			if err != nil {
-				return err
-			}
-			act, _ := c.Activity(ctx)
 			fmt.Fprintln(out, "Checking dokky...")
-			st := &core.State{Snap: s, Act: act, C: c, Now: time.Now(), Checks: doctorChecks(ctx)}
+			st := &core.State{Snap: s, Now: time.Now(), Checks: doctorChecks(ctx)}
 			failed := 0
 			for _, ch := range health.Repairs(st, false) {
 				if err := ch.Repair(); err != nil {
