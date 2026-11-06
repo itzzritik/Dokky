@@ -34,17 +34,18 @@ const editLabelW = 20
 type editForm struct {
 	focus      int
 	field      *ui.Field // the value being typed, nil when only moving
-	age        string    // a keep-for picked with the arrows, saved on enter
 	req        core.Req
 	err        string
 	remounting bool
 
-	opened         time.Time // rows fade in once, top to bottom
-	saving, saved  int       // the row being saved, and the one that just was
-	savedAt        time.Time // its check fades out
-	login          *bool     // the switch moves on the press, before the save answers
-	loginAt, ageAt time.Time
-	ageFrom        string // the keep-for the highlight leaves
+	opened        time.Time // rows fade in once, top to bottom
+	saving, saved int       // the row being saved, and the one that just was
+	savedAt       time.Time // its check fades out
+	login         *bool     // the switch moves on the press, before the save answers
+	loginAt       time.Time
+	menu          bool // the keep-for list is open under its row
+	menuSel       int
+	menuAt        time.Time
 }
 
 const (
@@ -56,7 +57,7 @@ const (
 
 func (e *editForm) animating(now time.Time) bool {
 	return e.req != 0 || now.Sub(e.opened) < 12*revealStep+revealFor || now.Sub(e.savedAt) < savedFor ||
-		now.Sub(e.loginAt) < slideFor || now.Sub(e.ageAt) < slideFor
+		now.Sub(e.loginAt) < slideFor || e.menu && now.Sub(e.menuAt) < 8*revealStep+revealFor
 }
 
 // reveal of the k-th element, 0 to 1
@@ -100,7 +101,7 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 		if m.Req != e.req {
 			return nil
 		}
-		e.req, e.age, e.remounting, e.login = 0, "", false, nil
+		e.req, e.remounting, e.login = 0, false, nil
 		if m.Err != nil {
 			e.err = core.Report(m.Err)
 			return nil
@@ -111,7 +112,11 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 		}
 		return core.Say("Saved")
 	case core.Click:
-		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "item:")); err == nil && e.field == nil {
+		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "opt:")); err == nil && e.menu {
+			e.menuSel = i
+			return a.pickAge(st, d)
+		}
+		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "item:")); err == nil && e.field == nil && slices.Contains(rows, i) {
 			e.focus = slices.Index(rows, i)
 			if i == eLogin {
 				return a.flipLogin(st, d)
@@ -123,6 +128,19 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 			return nil
 		}
 		k := m.String()
+		if e.menu {
+			switch k {
+			case "esc":
+				e.menu = false
+			case "up":
+				e.menuSel = max(0, e.menuSel-1)
+			case "down":
+				e.menuSel = min(len(engine.CacheMaxAges)-1, e.menuSel+1)
+			case "enter", "space":
+				return a.pickAge(st, d)
+			}
+			return nil
+		}
 		if e.field != nil {
 			switch k {
 			case "esc":
@@ -146,22 +164,9 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 			switch {
 			case row == eLogin:
 				return a.flipLogin(st, d)
-			case row == eAge && (k == "left" || k == "right"):
-				ages := engine.CacheMaxAges
-				i := slices.Index(ages, cmp.Or(e.age, d.CacheMaxAge))
-				if k == "left" {
-					i = max(0, i-1)
-				} else {
-					i = min(len(ages)-1, i+1)
-				}
-				if ages[i] != cmp.Or(e.age, d.CacheMaxAge) {
-					e.ageFrom, e.ageAt = cmp.Or(e.age, d.CacheMaxAge), st.Now
-				}
-				e.age = ages[i]
-			case row == eAge:
-				if e.age != "" && e.age != d.CacheMaxAge {
-					return a.remountSave(st, d, api.DriveUpdate{CacheMaxAge: e.age}, false)
-				}
+			case row == eAge && (k == "enter" || k == "space"):
+				e.menu, e.menuAt = true, st.Now
+				e.menuSel = max(0, slices.Index(engine.CacheMaxAges, d.CacheMaxAge))
 			case k == "enter" && row != eAge:
 				e.err = ""
 				e.field = ui.NewField("", a.editValue(row, d), a.editHint(row, d), false)
@@ -254,6 +259,14 @@ func (a *Add) remountSave(st *core.State, d api.Drive, u api.DriveUpdate, rename
 	})
 }
 
+func (a *Add) pickAge(st *core.State, d api.Drive) tea.Cmd {
+	a.ed.menu = false
+	if ag := engine.CacheMaxAges[a.ed.menuSel]; ag != d.CacheMaxAge {
+		return a.remountSave(st, d, api.DriveUpdate{CacheMaxAge: ag}, false)
+	}
+	return nil
+}
+
 func (a *Add) flipLogin(st *core.State, d api.Drive) tea.Cmd {
 	on := !d.AtLogin
 	if a.ed.login != nil {
@@ -273,45 +286,38 @@ func (a *Add) saveEdit(st *core.State, u api.DriveUpdate, renamed bool) tea.Cmd 
 	})
 }
 
-// a header with what the drive is and its live state, then two quiet sections of values; the focused row lifts, a saved one ticks
+var ageLabels = map[string]string{"5m": "5 minutes", "15m": "15 minutes", "1h": "1 hour", "6h": "6 hours", "24h": "1 day", "7d": "7 days"}
+
+// the live status in the top border, two quiet sections of values in one column; a saved one ticks, keep-for opens a list
 func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 	p := ui.P()
 	e := &a.ed
 	d := a.live(st)
 	cw := win.Inner()
-	win.Title = d.Name
-	rows := editRows()
-	cur := rows[max(0, min(e.focus, len(rows)-1))]
-	body := ui.NewBox()
 	bg := p.Surface
-	fade := func(c color.Color, k int) color.Color { return ui.Mix(bg, c, e.shown(k, st.Now)) }
-
-	head := ui.L(bg)
+	win.Title = d.Name
 	switch {
 	case e.req != 0:
 		what := "Saving"
 		if e.remounting {
 			what = "Saving and remounting"
 		}
-		head.B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(what, p.Muted)
-	case e.err != "":
-		head.T(core.Fit(e.err, cw-18), p.Coral)
+		win.Corner = ui.L(bg).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(what, p.Muted).String()
 	default:
-		head.T(cmp.Or(a.prov.Name, d.ServiceType), fade(p.Muted, 0))
-		if d.Account != "" && d.Account != d.Name {
-			head.Sp(2).T(d.Account, fade(p.Faint, 0))
-		}
-		if k := d.AccountDrives; k > 1 {
-			head.Sp(2).T("shared with "+core.Count(k-1, "drive"), fade(p.Faint, 0))
-		}
+		win.Corner = ui.DriveStatus(d, st.T).Line(bg, true).String()
 	}
-	body.Put(0, 0, head.Right(cw, ui.DriveStatus(d, st.T).Line(bg, true)))
-
+	if e.err != "" {
+		win.Sub, win.SubBad = e.err, true
+	}
+	rows := editRows()
+	cur := rows[max(0, min(e.focus, len(rows)-1))]
+	body := ui.NewBox()
+	fade := func(c color.Color, k int) color.Color { return ui.Mix(bg, c, e.shown(k, st.Now)) }
 	section := func(y, k int, name string) {
 		l := ui.L(bg).Sp(2).T(name, fade(p.Faint, k)).Sp(1)
 		body.Put(0, y, l.T(strings.Repeat(ui.G.H, max(0, cw-l.Width()-1)), fade(ui.Mix(bg, p.Text, .1), k)).Pad(cw))
 	}
-	line := func(y, k, row int, label string, value func(bg color.Color, w int, k int) string) {
+	line := func(y, k, row int, label string, value func(rb color.Color, w int, k int) string) {
 		body.Add(0, y, ui.Row("item:"+strconv.Itoa(row), cw, row == cur, bg, func(rb color.Color, iw int) string {
 			l := ui.L(rb)
 			if row == cur {
@@ -320,35 +326,43 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 				l.T(label, fade(ui.Mix(p.Muted, p.Text, .55), k))
 			}
 			vw := iw - editLabelW
+			v := value(rb, vw, k)
 			if row == cur && e.field != nil {
-				return ui.L(rb).Raw(l.Pad(editLabelW)).Raw(ui.L(rb).Raw(e.field.View("edit", vw, true, rb).GetContent()).Pad(vw)).String()
+				v = e.field.View("edit", vw, true, rb).GetContent()
 			}
-			return ui.L(rb).Raw(l.Pad(editLabelW)).Raw(value(rb, vw, k)).String()
+			return ui.L(rb).Raw(l.Pad(editLabelW)).Raw(ui.L(rb).Raw(v).Pad(vw)).String()
 		}))
 	}
-	// a value right aligned; the one just saved shows a check that fades back into it
+	// values start where an edit starts, so editing never moves them; a saved one shows a check that fades out
 	text := func(row int, v, empty string) func(rb color.Color, w, k int) string {
 		return func(rb color.Color, w, k int) string {
 			fg := p.Text
 			if v == "" {
 				v, fg = empty, p.Faint
 			}
-			out := ui.L(rb)
+			out := ui.L(rb).T(core.Fit(v, w-3), fade(fg, k))
 			if row == e.saved && !ui.Reduced() {
 				if t := float64(st.Now.Sub(e.savedAt)) / float64(savedFor); t < 1 {
-					out.B(ui.G.Check+" ", ui.Mix(rb, p.Kelp, 1-t))
-					fg = ui.Mix(p.Kelp, fg, t)
+					out.Sp(2).B(ui.G.Check, ui.Mix(rb, p.Kelp, 1-t))
 				}
 			}
-			return ui.L(rb).Right(w, out.T(core.Fit(v, w-3), fade(fg, k)))
+			return out.String()
 		}
 	}
 
-	section(2, 1, "Drive")
-	line(3, 2, eName, "Name", text(eName, d.Name, ""))
-	line(4, 3, eSource, "Source folder", text(eSource, d.SubPath, "Whole account"))
-	line(5, 4, eMount, "Mount folder", text(eMount, d.LocalFolder, core.Home(d.Folder)))
-	line(6, 5, eLogin, "Connect at login", func(rb color.Color, w, k int) string {
+	section(0, 0, "Drive")
+	line(1, 1, eName, "Name", text(eName, d.Name, ""))
+	service := ui.L(bg).Sp(2).Raw(ui.L(bg).T("Service", fade(ui.Mix(p.Muted, p.Text, .55), 2)).Pad(editLabelW)).T(cmp.Or(a.prov.Name, d.ServiceType), fade(p.Text, 2))
+	if d.Account != "" && d.Account != d.Name {
+		service.Sp(2).T(d.Account, fade(p.Faint, 2))
+	}
+	if k := d.AccountDrives; k > 1 {
+		service.Sp(2).T("shared with "+core.Count(k-1, "drive"), fade(p.Faint, 2))
+	}
+	body.Put(0, 2, service.Pad(cw))
+	line(3, 3, eSource, "Source folder", text(eSource, d.SubPath, "Whole account"))
+	line(4, 4, eMount, "Mount folder", text(eMount, d.LocalFolder, core.Home(d.Folder)))
+	line(5, 5, eLogin, "Connect at login", func(rb color.Color, w, k int) string {
 		on := d.AtLogin
 		if e.login != nil {
 			on = *e.login
@@ -361,55 +375,55 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 			frac = ui.Ease(1-frac, frac, e.loginAt, st.Now, slideFor)
 		}
 		if e.shown(k, st.Now) < .5 {
-			return ui.L(rb).Pad(w)
+			return ""
 		}
-		return ui.L(rb).Right(w, ui.L(rb).Raw(ui.Switch(frac, rb)))
+		return ui.Switch(frac, rb)
 	})
-	section(8, 6, "Cache")
-	line(9, 7, eSize, "Size limit", text(eSize, d.CacheMaxSize, "No limit"))
-	line(10, 8, eAge, "Keep files for", func(rb color.Color, w, k int) string {
-		return ui.L(rb).Right(w, a.ageScale(st, d, rb, cur == eAge, k))
+	section(7, 6, "Cache")
+	line(8, 7, eSize, "Size limit", text(eSize, d.CacheMaxSize, "No limit"))
+	line(9, 8, eAge, "Keep files for", func(rb color.Color, w, k int) string {
+		caret := ui.G.Caret
+		if e.menu {
+			caret = "▴"
+			if ui.G.ASCII {
+				caret = "^"
+			}
+		}
+		return ui.L(rb).T(cmp.Or(ageLabels[d.CacheMaxAge], d.CacheMaxAge), fade(p.Text, k)).Sp(2).T(caret, fade(p.Faint, k)).String()
 	})
+	rowsUsed := 10
+	if e.menu {
+		// the list drops open under its row, items fading in one after another
+		for i, ag := range engine.CacheMaxAges {
+			t := ui.Ease(0, 1, e.menuAt.Add(time.Duration(i)*revealStep), st.Now, revealFor)
+			if ui.Reduced() {
+				t = 1
+			}
+			on := i == e.menuSel
+			ib := bg
+			if on {
+				ib = ui.Mix(bg, p.Accent, .22)
+			}
+			mark, mc := " ", p.Faint
+			if ag == d.CacheMaxAge {
+				mark, mc = ui.G.Check, p.Kelp
+			}
+			item := ui.L(ib).B(mark, ui.Mix(ib, mc, t)).Sp(1).T(ageLabels[ag], ui.Mix(ib, ui.Mix(p.Muted, p.Text, map[bool]float64{true: 1, false: .5}[on]), t)).Pad(16)
+			body.Hit(2+editLabelW, 10+i, "opt:"+strconv.Itoa(i), item)
+		}
+		rowsUsed += len(engine.CacheMaxAges)
+	}
 	win.Body = body
-	return 11
-}
-
-// the keep-for choices on a scale; the highlight crossfades to the next pick
-func (a *Add) ageScale(st *core.State, d api.Drive, rb color.Color, focused bool, k int) *ui.Line {
-	p := ui.P()
-	e := &a.ed
-	sel := cmp.Or(e.age, d.CacheMaxAge)
-	t := 1.0
-	if !ui.Reduced() {
-		t = ui.Ease(0, 1, e.ageAt, st.Now, slideFor)
-	}
-	strength := .22
-	if focused {
-		strength = .38
-	}
-	l := ui.L(rb)
-	for i, ag := range engine.CacheMaxAges {
-		on := 0.0
-		switch ag {
-		case sel:
-			on = t
-		case e.ageFrom:
-			on = 1 - t
-		}
-		short := strings.Replace(ag, "24h", "1d", 1)
-		fg := ui.Mix(p.Faint, p.Text, on)
-		l.Raw(ui.Paint(" "+short+" ", ui.Mix(rb, fg, e.shown(k, st.Now)), ui.Mix(rb, p.Accent, strength*on), on > .5))
-		if i < len(engine.CacheMaxAges)-1 {
-			l.Sp(1)
-		}
-	}
-	return l
+	return rowsUsed
 }
 
 func (a *Add) editActions(st *core.State) []core.Action {
 	e := &a.ed
 	if e.field != nil {
 		return []core.Action{{Key: "enter", Label: "save"}, {Key: "esc", Label: "cancel"}}
+	}
+	if e.menu {
+		return []core.Action{{Key: "↑↓", Label: "choose"}, {Key: "enter", Label: "select"}, {Key: "esc", Label: "close"}}
 	}
 	acts := []core.Action{{Key: "↑↓", Label: "move"}}
 	switch editRows()[max(0, min(e.focus, len(editRows())-1))] {
@@ -420,10 +434,7 @@ func (a *Add) editActions(st *core.State) []core.Action {
 		}
 		acts = append(acts, core.Action{Key: "enter", Label: label})
 	case eAge:
-		acts = append(acts, core.Action{Key: "← →", Label: "change"})
-		if e.age != "" && e.age != a.live(st).CacheMaxAge {
-			acts = append(acts, core.Action{Key: "enter", Label: "save", Accent: true})
-		}
+		acts = append(acts, core.Action{Key: "enter", Label: "change"})
 	default:
 		acts = append(acts, core.Action{Key: "enter", Label: "edit"})
 	}
