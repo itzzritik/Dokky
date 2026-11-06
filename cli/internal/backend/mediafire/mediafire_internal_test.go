@@ -211,7 +211,10 @@ func newTestFs(t *testing.T, fake *fakeAPI) *Fs {
 	if !hasLogin {
 		tokens(fake, "user/get_session_token", "session_token")
 	}
-	f, err := NewFs(ctx, "TestFake", "", configmap.Simple{"email": "user@example.com", "password": obscure.MustObscure("password")})
+	ri, err := fs.Find("mediafire")
+	require.NoError(t, err)
+	m := fs.ConfigMap(ri.Prefix, ri.Options, "TestFake", configmap.Simple{"email": "user@example.com", "password": obscure.MustObscure("password")})
+	f, err := NewFs(ctx, "TestFake", "", m)
 	require.NoError(t, err)
 	return f.(*Fs)
 }
@@ -701,9 +704,19 @@ func moveFs(t *testing.T) (*Fs, *fakeAPI) {
 		"myfiles": {folders: []map[string]any{folder("fA", "A"), folder("fB", "B")}, files: []map[string]any{file("q1", "a.txt")}},
 		"fA":      {files: []map[string]any{file("q9", "inside.txt")}},
 	}))
-	for _, r := range []string{"file/purge", "file/delete", "folder/purge", "file/move", "file/update", "folder/move", "folder/update"} {
+	for _, r := range []string{"file/purge", "file/delete", "folder/delete", "file/move", "file/update", "folder/move", "folder/update"} {
 		fake.handle(r, okRoute)
 	}
+	fake.handle("folder/purge", func(form url.Values, _ *http.Request) any {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		for _, d := range fake.calls["folder/delete"] {
+			if d.Get("folder_key") == form.Get("folder_key") {
+				return success()
+			}
+		}
+		return apiError(291, "Items cannot be deleted")
+	})
 	return newTestFs(t, fake), fake
 }
 
@@ -784,4 +797,27 @@ func TestCopyRenamesCopy(t *testing.T) {
 	assert.Equal(t, "fA", fake.last("file/copy").Get("folder_key"))
 	assert.Equal(t, "q2", fake.last("file/update").Get("quick_key"))
 	assert.Equal(t, "b.txt", fake.last("file/update").Get("filename"))
+}
+
+func TestOpenEmptyFileSkipsDownload(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	f := newTestFs(t, fake)
+	rc, err := testObject(f, 0).Open(ctx)
+	require.NoError(t, err)
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Empty(t, b)
+	assert.Equal(t, 0, fake.count("file/get_links"))
+}
+
+func TestEncodingCoversNamesMediaFireRefuses(t *testing.T) {
+	fake := newFakeAPI(t)
+	f := newTestFs(t, fake)
+	for _, name := range []string{" lead", "trail ", "trail.", "a?b", "a*b", "a\"b", "a<b", "a>b", "a|b", "a:b", "a\\b"} {
+		enc := f.opt.Enc.FromStandardName(name)
+		assert.NotEqual(t, name, enc, "name %q is sent as is", name)
+		assert.Equal(t, name, f.opt.Enc.ToStandardName(enc))
+	}
+	assert.Equal(t, "a%b#c&d~e", f.opt.Enc.FromStandardName("a%b#c&d~e"))
 }

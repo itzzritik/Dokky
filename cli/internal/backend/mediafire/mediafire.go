@@ -79,7 +79,15 @@ func init() {
 			Name:     config.ConfigEncoding,
 			Help:     config.ConfigEncodingHelp,
 			Advanced: true,
-			Default:  encoder.Display | encoder.EncodeBackSlash | encoder.EncodeInvalidUtf8 | encoder.EncodeRightSpace,
+			Default: encoder.Display |
+				encoder.EncodeBackSlash |
+				encoder.EncodeWin |
+				encoder.EncodeLeftSpace |
+				encoder.EncodeRightSpace |
+				encoder.EncodeRightPeriod |
+				encoder.EncodeLeftCrLfHtVt |
+				encoder.EncodeRightCrLfHtVt |
+				encoder.EncodeInvalidUtf8,
 		}},
 	})
 }
@@ -359,9 +367,12 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) error {
 			return fs.ErrorDirectoryNotEmpty
 		}
 	}
-	var out api.Base
-	if err := f.call(ctx, "folder/purge", url.Values{"folder_key": {dirID}}, &out); err != nil {
-		return fmt.Errorf("couldn't remove folder %q: %w", dir, err)
+	// MediaFire only purges folders that are already in its trash
+	for _, method := range []string{"folder/delete", "folder/purge"} {
+		var out api.Base
+		if err := f.call(ctx, method, url.Values{"folder_key": {dirID}}, &out); err != nil {
+			return fmt.Errorf("couldn't remove folder %q: %w", dir, err)
+		}
 	}
 	f.dirCache.FlushDir(dir)
 	return nil
@@ -529,6 +540,9 @@ func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
 }
 
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
+	if o.size == 0 {
+		return io.NopCloser(strings.NewReader("")), nil
+	}
 	var links api.Links
 	params := url.Values{"quick_key": {o.id}, "link_type": {"direct_download"}}
 	if err := o.fs.call(ctx, "file/get_links", params, &links); err != nil {
