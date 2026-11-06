@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -132,24 +131,20 @@ func keychainCheck(k doctor.Check) tui.Check {
 	return c
 }
 
-// each drive is its own server in Finder; without its name it falls back under Dokky
+// every drive sits under Dokky in Finder; a hosts line with more than Dokky on it is left from per-drive names
 func finderCheck(s api.State) tui.Check {
-	var names []string
-	for _, d := range s.Drives {
-		names = append(names, engine.Title(d.Name))
-	}
-	c := tui.Check{Name: "Finder names", Status: "Each drive on its own", Detail: "Every drive shows in Finder under its own name.", Tone: tui.Good,
-		Facts: [][2]string{{"Drives", strconv.Itoa(len(names))}, {"Set in", "/etc/hosts"}}}
-	if platform.FinderHostsReady(names) {
+	c := tui.Check{Name: "Finder name", Status: "Shows as " + platform.FinderHost, Detail: "Your drives show under " + platform.FinderHost + " in Finder, not localhost.", Tone: tui.Good,
+		Facts: [][2]string{{"Name", platform.FinderHost + " is 127.0.0.1"}, {"Set in", "/etc/hosts"}}}
+	if platform.FinderHostClean() {
 		return c
 	}
-	c.Status, c.Tone = "Grouped under Dokky", tui.Warn
+	c.Status, c.Tone = "Old drive names", tui.Warn
+	c.Auto = "Fix all puts back the single Dokky name. macOS asks for your password."
 	if !platform.FinderHostReady() {
-		c.Status = "Shows as localhost"
+		c.Status, c.Auto = "Shows as localhost", "Fix all adds the Dokky name. macOS asks for your password."
 	}
-	c.Auto = "Fix all gives each drive its own name in Finder. macOS asks for your password."
 	c.Repair = func() error {
-		if err := platform.EnsureFinderHosts(names); err != nil {
+		if err := platform.EnsureFinderHost(); err != nil {
 			return err
 		}
 		// a connected drive keeps its old server until it connects again; idle ones do that now

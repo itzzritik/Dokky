@@ -141,10 +141,9 @@ func (a *Add) submitName(st *core.State) tea.Cmd {
 	return a.run.start(st, nd)
 }
 
-// each drive is its own server in Finder; elsewhere it is a folder under ~/dokky
 func finderPath(name string) string {
 	if runtime.GOOS == "darwin" {
-		return name
+		return "Dokky › " + name
 	}
 	return "~/dokky/" + name
 }
