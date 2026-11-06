@@ -102,7 +102,7 @@ func (o *Overview) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		case "r":
 			var cmds []tea.Cmd
 			for _, d := range needy(st) {
-				cmds = append(cmds, core.RunPrimary(st, d))
+				cmds = append(cmds, core.RunMount(st, d))
 			}
 			return o, tea.Batch(cmds...)
 		}
@@ -135,7 +135,7 @@ func (o *Overview) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "a", Label: "add drive"})
 	}
 	if len(needy(st)) > 0 {
-		acts = append(acts, core.Action{Key: "r", Label: "reconnect"})
+		acts = append(acts, core.Action{Key: "r", Label: "remount"})
 	}
 	if !st.Snap.Account.LoggedIn {
 		acts = append(acts, core.Action{Key: "s", Label: "sign in"})
@@ -229,7 +229,7 @@ func banner(needs []api.Drive, w, h int) []string {
 			text = needs[0].Name + " needs a reconnect"
 		}
 	}
-	return ui.Banner(w, h, bad, text, "r", "reconnect")
+	return ui.Banner(w, h, bad, text, "r", "remount")
 }
 
 // a drive as a solid card: name, what it is and its status on the left, its space meter on the right
@@ -263,7 +263,7 @@ func row(st *core.State, it item, w int, sel bool) string {
 	return ui.RowLine(w, sel, nil, func(bg color.Color, iw int) string {
 		name, hint := "More services", "Search "+strconv.Itoa(max(0, len(st.Catalog)-11))+"+"
 		if it.prov != nil {
-			name, hint = it.prov.Name, it.prov.Hint
+			name, hint = it.prov.Name, it.prov.Desc
 		}
 		l := ui.L(bg)
 		if sel {
@@ -271,7 +271,8 @@ func row(st *core.State, it item, w int, sel bool) string {
 		} else {
 			l.T(name, p.Text)
 		}
-		return ui.L(bg).Raw(l.Pad(min(30, iw/3))).Sp(2).T(hint, p.Muted).Pad(iw)
+		nw := min(30, iw/3)
+		return ui.L(bg).Raw(l.Pad(nw)).Sp(2).T(core.Fit(hint, iw-nw-2), p.Muted).Pad(iw)
 	})
 }
 

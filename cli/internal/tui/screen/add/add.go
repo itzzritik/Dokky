@@ -47,7 +47,7 @@ func Open(st *core.State, typ string) tea.Cmd {
 }
 
 func Edit(st *core.State, d api.Drive) tea.Cmd {
-	a := &Add{edit: &d, step: name, ed: editForm{opened: st.Now, saving: -1, saved: -1}}
+	a := &Add{edit: &d, step: name, ed: editForm{saving: -1, saved: -1}}
 	a.prov, _ = provider(st, d.ServiceType)
 	if a.prov.Type == "" {
 		a.prov = api.Provider{Type: d.ServiceType, Name: d.ServiceName}

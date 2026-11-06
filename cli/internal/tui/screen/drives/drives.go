@@ -122,8 +122,16 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				return s, nil
 			}
 			return s, add.Edit(st, d)
-		case "o":
-			return s, core.RunPrimary(st, d)
+		case "m":
+			return s, core.RunMount(st, d)
+		case "v":
+			if d.State == api.Connected {
+				return s, core.OpenFolder(d.Folder)
+			}
+		case "d":
+			if d.State == api.Removed {
+				return s, core.RunMount(st, d)
+			}
 		}
 	}
 	return s, nil
@@ -153,9 +161,14 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 		acts = []core.Action{{Key: "esc", Label: "back"}}
 	}
 	acts = append(acts, core.Action{Key: "enter", Label: "edit"})
-	if p := core.Primary(d); p != "" {
-		// a drive that isn't mounted: connecting is the next thing to do
-		acts = append(acts, core.Action{Key: "o", Label: p, Accent: p == "connect"})
+	if m := core.MountLabel(d); m != "" {
+		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount"})
+	}
+	switch d.State {
+	case api.Connected:
+		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel()})
+	case api.Removed:
+		acts = append(acts, core.Action{Key: "d", Label: "remove here", Danger: true})
 	}
 	if st.Wide {
 		acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})

@@ -62,11 +62,7 @@ func MeterGrowing(since, now time.Time) bool { return MeterMoving() && now.Sub(s
 func SpaceMeter(w int, d api.Drive, t, grow float64, under color.Color) []string {
 	sp := d.Space
 	if sp == nil || sp.Total <= 0 {
-		why := "Connect to see it"
-		if d.State == api.Connected {
-			why = "Not reported"
-		}
-		return Meter(w, 0, t, false, under, []Seg{{Text: "Free space unknown", Tone: 1}}, nil, []Seg{{Text: why, Tone: 2}})
+		return Meter(w, 0, t, false, under, []Seg{{Text: "Free space unknown", Tone: 1}}, nil, []Seg{{Text: "Not reported", Tone: 2}})
 	}
 	used := 1 - float64(sp.Free)/float64(sp.Total)
 	left := []Seg{{Text: core.Size(int64(float64(sp.Total-sp.Free) * grow))}, {Text: " of " + core.Size(sp.Total), Tone: 2}}

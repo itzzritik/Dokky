@@ -74,7 +74,7 @@ func (m *menu) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {
 		switch k {
 		case "enter":
 			return m, m.run(m.items[m.cursor].Key)
-		case "esc", "m":
+		case "esc", "?":
 			return m, core.Close(m)
 		case "up":
 			m.move(-1)

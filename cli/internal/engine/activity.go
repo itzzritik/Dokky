@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/itzzritik/dokky/cli/internal/store"
 )
 
 const spaceTimeout = 10 * time.Second
@@ -36,15 +38,13 @@ type rcTransfer struct {
 	CompletedAt  time.Time `json:"completed_at"`
 }
 
-func (e *Engine) Space(id string) (free, total int64, ok bool) {
-	lm, live := e.snapshot()[id]
-	if !live {
-		return 0, 0, false
-	}
+func (e *Engine) Space(m store.Mount) (free, total int64, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), spaceTimeout)
 	defer cancel()
+	fsName := m.ServiceID + ":" + m.RemotePath
+	useServerSpace(ctx, fsName)
 	var out struct{ Total, Used, Free *int64 }
-	if runJob(ctx, "operations/about", map[string]any{"fs": lm.fs}, &out) != nil || out.Free == nil {
+	if runJob(ctx, "operations/about", map[string]any{"fs": fsName}, &out) != nil || out.Free == nil {
 		return 0, 0, false
 	}
 	switch {

@@ -329,7 +329,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		if s == "q" && len(a.windows) == 0 && !a.capturing() {
 			return a.quit()
 		}
-		if _, open := a.top().(*menu); s == "m" && len(a.windows) > 0 && !open && !a.capturing() {
+		if _, open := a.top().(*menu); s == "?" && len(a.windows) > 0 && !open && !a.capturing() {
 			return a.openMenu()
 		}
 		return a.updateTop(k)
@@ -337,7 +337,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 	switch s {
 	case "q":
 		return a.quit()
-	case "m":
+	case "?":
 		return a.openMenu()
 	case "u":
 		if a.updateReady() {

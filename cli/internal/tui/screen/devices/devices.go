@@ -108,11 +108,11 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	case "r":
 		s.rename = ui.NewField("", shown(d.Name), "Device name", false)
 		s.rename.Bare = true
-	case "d":
+	case "s":
 		if d.Current {
 			return tea.Batch(core.Close(s), SignOut())
 		}
-		return s.remove(d)
+		return s.signOut(d)
 	}
 	return nil
 }
@@ -152,18 +152,18 @@ func SignOut() tea.Cmd {
 	})
 }
 
-func (s *Devices) remove(d api.Device) tea.Cmd {
+func (s *Devices) signOut(d api.Device) tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
-		Question: "Remove " + core.Safe(d.Name) + "?",
-		Line:     "It signs out and stops getting your drives.",
-		Do:       "Remove",
+		Question: "Sign out " + core.Safe(shown(d.Name)) + "?",
+		Line:     "Your drives leave that computer. Your files stay.",
+		Do:       "Sign out",
 		Run: func(st *core.State, _ bool) tea.Cmd {
 			c, id := st.C, d.ID
 			return tea.Sequence(func() tea.Msg {
 				if err := c.RevokeDevice(context.Background(), id); err != nil {
 					return core.Toast{Text: core.Report(err), Bad: true}
 				}
-				return core.Toast{Text: "Removed"}
+				return core.Toast{Text: "Signed out " + core.Safe(shown(d.Name))}
 			}, s.load(st))
 		},
 	})
@@ -180,7 +180,7 @@ func (s *Devices) Actions(st *core.State) []core.Action {
 	if len(s.list) > 1 {
 		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
 	}
-	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "d", Label: "delete", Danger: true}, core.Action{Key: "esc", Label: "close"})
+	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "s", Label: "sign out", Danger: true}, core.Action{Key: "esc", Label: "close"})
 }
 
 func (s *Devices) Animating(*core.State) bool { return s.req != 0 && s.list == nil && !ui.Reduced() }

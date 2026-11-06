@@ -18,15 +18,13 @@ type picker struct {
 	search   *ui.Field
 	accounts []api.AccountRef
 	req      core.Req
-	all      bool
 	sel, top int
 }
 
 type option struct {
-	name, hint string
+	name, desc string
 	prov       api.Provider
 	acct       *api.AccountRef
-	more       bool
 }
 
 func (p *picker) load(st *core.State) tea.Cmd {
@@ -43,26 +41,18 @@ func (p *picker) options(st *core.State) []option {
 	for i := range p.accounts {
 		acct := &p.accounts[i]
 		prov, _ := provider(st, acct.Type)
-		hint := cmp.Or(prov.Name, acct.Type)
+		desc := "Reuse your " + cmp.Or(prov.Name, acct.Type) + " sign-in, no need to sign in again."
 		if acct.Drives > 0 {
-			hint += ", " + core.Count(acct.Drives, "drive")
+			desc = "Reuse your " + cmp.Or(prov.Name, acct.Type) + " sign-in, already used by " + core.Count(acct.Drives, "drive") + "."
 		}
 		if match(acct.Name) || match(prov.Name) {
-			out = append(out, option{name: acct.Name, hint: hint, prov: prov, acct: acct})
+			out = append(out, option{name: acct.Name, desc: desc, prov: prov, acct: acct})
 		}
 	}
-	more := 0
 	for _, pr := range st.Catalog {
-		if !pr.Popular && !p.all && q == "" {
-			more++
-			continue
+		if match(pr.Name) || match(pr.Type) || match(pr.Desc) {
+			out = append(out, option{name: pr.Name, desc: pr.Desc, prov: pr})
 		}
-		if match(pr.Name) || match(pr.Type) {
-			out = append(out, option{name: pr.Name, hint: pr.Hint, prov: pr})
-		}
-	}
-	if more > 0 {
-		out = append(out, option{name: "All services", hint: strconv.Itoa(more) + " more", more: true})
 	}
 	return out
 }
@@ -74,7 +64,7 @@ func (a *Add) updateChoose(msg tea.Msg, st *core.State) tea.Cmd {
 	case core.Click:
 		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "row:")); err == nil && i < len(opts) {
 			p.sel = i
-			return a.pickOption(st, opts[i])
+			return a.choose(st, opts[i].prov, opts[i].acct)
 		}
 		return nil
 	case tea.KeyPressMsg:
@@ -87,7 +77,7 @@ func (a *Add) updateChoose(msg tea.Msg, st *core.State) tea.Cmd {
 			return nil
 		case "enter":
 			if p.sel < len(opts) {
-				return a.pickOption(st, opts[p.sel])
+				return a.choose(st, opts[p.sel].prov, opts[p.sel].acct)
 			}
 			return nil
 		}
@@ -98,14 +88,6 @@ func (a *Add) updateChoose(msg tea.Msg, st *core.State) tea.Cmd {
 		p.sel, p.top = 0, 0
 	}
 	return cmd
-}
-
-func (a *Add) pickOption(st *core.State, o option) tea.Cmd {
-	if o.more {
-		a.pick.all = true
-		return nil
-	}
-	return a.choose(st, o.prov, o.acct)
 }
 
 // a group heading, a gap, or an option
@@ -131,6 +113,9 @@ func grouped(opts []option) []line {
 	return out
 }
 
+// rows under the list: a gap, a rule, a gap and one line of description
+const descRows = 4
+
 func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 	pal := ui.P()
 	p := &a.pick
@@ -139,8 +124,13 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 	body := ui.NewBox()
 	body.Add(0, 0, p.search.View("search", cw, true, pal.Surface))
 	opts := p.options(st)
+	if len(opts) == 0 {
+		body.Put(0, 2, win.Text("Nothing matches. Try another word.", pal.Faint))
+		win.Body = body
+		return 3
+	}
 	lines := grouped(opts)
-	room := max(3, min(14, win.Room(maxH)-2))
+	room := max(3, min(14, win.Room(maxH)-2-descRows))
 	p.sel = max(0, min(p.sel, len(opts)-1))
 	at := 0
 	for j, l := range lines {
@@ -148,9 +138,9 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 			at = j
 		}
 	}
-	// a group's first option brings its heading into view
+	// a group's first option brings its heading into view, and the list never starts on the gap between groups
 	head := at
-	for head > 0 && lines[head-1].opt < 0 {
+	for head > 0 && lines[head-1].opt < 0 && lines[head-1].head != "" {
 		head--
 	}
 	if head < p.top {
@@ -158,6 +148,9 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 	}
 	if at >= p.top+room {
 		p.top = at - room + 1
+	}
+	if l := lines[p.top]; l.opt < 0 && l.head == "" {
+		p.top++
 	}
 	rows := 0
 	for j := p.top; j < len(lines) && j < p.top+room; j++ {
@@ -169,24 +162,16 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 		}
 		i, o := l.opt, opts[l.opt]
 		body.Add(0, 2+rows, ui.Row("row:"+strconv.Itoa(i), cw, i == p.sel, pal.Surface, func(bg color.Color, iw int) string {
-			nc, hc := ui.Mix(pal.Muted, pal.Text, .6), pal.Faint
 			if i == p.sel {
-				nc, hc = pal.Text, pal.Muted
+				return ui.L(bg).B(o.name, pal.Text).Pad(iw)
 			}
-			l := ui.L(bg)
-			if i == p.sel {
-				l.B(o.name, nc)
-			} else {
-				l.T(o.name, nc)
-			}
-			return ui.L(bg).Raw(l.Pad(20)).T(o.hint, hc).Pad(iw)
+			return ui.L(bg).T(o.name, ui.Mix(pal.Muted, pal.Text, .6)).Pad(iw)
 		}))
 		rows++
 	}
-	if len(opts) == 0 {
-		body.Put(0, 2, win.Text("Nothing matches. Try another word.", pal.Faint))
-		rows = 1
-	}
+	y := 2 + rows + 1
+	body.Put(0, y, ui.L(pal.Surface).T(strings.Repeat(ui.G.H, cw), ui.Mix(pal.Surface, pal.Text, .1)).Pad(cw))
+	body.Put(0, y+2, ui.L(pal.Surface).Sp(2).T(core.Fit(opts[p.sel].desc, cw-2), pal.Muted).Pad(cw))
 	win.Body = body
-	return 2 + rows
+	return y + descRows - 1
 }
