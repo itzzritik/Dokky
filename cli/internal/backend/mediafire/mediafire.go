@@ -34,6 +34,7 @@ const (
 	defaultAppID  = "42511"
 	rootID        = "myfiles"
 	listChunk     = 1000
+	openTries     = 3
 	minSleep      = 100 * time.Millisecond
 	maxSleep      = 2 * time.Second
 	decayConstant = 2
@@ -543,26 +544,39 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	if o.size == 0 {
 		return io.NopCloser(strings.NewReader("")), nil
 	}
+	fs.FixRangeOption(options, o.size)
+	var err error
+	for range openTries {
+		var link string
+		if link, err = o.downloadLink(ctx); err != nil {
+			return nil, err
+		}
+		opts := rest.Opts{Method: "GET", RootURL: link, Options: options}
+		var resp *http.Response
+		err = o.fs.pacer.Call(func() (bool, error) {
+			resp, err = o.fs.srv.Call(ctx, &opts)
+			return shouldRetry(ctx, resp, err)
+		})
+		if err == nil {
+			return resp.Body, nil
+		}
+		if !fserrors.ShouldRetry(err) {
+			break
+		}
+	}
+	return nil, err
+}
+
+func (o *Object) downloadLink(ctx context.Context) (string, error) {
 	var links api.Links
 	params := url.Values{"quick_key": {o.id}, "link_type": {"direct_download"}}
 	if err := o.fs.call(ctx, "file/get_links", params, &links); err != nil {
-		return nil, fmt.Errorf("couldn't get download link: %w", err)
+		return "", fmt.Errorf("couldn't get download link: %w", err)
 	}
 	if len(links.Links) == 0 || links.Links[0].DirectDownload == "" {
-		return nil, fmt.Errorf("mediafire: no download link for %q", o.remote)
+		return "", fmt.Errorf("mediafire: no download link for %q", o.remote)
 	}
-	fs.FixRangeOption(options, o.size)
-	opts := rest.Opts{Method: "GET", RootURL: links.Links[0].DirectDownload, Options: options}
-	var resp *http.Response
-	err := o.fs.pacer.Call(func() (bool, error) {
-		var err error
-		resp, err = o.fs.srv.Call(ctx, &opts)
-		return shouldRetry(ctx, resp, err)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.Body, nil
+	return links.Links[0].DirectDownload, nil
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
@@ -574,9 +588,12 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 }
 
 func (o *Object) Remove(ctx context.Context) error {
-	var out api.Base
-	if err := o.fs.call(ctx, "file/purge", url.Values{"quick_key": {o.id}}, &out); err != nil {
-		return fmt.Errorf("couldn't delete %q: %w", o.remote, err)
+	// file/purge on a file outside the trash answers Success and keeps it
+	for _, method := range []string{"file/delete", "file/purge"} {
+		var out api.Base
+		if err := o.fs.call(ctx, method, url.Values{"quick_key": {o.id}}, &out); err != nil {
+			return fmt.Errorf("couldn't delete %q: %w", o.remote, err)
+		}
 	}
 	return nil
 }

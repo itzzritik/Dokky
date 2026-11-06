@@ -704,19 +704,23 @@ func moveFs(t *testing.T) (*Fs, *fakeAPI) {
 		"myfiles": {folders: []map[string]any{folder("fA", "A"), folder("fB", "B")}, files: []map[string]any{file("q1", "a.txt")}},
 		"fA":      {files: []map[string]any{file("q9", "inside.txt")}},
 	}))
-	for _, r := range []string{"file/purge", "file/delete", "folder/delete", "file/move", "file/update", "folder/move", "folder/update"} {
+	for _, r := range []string{"file/delete", "folder/delete", "file/move", "file/update", "folder/move", "folder/update"} {
 		fake.handle(r, okRoute)
 	}
-	fake.handle("folder/purge", func(form url.Values, _ *http.Request) any {
-		fake.mu.Lock()
-		defer fake.mu.Unlock()
-		for _, d := range fake.calls["folder/delete"] {
-			if d.Get("folder_key") == form.Get("folder_key") {
-				return success()
+	purgeAfterDelete := func(kind, key string) {
+		fake.handle(kind+"/purge", func(form url.Values, _ *http.Request) any {
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			for _, d := range fake.calls[kind+"/delete"] {
+				if d.Get(key) == form.Get(key) {
+					return success()
+				}
 			}
-		}
-		return apiError(291, "Items cannot be deleted")
-	})
+			return apiError(291, "Items cannot be deleted")
+		})
+	}
+	purgeAfterDelete("file", "quick_key")
+	purgeAfterDelete("folder", "folder_key")
 	return newTestFs(t, fake), fake
 }
 
@@ -724,8 +728,8 @@ func TestRemovePurgesFile(t *testing.T) {
 	ctx := context.Background()
 	f, fake := moveFs(t)
 	require.NoError(t, testObject(f, 1).Remove(ctx))
+	assert.Equal(t, "q1", fake.last("file/delete").Get("quick_key"))
 	assert.Equal(t, "q1", fake.last("file/purge").Get("quick_key"))
-	assert.Equal(t, 0, fake.count("file/delete"))
 }
 
 func TestRmdirRefusesNonEmpty(t *testing.T) {
@@ -820,4 +824,29 @@ func TestEncodingCoversNamesMediaFireRefuses(t *testing.T) {
 		assert.Equal(t, name, f.opt.Enc.ToStandardName(enc))
 	}
 	assert.Equal(t, "a%b#c&d~e", f.opt.Enc.FromStandardName("a%b#c&d~e"))
+}
+
+func TestOpenFetchesFreshLinkAfterManyResets(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	var hits atomic.Int32
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) <= 3 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			require.NoError(t, err)
+			_ = conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte("hello"))
+	}
+	f := newTestFs(t, fake)
+	f.pacer.SetRetries(2)
+	rc, err := testObject(f, 5).Open(ctx)
+	require.NoError(t, err)
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(b))
+	assert.Equal(t, 2, fake.count("file/get_links"))
 }
