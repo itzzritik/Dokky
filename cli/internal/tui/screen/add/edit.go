@@ -237,7 +237,7 @@ func (a *Add) remountSave(st *core.State, d api.Drive, u api.DriveUpdate, rename
 		Line:     name + " unmounts for a moment to remount.",
 		Do:       "Save",
 		Positive: true,
-		Run: func(st *core.State, _ bool) tea.Cmd {
+		Run: func(st *core.State) tea.Cmd {
 			a.ed.remounting = true
 			return a.saveEdit(st, u, renamed)
 		},

@@ -227,9 +227,10 @@ func (d *Daemon) removeDrive(ctx context.Context, r api.DriveRemove) (any, error
 	if !ok {
 		return nil, fmt.Errorf("no drive with id %q", r.ID)
 	}
-	if err := d.deleteMount(ctx, r.ID, false); err != nil || !r.ForgetAccount {
+	if err := d.deleteMount(ctx, r.ID, false); err != nil {
 		return nil, err
 	}
+	// an account's last drive takes its sign-in with it, here and on the server
 	if _, used := d.findMount(func(x store.Mount) bool { return x.ServiceID == m.ServiceID }); used {
 		return nil, nil
 	}

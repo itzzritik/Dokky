@@ -23,7 +23,7 @@ func offerDriver() tea.Cmd {
 		Line:     "Windows needs it to show your drives as folders. Windows asks for permission first.",
 		Do:       "Install",
 		Positive: true,
-		Run: func(*core.State, bool) tea.Cmd {
+		Run: func(*core.State) tea.Cmd {
 			return tea.Batch(core.Say("Installing WinFsp"), func() tea.Msg { return driverDone{platform.InstallWinFsp()} })
 		},
 	})

@@ -67,8 +67,9 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 		errs <- err
 	}()
 	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
-	// locallocks: macOS only reads AppleDouble attributes (the mount icon) under a lock, and the server has no lock service
-	args := []string{"-o", "port=" + port, "-o", "mountport=" + port, "-o", "tcp", "-o", "locallocks"}
+	// locallocks: macOS only reads AppleDouble attributes (the mount icon) under a lock, and the server has no lock service.
+	// mutejukebox: a call still waiting on the cloud is told to try later, which must not show "Server connections interrupted"
+	args := []string{"-o", "port=" + port, "-o", "mountport=" + port, "-o", "tcp", "-o", "locallocks", "-o", "mutejukebox"}
 	for _, o := range opt.ExtraOptions {
 		args = append(args, "-o", o)
 	}
@@ -115,7 +116,13 @@ type iconHandler struct {
 	next     uint64
 	listings map[uint64]listing
 	order    []uint64
+
+	statMu  sync.Mutex
+	stat    *gonfs.FSStat
+	statRun chan struct{}
 }
+
+const statWait = time.Second
 
 func newIconHandler(h gonfs.Handler) *iconHandler {
 	return &iconHandler{Handler: h, next: uint64(time.Now().UnixNano()), listings: map[uint64]listing{}}
@@ -150,8 +157,38 @@ func (h *iconHandler) Mount(ctx context.Context, c net.Conn, r gonfs.MountReques
 
 func (h *iconHandler) Change(f billy.Filesystem) billy.Change { return h.Handler.Change(unwrapFS(f)) }
 
+// Finder asks for free space often and right after wake; a slow cloud answer is served from the last one
 func (h *iconHandler) FSStat(ctx context.Context, f billy.Filesystem, s *gonfs.FSStat) error {
-	return h.Handler.FSStat(ctx, unwrapFS(f), s)
+	h.statMu.Lock()
+	run := h.statRun
+	if run == nil {
+		run = make(chan struct{})
+		h.statRun = run
+		fresh := *s
+		go func() {
+			err := h.Handler.FSStat(context.Background(), unwrapFS(f), &fresh)
+			h.statMu.Lock()
+			if err == nil {
+				h.stat = &fresh
+			}
+			h.statRun = nil
+			h.statMu.Unlock()
+			close(run)
+		}()
+	}
+	h.statMu.Unlock()
+	t := time.NewTimer(statWait)
+	defer t.Stop()
+	select {
+	case <-run:
+	case <-t.C:
+	}
+	h.statMu.Lock()
+	defer h.statMu.Unlock()
+	if h.stat != nil {
+		*s = *h.stat
+	}
+	return nil
 }
 
 func (h *iconHandler) ToHandle(f billy.Filesystem, p []string) []byte {

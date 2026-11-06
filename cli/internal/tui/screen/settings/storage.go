@@ -37,7 +37,7 @@ func clearCache() tea.Cmd {
 		Question: "Clear cached files?",
 		Line:     "Mounted drives remount for a moment.",
 		Do:       "Clear",
-		Run: func(st *core.State, _ bool) tea.Cmd {
+		Run: func(st *core.State) tea.Cmd {
 			c := st.C
 			return tea.Batch(core.Say("Clearing cached files"), func() tea.Msg {
 				if err := c.ClearCache(context.Background()); err != nil {
