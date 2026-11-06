@@ -386,7 +386,26 @@ func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
 }
 
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	return nil, fs.ErrorNotImplemented
+	var links api.Links
+	params := url.Values{"quick_key": {o.id}, "link_type": {"direct_download"}}
+	if err := o.fs.call(ctx, "file/get_links", params, &links); err != nil {
+		return nil, fmt.Errorf("couldn't get download link: %w", err)
+	}
+	if len(links.Links) == 0 || links.Links[0].DirectDownload == "" {
+		return nil, fmt.Errorf("mediafire: no download link for %q", o.remote)
+	}
+	fs.FixRangeOption(options, o.size)
+	opts := rest.Opts{Method: "GET", RootURL: links.Links[0].DirectDownload, Options: options}
+	var resp *http.Response
+	err := o.fs.pacer.Call(func() (bool, error) {
+		var err error
+		resp, err = o.fs.srv.Call(ctx, &opts)
+		return shouldRetry(ctx, resp, err)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {

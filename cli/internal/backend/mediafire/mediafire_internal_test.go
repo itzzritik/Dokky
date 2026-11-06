@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -406,4 +408,71 @@ func TestAbout(t *testing.T) {
 	assert.Equal(t, int64(1000), *u.Used)
 	assert.Equal(t, int64(10737418240), *u.Total)
 	assert.Equal(t, int64(10737417240), *u.Free)
+}
+
+func linkTo(fake *fakeAPI, p string) {
+	fake.handle("file/get_links", func(url.Values, *http.Request) any {
+		return success("links", []map[string]any{{"quickkey": "q1", "direct_download": fake.srv.URL + p}})
+	})
+}
+
+func testObject(f *Fs, size int64) *Object {
+	return &Object{fs: f, remote: "x.mp4", id: "q1", size: size}
+}
+
+func TestOpenPassesRange(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "bytes=436316177-437364752", r.Header.Get("Range"))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(make([]byte, 1048576))
+	}
+	f := newTestFs(t, fake)
+	rc, err := testObject(f, 872632354).Open(ctx, &fs.RangeOption{Start: 436316177, End: 437364752})
+	require.NoError(t, err)
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Len(t, b, 1048576)
+	assert.Equal(t, "q1", fake.last("file/get_links").Get("quick_key"))
+	assert.Equal(t, "direct_download", fake.last("file/get_links").Get("link_type"))
+}
+
+func TestOpenRetriesConnectionReset(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	var hits atomic.Int32
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			require.NoError(t, err)
+			_ = conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte("hello"))
+	}
+	f := newTestFs(t, fake)
+	rc, err := testObject(f, 5).Open(ctx)
+	require.NoError(t, err)
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(b))
+	assert.Equal(t, int32(2), hits.Load())
+}
+
+func TestOpenWithoutLinkFails(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("file/get_links", func(url.Values, *http.Request) any {
+		return success("links", []map[string]any{{"quickkey": "q1", "direct_download": ""}})
+	})
+	f := newTestFs(t, fake)
+	rc, err := testObject(f, 5).Open(ctx)
+	assert.ErrorContains(t, err, "no download link")
+	assert.Nil(t, rc)
+	assert.Equal(t, 1, fake.count("file/get_links"))
 }
