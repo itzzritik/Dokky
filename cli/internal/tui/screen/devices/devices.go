@@ -246,7 +246,7 @@ func chip(d api.Device) string {
 	return d.Arch
 }
 
-// a device as a soft card: its name and where it stands, then what it runs, its drives and its dokky
+// a device as a soft card: its name and where it stands, then what it runs and its dokky version
 func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.Layer {
 	p := ui.P()
 	return ui.Card("row:"+d.ID, w, on, ui.Mix(p.Surface, p.Text, .045), p.Surface, func(bg color.Color, iw int) []string {
@@ -269,9 +269,9 @@ func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.L
 		if c := chip(d); c != "" {
 			system.Sp(2).T(c, p.Faint)
 		}
-		meta := ui.L(bg).T(core.Count(d.Drives, "drive"), p.Faint)
+		meta := ui.L(bg)
 		if d.Version != "" {
-			meta.Sp(3).T("dokky "+d.Version, p.Faint)
+			meta.T("v"+d.Version, p.Faint)
 		}
 		return []string{name.Right(iw, status), system.Right(iw, meta)}
 	})

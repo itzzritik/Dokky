@@ -37,6 +37,7 @@ type Window struct {
 	W, H            int
 	Title, Sub      string
 	Steps           []Step
+	Corner          string // painted text in the top border's right end, like a status
 	Ok, Bad, SubBad bool
 	Body            *Box
 	Buttons         []Btn
@@ -92,8 +93,12 @@ func (w *Window) Layer() *lipgloss.Layer {
 	}
 	title.B(core.Fit(w.Title, w.W-12), tc)
 	tl := L(bg).Sp(1).Raw(title.String()).Sp(1)
-	run := max(0, w.W-6-tl.Width())
-	top := blank(1) + line(G.TL+G.H) + tl.String() + line(strings.Repeat(G.H, run)) + line(G.H+G.TR) + blank(1)
+	rl := L(bg)
+	if w.Corner != "" {
+		rl.Sp(1).Raw(w.Corner).Sp(1)
+	}
+	run := max(0, w.W-6-tl.Width()-rl.Width())
+	top := blank(1) + line(G.TL+G.H) + tl.String() + line(strings.Repeat(G.H, run)) + rl.String() + line(G.H+G.TR) + blank(1)
 
 	fill := make([]string, w.H)
 	for i := range fill {

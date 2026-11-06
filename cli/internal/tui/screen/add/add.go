@@ -114,7 +114,7 @@ func (a *Add) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		return a, nil
 	}
 	// esc while typing a value only drops that edit
-	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" && (a.edit == nil || a.step != name || a.ed.field == nil) {
+	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" && (a.edit == nil || a.step != name || a.ed.field == nil && !a.ed.menu) {
 		return a, a.back(st)
 	}
 	if c, ok := msg.(core.Click); ok {
@@ -142,19 +142,16 @@ func (a *Add) back(st *core.State) tea.Cmd {
 		return core.Close(a)
 	case a.step == connect:
 		a.goTo(name)
-	case a.step == signin && a.sign.working():
-		a.sign.stop()
 	case a.step == signin && a.edit != nil:
+		a.sign.stop()
 		a.goTo(name)
-	// signed in already, so going back starts over instead of landing on a finished sign-in
-	case a.step == name && a.edit == nil:
+	// a new drive starts over from Service, dropping any sign-in waiting in the browser or already done
+	case a.step == signin || a.step == name && a.edit == nil:
 		a.sign.stop()
 		a.sign, a.account = signForm{}, nil
 		a.goTo(choose)
 	case a.step == choose || a.edit != nil:
 		return core.Close(a)
-	default:
-		a.goTo(choose)
 	}
 	return nil
 }
@@ -218,21 +215,25 @@ func (a *Add) Actions(st *core.State) []core.Action {
 	case choose:
 		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "choose"}, {Key: "esc", Label: "close"}}
 	case signin:
+		esc := core.Action{Key: "esc", Label: "start over"}
+		if a.edit != nil {
+			esc.Label = "back"
+		}
 		if a.sign.working() && a.sign.authURL != "" {
-			return []core.Action{{Key: "c", Label: "copy link"}, {Key: "o", Label: "open again"}, {Key: "esc", Label: "stop"}}
+			return []core.Action{{Key: "c", Label: "copy link"}, {Key: "o", Label: "open again"}, esc}
 		}
 		if a.sign.working() {
-			return []core.Action{{Key: "esc", Label: "stop"}}
+			return []core.Action{esc}
 		}
 		if a.sign.oauth && a.sign.question == nil {
-			return []core.Action{{Key: "enter", Label: "open browser"}, {Key: "esc", Label: "back"}}
+			return []core.Action{{Key: "enter", Label: "open browser"}, esc}
 		}
-		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "continue"}, {Key: "esc", Label: "back"}}
+		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "continue"}, esc}
 	case name:
 		if a.edit != nil {
 			return a.editActions(st)
 		}
-		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "add drive"}, {Key: "esc", Label: "back"}}
+		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "add drive"}, {Key: "esc", Label: "start over"}}
 	}
 	switch r := a.run; {
 	case r.working():
