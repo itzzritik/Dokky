@@ -37,7 +37,14 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// nothing waits before the TUI: it starts the service, updates and fixes problems in the background
-			err := tui.Run(cmd.Context(), tui.Deps{Reopened: os.Getenv(updatedEnv) != "", Start: func() error { return startDaemon(io.Discard) }, Doctor: doctorChecks, Uninstall: uninstall})
+			start := func() error { return startDaemon(io.Discard) }
+			if buildinfo.Dev() {
+				start = func() error { return useDevDaemon(io.Discard) }
+				if err := useDevDaemon(os.Stderr); err != nil {
+					fmt.Fprintln(os.Stderr, "dokky:", err)
+				}
+			}
+			err := tui.Run(cmd.Context(), tui.Deps{Reopened: os.Getenv(updatedEnv) != "", Start: start, Doctor: doctorChecks, Uninstall: uninstall})
 			if errors.Is(err, tui.ErrReopen) {
 				return reopen()
 			}

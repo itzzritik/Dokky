@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -16,21 +17,37 @@ func DriveStatus(d api.Drive, t float64) Status {
 	p := P()
 	switch d.State {
 	case api.Connected:
-		return Status{G.Check, "Connected", p.Kelp, p.Kelp}
+		return Status{G.Check, "Mounted", p.Kelp, p.Kelp}
 	case api.Connecting:
-		return Status{Spin(t), "Connecting", SpinFg(t), p.Accent}
+		return Status{Spin(t), "Mounting", SpinFg(t), p.Accent}
 	case api.Failed:
-		host := d.Account
-		if _, h, ok := strings.Cut(host, "@"); ok {
-			host = h
-		}
-		return Status{G.Cross, "Can't reach " + host, p.Coral, p.Coral}
+		return Status{G.Cross, failWords(d.Error), p.Coral, p.Coral}
 	case api.Removed:
 		return Status{G.Cross, "Removed elsewhere", p.Faint, p.Muted}
 	case api.Reconnect:
-		return Status{G.Bang, "Reconnect to apply", p.Buoy, p.Buoy}
+		return Status{G.Bang, "Remount to apply", p.Buoy, p.Buoy}
 	}
-	return Status{G.Dash, "Not connected", p.Faint, p.Muted}
+	return Status{G.Dash, "Not mounted", p.Faint, p.Muted}
+}
+
+var (
+	offline = []string{"no such host", "dial tcp", "connection refused", "connection reset", "timeout", "timed out", "did not answer", "unreachable", "tls", "eof", "502", "503", "504", "unavailable"}
+	signIn  = []string{"login", "unauthorized", "401", "invalid_grant", "token", "expired", "auth", "password", "credential", "access key", "signature"}
+)
+
+// why a drive failed in a word or two; network first, since a sign-in that can't reach the service also says login
+func failWords(err string) string {
+	e := strings.ToLower(err)
+	has := func(words []string) bool {
+		return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(e, w) })
+	}
+	switch {
+	case has(offline):
+		return "Unreachable"
+	case has(signIn):
+		return "Login failed"
+	}
+	return "Mount failed"
 }
 
 // icon then words, for the right end of a row or tile

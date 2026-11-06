@@ -177,7 +177,7 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 	if live && waiting > 0 && m.RemotePath != old.RemotePath {
 		return api.Drive{}, fmt.Errorf("%s still uploading to %s, change its folder once they finish", uploadsLeft(waiting), old.Name)
 	}
-	// a change the live mount can't take: take it down, save, and bring it back, instead of waiting on "Reconnect to apply"
+	// a change the live mount can't take: take it down, save, and bring it back, instead of waiting on "Remount to apply"
 	remount := live && (dsync.MountNeedsRemount(old, m) || moved)
 	if remount {
 		if err := d.unmount(u.ID); err != nil {
@@ -197,7 +197,7 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 	}()
 	if remount {
 		if merr := d.mount(u.ID); merr != nil && err == nil {
-			err = fmt.Errorf("saved, but %s could not connect again: %w", m.Name, merr)
+			err = fmt.Errorf("saved, but %s could not mount again: %w", m.Name, merr)
 		}
 		// mounting marks it to connect at login; keep what it was
 		d.mu.Lock()

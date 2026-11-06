@@ -85,7 +85,7 @@ func (a *Add) goTo(s step) { a.step = s }
 
 // Service, Sign in, Details, Connect; sign-in is skipped when an account already signed in was picked
 func (a *Add) steps() []ui.Step {
-	out := []ui.Step{{Label: "Service"}, {Label: "Sign in"}, {Label: "Details"}, {Label: "Connect"}}
+	out := []ui.Step{{Label: "Service"}, {Label: "Sign in"}, {Label: "Details"}, {Label: "Mount"}}
 	for i := range out {
 		switch s := step(i); {
 		case s == signin && a.account != nil && a.step > choose:

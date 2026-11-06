@@ -29,7 +29,7 @@ func details(st *core.State, b *ui.Box, d api.Drive, x, w, h int, grow float64) 
 	}
 	at := "Stays off"
 	if d.AtLogin {
-		at = "Connects automatically"
+		at = "Mounts automatically"
 	}
 	cache := "Empty"
 	if d.CacheBytes > 0 {

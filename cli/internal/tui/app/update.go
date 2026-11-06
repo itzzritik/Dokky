@@ -68,7 +68,7 @@ func (a *App) onInstalled(m installed) tea.Cmd {
 	switch {
 	case m.err != nil:
 		a.st.Updating = ""
-		return core.Send(core.Toast{Text: "Couldn't update. dokky tries again later.", Bad: true})
+		return nil
 	case m.version == "" || m.version == buildinfo.Version:
 		a.st.Updating = ""
 		return core.Say("dokky is up to date")

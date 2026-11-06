@@ -20,7 +20,7 @@ const (
 	earlierLen = 50
 	heartbeat  = 5 * time.Second
 	spaceEvery = 30 * time.Second
-	// a drive that isn't connected has no open session, and some services log in again for each check
+	// a drive that isn't connected has no open session, and some services sign in again for each check
 	spaceIdle  = 15 * time.Minute
 	spaceRetry = time.Minute
 )
@@ -218,13 +218,17 @@ func (d *Daemon) retry(p retryParams) (any, error) {
 	}
 	d.mu.Unlock()
 	if key == "" {
-		return nil, fmt.Errorf("connect the drive to retry %s", p.Name)
+		return nil, fmt.Errorf("mount the drive to retry %s", p.Name)
 	}
 	return nil, d.eng.Retry(key, p.Name)
 }
 
 func (d *Daemon) refreshSpace(now time.Time) {
-	var list []store.Mount
+	type due struct {
+		m       store.Mount
+		mounted bool
+	}
+	var list []due
 	d.mu.Lock()
 	kept := map[string]bool{}
 	for _, m := range d.data.Mounts {
@@ -233,12 +237,12 @@ func (d *Daemon) refreshSpace(now time.Time) {
 		if d.data.Local[m.ID].RemovedRemotely || st != nil && st.state == stateMounting || now.Before(d.spaceAt[m.ID]) {
 			continue
 		}
-		every := spaceIdle
-		if st != nil && st.state == stateMounted {
+		x, every := due{m: m, mounted: st != nil && st.state == stateMounted}, spaceIdle
+		if x.mounted {
 			every = spaceEvery
 		}
 		d.spaceAt[m.ID] = now.Add(every)
-		list = append(list, m)
+		list = append(list, x)
 	}
 	for id := range d.space {
 		if !kept[id] {
@@ -247,13 +251,14 @@ func (d *Daemon) refreshSpace(now time.Time) {
 		}
 	}
 	d.mu.Unlock()
-	for _, m := range list {
+	for _, x := range list {
+		m := x.m
 		go func() {
 			free, total, ok := d.eng.Space(m)
 			d.mu.Lock()
 			if !ok {
-				// a slow or failed check keeps the last answer, and a drive with none yet asks again soon
-				if _, had := d.space[m.ID]; !had {
+				// a failed check keeps the last answer; only a mounted drive asks again soon, since for an unmounted one each try is a fresh sign-in, and MEGA blocks accounts that sign in too often
+				if _, had := d.space[m.ID]; !had && x.mounted {
 					d.spaceAt[m.ID] = time.Now().Add(spaceRetry)
 				}
 				d.mu.Unlock()

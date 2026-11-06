@@ -34,7 +34,7 @@ func (a *App) onDriverDone(m driverDone) tea.Cmd {
 	switch {
 	case errors.Is(m.err, exec.ErrNotFound):
 		_ = platform.OpenURL(winfspPage)
-		return core.Say("Install WinFsp from winfsp.dev, then reconnect")
+		return core.Say("Install WinFsp from winfsp.dev, then mount again")
 	case m.err != nil:
 		return core.Fail(fmt.Errorf("could not install WinFsp: %w", m.err))
 	}

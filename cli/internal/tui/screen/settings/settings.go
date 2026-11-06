@@ -70,7 +70,7 @@ func (s *Settings) rows(st *core.State) []row {
 	p := ui.P()
 	set, acct := s.current(st), st.Snap.Account
 	rows := []row{
-		s.toggle(st, "General", "Notify when a drive disconnects", set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
+		s.toggle(st, "General", "Notify when a drive is ejected", set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
 		// between the switches, so their pills don't touch
 		{label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
 		s.toggle(st, "", "Automatic updates", set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),

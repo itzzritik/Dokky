@@ -20,7 +20,7 @@ var driveStates = map[string]api.DriveState{
 func (d *Daemon) snapshot() api.State {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	s := api.State{Version: buildinfo.Version, Drives: []api.Drive{}, Clashes: []api.Clash{}, CacheDir: d.cacheDir, Settings: apiSettings(d.data.Settings)}
+	s := api.State{Version: buildinfo.Version, Build: buildinfo.Stamp(), Drives: []api.Drive{}, Clashes: []api.Clash{}, CacheDir: d.cacheDir, Settings: apiSettings(d.data.Settings)}
 	if a := d.data.Account; a != nil {
 		s.Account = api.Account{LoggedIn: true, Pending: a.Pending, Name: a.Name, Email: a.Email, LastSyncAt: a.LastSyncAt}
 	}
