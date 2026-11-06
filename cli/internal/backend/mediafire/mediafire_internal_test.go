@@ -674,3 +674,114 @@ func TestMkdirCreatesFolder(t *testing.T) {
 	assert.Equal(t, "New", form.Get("foldername"))
 	assert.Equal(t, "myfiles", form.Get("parent_key"))
 }
+
+type node struct{ folders, files []map[string]any }
+
+func tree(nodes map[string]node) route {
+	return func(form url.Values, _ *http.Request) any {
+		n := nodes[form.Get("folder_key")]
+		if form.Get("content_type") == "folders" {
+			return success("folder_content", map[string]any{"folders": n.folders, "more_chunks": "no"})
+		}
+		return success("folder_content", map[string]any{"files": n.files, "more_chunks": "no"})
+	}
+}
+
+func okRoute(url.Values, *http.Request) any { return success() }
+
+func folder(key, name string) map[string]any { return map[string]any{"folderkey": key, "name": name} }
+
+func file(key, name string) map[string]any {
+	return map[string]any{"quickkey": key, "filename": name, "size": "1"}
+}
+
+func moveFs(t *testing.T) (*Fs, *fakeAPI) {
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", tree(map[string]node{
+		"myfiles": {folders: []map[string]any{folder("fA", "A"), folder("fB", "B")}, files: []map[string]any{file("q1", "a.txt")}},
+		"fA":      {files: []map[string]any{file("q9", "inside.txt")}},
+	}))
+	for _, r := range []string{"file/purge", "file/delete", "folder/purge", "file/move", "file/update", "folder/move", "folder/update"} {
+		fake.handle(r, okRoute)
+	}
+	return newTestFs(t, fake), fake
+}
+
+func TestRemovePurgesFile(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	require.NoError(t, testObject(f, 1).Remove(ctx))
+	assert.Equal(t, "q1", fake.last("file/purge").Get("quick_key"))
+	assert.Equal(t, 0, fake.count("file/delete"))
+}
+
+func TestRmdirRefusesNonEmpty(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	assert.ErrorIs(t, f.Rmdir(ctx, "A"), fs.ErrorDirectoryNotEmpty)
+	assert.Equal(t, 0, fake.count("folder/purge"))
+}
+
+func TestRmdirPurgesEmptyFolder(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	require.NoError(t, f.Rmdir(ctx, "B"))
+	assert.Equal(t, "fB", fake.last("folder/purge").Get("folder_key"))
+}
+
+func TestPurgeRemovesFolderWithContents(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	require.NoError(t, f.Purge(ctx, "A"))
+	assert.Equal(t, "fA", fake.last("folder/purge").Get("folder_key"))
+}
+
+func TestMoveRenameOnly(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	src := &Object{fs: f, remote: "a.txt", id: "q1", size: 1}
+	dst, err := f.Move(ctx, src, "b.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "b.txt", dst.Remote())
+	assert.Equal(t, "q1", fake.last("file/update").Get("quick_key"))
+	assert.Equal(t, "b.txt", fake.last("file/update").Get("filename"))
+	assert.Equal(t, 0, fake.count("file/move"))
+}
+
+func TestMoveToOtherFolder(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	src := &Object{fs: f, remote: "a.txt", id: "q1", size: 1}
+	dst, err := f.Move(ctx, src, "A/a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "A/a.txt", dst.Remote())
+	assert.Equal(t, "q1", fake.last("file/move").Get("quick_key"))
+	assert.Equal(t, "fA", fake.last("file/move").Get("folder_key"))
+	assert.Equal(t, 0, fake.count("file/update"))
+}
+
+func TestDirMoveMovesAndRenames(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	require.NoError(t, f.DirMove(ctx, f, "A", "B/C"))
+	assert.Equal(t, "fA", fake.last("folder/move").Get("folder_key_src"))
+	assert.Equal(t, "fB", fake.last("folder/move").Get("folder_key_dst"))
+	assert.Equal(t, "fA", fake.last("folder/update").Get("folder_key"))
+	assert.Equal(t, "C", fake.last("folder/update").Get("foldername"))
+}
+
+func TestCopyRenamesCopy(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t)
+	fake.handle("file/copy", func(url.Values, *http.Request) any {
+		return success("new_quickkeys", []string{"q2"})
+	})
+	src := &Object{fs: f, remote: "a.txt", id: "q1", size: 1}
+	dst, err := f.Copy(ctx, src, "A/b.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "q2", dst.(*Object).id)
+	assert.Equal(t, "q1", fake.last("file/copy").Get("quick_key"))
+	assert.Equal(t, "fA", fake.last("file/copy").Get("folder_key"))
+	assert.Equal(t, "q2", fake.last("file/update").Get("quick_key"))
+	assert.Equal(t, "b.txt", fake.last("file/update").Get("filename"))
+}

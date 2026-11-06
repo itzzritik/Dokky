@@ -335,7 +335,130 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	return fs.ErrorNotImplemented
+	return f.purgeCheck(ctx, dir, true)
+}
+
+func (f *Fs) Purge(ctx context.Context, dir string) error {
+	return f.purgeCheck(ctx, dir, false)
+}
+
+func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) error {
+	if path.Join(f.root, dir) == "" {
+		return errors.New("mediafire: can't remove the root folder")
+	}
+	dirID, err := f.dirCache.FindDir(ctx, dir, false)
+	if err != nil {
+		return err
+	}
+	if check {
+		found, err := f.listAll(ctx, dirID, listBoth, func(*api.Folder, *api.File) bool { return true })
+		if err != nil {
+			return err
+		}
+		if found {
+			return fs.ErrorDirectoryNotEmpty
+		}
+	}
+	var out api.Base
+	if err := f.call(ctx, "folder/purge", url.Values{"folder_key": {dirID}}, &out); err != nil {
+		return fmt.Errorf("couldn't remove folder %q: %w", dir, err)
+	}
+	f.dirCache.FlushDir(dir)
+	return nil
+}
+
+func (f *Fs) renameFile(ctx context.Context, id, leaf string) error {
+	var out api.Base
+	params := url.Values{"quick_key": {id}, "filename": {f.opt.Enc.FromStandardName(leaf)}}
+	if err := f.call(ctx, "file/update", params, &out); err != nil {
+		return fmt.Errorf("couldn't rename file to %q: %w", leaf, err)
+	}
+	return nil
+}
+
+func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	srcObj, ok := src.(*Object)
+	if !ok {
+		return nil, fs.ErrorCantMove
+	}
+	srcLeaf, srcDirID, err := srcObj.fs.dirCache.FindPath(ctx, srcObj.remote, false)
+	if err != nil {
+		return nil, err
+	}
+	leaf, dirID, err := f.dirCache.FindPath(ctx, remote, true)
+	if err != nil {
+		return nil, err
+	}
+	if dirID != srcDirID {
+		var out api.Base
+		if err := f.call(ctx, "file/move", url.Values{"quick_key": {srcObj.id}, "folder_key": {dirID}}, &out); err != nil {
+			return nil, fmt.Errorf("couldn't move file: %w", err)
+		}
+	}
+	if leaf != srcLeaf {
+		if err := f.renameFile(ctx, srcObj.id, leaf); err != nil {
+			return nil, err
+		}
+	}
+	dst := *srcObj
+	dst.fs = f
+	dst.remote = remote
+	return &dst, nil
+}
+
+func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	srcFs, ok := src.(*Fs)
+	if !ok {
+		return fs.ErrorCantDirMove
+	}
+	srcID, srcDirectoryID, srcLeaf, dstDirectoryID, dstLeaf, err := f.dirCache.DirMove(ctx, srcFs.dirCache, srcFs.root, srcRemote, f.root, dstRemote)
+	if err != nil {
+		return err
+	}
+	if srcDirectoryID != dstDirectoryID {
+		var out api.Base
+		if err := f.call(ctx, "folder/move", url.Values{"folder_key_src": {srcID}, "folder_key_dst": {dstDirectoryID}}, &out); err != nil {
+			return fmt.Errorf("couldn't move folder: %w", err)
+		}
+	}
+	if srcLeaf != dstLeaf {
+		var out api.Base
+		params := url.Values{"folder_key": {srcID}, "foldername": {f.opt.Enc.FromStandardName(dstLeaf)}}
+		if err := f.call(ctx, "folder/update", params, &out); err != nil {
+			return fmt.Errorf("couldn't rename folder to %q: %w", dstLeaf, err)
+		}
+	}
+	srcFs.dirCache.FlushDir(srcRemote)
+	return nil
+}
+
+func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	srcObj, ok := src.(*Object)
+	if !ok {
+		return nil, fs.ErrorCantCopy
+	}
+	leaf, dirID, err := f.dirCache.FindPath(ctx, remote, true)
+	if err != nil {
+		return nil, err
+	}
+	var out api.FileCopy
+	if err := f.call(ctx, "file/copy", url.Values{"quick_key": {srcObj.id}, "folder_key": {dirID}}, &out); err != nil {
+		return nil, fmt.Errorf("couldn't copy file: %w", err)
+	}
+	if len(out.NewQuickKeys) == 0 {
+		return nil, fmt.Errorf("mediafire: copy of %q returned no file key", srcObj.remote)
+	}
+	id := out.NewQuickKeys[0]
+	if leaf != path.Base(srcObj.remote) {
+		if err := f.renameFile(ctx, id, leaf); err != nil {
+			return nil, err
+		}
+	}
+	dst := *srcObj
+	dst.fs = f
+	dst.remote = remote
+	dst.id = id
+	return &dst, nil
 }
 
 func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
@@ -437,7 +560,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 }
 
 func (o *Object) Remove(ctx context.Context) error {
-	return fs.ErrorNotImplemented
+	var out api.Base
+	if err := o.fs.call(ctx, "file/purge", url.Values{"quick_key": {o.id}}, &out); err != nil {
+		return fmt.Errorf("couldn't delete %q: %w", o.remote, err)
+	}
+	return nil
 }
 
 func newPacer(ctx context.Context) *fs.Pacer {
@@ -490,6 +617,10 @@ var (
 	_ fs.Fs              = (*Fs)(nil)
 	_ fs.Abouter         = (*Fs)(nil)
 	_ fs.DirCacheFlusher = (*Fs)(nil)
+	_ fs.Purger          = (*Fs)(nil)
+	_ fs.Mover           = (*Fs)(nil)
+	_ fs.DirMover        = (*Fs)(nil)
+	_ fs.Copier          = (*Fs)(nil)
 	_ fs.Object          = (*Object)(nil)
 	_ fs.IDer            = (*Object)(nil)
 )
