@@ -107,18 +107,17 @@ func TestApplyOtherSecretChangeNeedsRemount(t *testing.T) {
 	require.True(t, find(cs, "changed", "m1", "s1").NeedsRemount)
 }
 
-func TestApplyMissingUnmountedMountDropped(t *testing.T) {
+func TestApplyMissingUnmountedMountStartsRemoving(t *testing.T) {
 	old := store.Data{
 		Services: []store.Service{svc("s1", 1)},
 		Mounts:   []store.Mount{mnt("m1", "s1", 1)},
 		Local:    map[string]store.LocalMount{"m1": {MountPoint: "/m/m1"}},
 	}
 	d, cs := Apply(old, Snapshot{})
-	require.Empty(t, d.Mounts)
-	require.Empty(t, d.Services)
-	require.Empty(t, d.Local)
-	require.NotNil(t, find(cs, "removed", "m1", "s1"))
-	require.NotNil(t, find(cs, "removed", "", "s1"))
+	require.Len(t, d.Mounts, 1)
+	require.Len(t, d.Services, 1)
+	require.True(t, d.Local["m1"].Removing)
+	require.NotNil(t, find(cs, "removing", "m1", "s1"))
 }
 
 func TestApplyMissingMountedMountKeptWithService(t *testing.T) {
@@ -127,9 +126,9 @@ func TestApplyMissingMountedMountKeptWithService(t *testing.T) {
 	require.Len(t, d.Mounts, 1)
 	require.Len(t, d.Services, 1)
 	require.Equal(t, "p", d.Services[0].Secrets["pass"])
-	require.True(t, d.Local["m1"].RemovedRemotely)
+	require.True(t, d.Local["m1"].Removing)
 	require.True(t, d.Local["m1"].Mounted)
-	require.NotNil(t, find(cs, "removed_kept", "m1", "s1"))
+	require.NotNil(t, find(cs, "removing", "m1", "s1"))
 	_, again := Apply(d, Snapshot{})
 	require.Empty(t, again)
 }
@@ -145,7 +144,7 @@ func TestApplyOrphanMountOfMountedLocalIsKept(t *testing.T) {
 	d, _ := Apply(old, Snapshot{Mounts: []store.Mount{mnt("m1", "s1", 2)}})
 	require.Len(t, d.Mounts, 1)
 	require.Equal(t, int64(1), d.Mounts[0].Version)
-	require.True(t, d.Local["m1"].RemovedRemotely)
+	require.True(t, d.Local["m1"].Removing)
 }
 
 func TestApplyNeverAutoMounts(t *testing.T) {
@@ -162,46 +161,8 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 	Apply(old, Snapshot{})
 	require.Len(t, old.Services, 2)
 	require.Len(t, old.Mounts, 2)
-	require.False(t, old.Local["m1"].RemovedRemotely)
+	require.False(t, old.Local["m1"].Removing)
 	require.Len(t, old.Local, 2)
-}
-
-func TestUnmountOfRemovedDropsIt(t *testing.T) {
-	old := store.Data{
-		Services: []store.Service{svc("s1", 1)},
-		Mounts:   []store.Mount{mnt("m1", "s1", 1), mnt("m2", "s1", 1)},
-		Local:    mountedLocal("m1", "m2"),
-	}
-	d, _ := Apply(old, Snapshot{Services: old.Services, Mounts: old.Mounts[1:]})
-	out := DropRemoved(d, "m1")
-	require.Len(t, out.Mounts, 1)
-	require.Len(t, out.Services, 1)
-	require.NotContains(t, out.Local, "m1")
-	require.Contains(t, d.Local, "m1")
-}
-
-func TestDropRemovedKeepsServiceAndClearsRev(t *testing.T) {
-	old := store.Data{Services: []store.Service{svc("s1", 1)}, Mounts: []store.Mount{mnt("m1", "s1", 1)}, Local: mountedLocal("m1"), Account: &store.Account{Rev: "r1"}}
-	snap := Snapshot{Rev: "r2", Services: old.Services}
-	d, _ := Apply(old, snap)
-	require.Equal(t, "r1", old.Account.Rev)
-	require.Equal(t, "r2", d.Account.Rev)
-	out := DropRemoved(d, "m1")
-	require.Len(t, out.Services, 1)
-	require.Empty(t, out.Mounts)
-	require.Empty(t, out.Account.Rev)
-	require.Equal(t, "r2", d.Account.Rev)
-	out, _ = Apply(out, snap)
-	require.Len(t, out.Services, 1)
-}
-
-func TestDropRemovedThenApplyDropsGoneService(t *testing.T) {
-	old := store.Data{Services: []store.Service{svc("s1", 1)}, Mounts: []store.Mount{mnt("m1", "s1", 1)}, Local: mountedLocal("m1"), Account: &store.Account{Rev: "r1"}}
-	d, _ := Apply(old, Snapshot{Rev: "r2"})
-	out := DropRemoved(d, "m1")
-	out, _ = Apply(out, Snapshot{Rev: "r2"})
-	require.Empty(t, out.Services)
-	require.Empty(t, out.Mounts)
 }
 
 func TestApplyMountMovedToOtherServiceNeedsRemount(t *testing.T) {
@@ -217,11 +178,5 @@ func TestApplyReappearedRemovedMountEmitsChanged(t *testing.T) {
 	c := find(cs, "changed", "m1", "s1")
 	require.NotNil(t, c)
 	require.False(t, c.NeedsRemount)
-	require.False(t, d.Local["m1"].RemovedRemotely)
-}
-
-func TestDropRemovedIgnoresLiveMount(t *testing.T) {
-	old := store.Data{Services: []store.Service{svc("s1", 1)}, Mounts: []store.Mount{mnt("m1", "s1", 1)}, Local: mountedLocal("m1")}
-	out := DropRemoved(old, "m1")
-	require.Len(t, out.Mounts, 1)
+	require.False(t, d.Local["m1"].Removing)
 }

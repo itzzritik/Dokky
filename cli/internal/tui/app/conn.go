@@ -93,7 +93,12 @@ func (a *App) onConnected(m connected) tea.Cmd {
 	a.st.Connected, a.starting, a.dialing, a.everConnected = true, false, false, true
 	a.veil, a.failed, a.backoff, a.heard, a.lostAt = false, false, 0, a.st.Now, time.Time{}
 	a.st.Act, a.st.Catalog = m.act, m.cat
-	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks(), a.listen(quietFor))
+	var kick tea.Cmd
+	if !a.kicked {
+		a.kicked = true
+		kick = a.syncKick()
+	}
+	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks(), a.listen(quietFor), kick, a.fetchLog())
 }
 
 // a reply from before a reconnect, or an event from an old stream, is dropped
@@ -180,6 +185,8 @@ func (a *App) onEvent(m event) tea.Cmd {
 		a.st.Act = *m.ev.Activity
 	case m.ev.Progress != nil:
 		cmd = a.broadcast(core.Progress(*m.ev.Progress))
+	case m.ev.Log:
+		cmd = a.fetchLog()
 	}
 	return tea.Batch(cmd, a.next())
 }

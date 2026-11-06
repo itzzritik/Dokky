@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,10 +19,11 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/health"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/overview"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/settings"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/transfers"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-var tabNames = []string{"Overview", "Drives", "Activity", "Health", "Settings"}
+var tabNames = []string{"Overview", "Drives", "Transfers", "Activity", "Health", "Settings"}
 
 type checked struct{ checks []core.Check }
 
@@ -30,6 +32,7 @@ type unveil struct{}
 const veilFor = 300 * time.Millisecond
 
 type App struct {
+	kicked         bool // the open-time sync was asked for
 	reopen         bool
 	fixedOnOpen    bool
 	pendingRestart string // an installed dokky this TUI restarts onto once uploads finish
@@ -70,7 +73,7 @@ func New(deps core.Deps) *App {
 	return &App{
 		st:    &core.State{Deps: deps, Now: now},
 		deps:  deps,
-		tabs:  []core.Screen{overview.New(), drives.New(), activity.New(), health.New(), settings.New()},
+		tabs:  []core.Screen{overview.New(), drives.New(), transfers.New(), activity.New(), health.New(), settings.New()},
 		start: now,
 		veil:  true,
 	}
@@ -120,6 +123,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return dial()
 	case event:
 		return a.onEvent(m)
+	case logLoaded:
+		return a.onLog(m)
 	case latest:
 		a.onLatest(m)
 	case quiet:
@@ -292,7 +297,56 @@ func (a *App) switchTab(m core.SwitchTab) tea.Cmd {
 		return nil
 	}
 	a.active = m.Tab
-	return a.broadcast(m)
+	return tea.Batch(a.broadcast(m), a.seeLog())
+}
+
+type logLoaded struct {
+	epoch uint64
+	log   api.Events
+	err   error
+}
+
+// the activity log, fetched on open and whenever the daemon says it changed
+func (a *App) fetchLog() tea.Cmd {
+	c, epoch := a.st.C, a.st.Epoch
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		log, err := c.ActivityLog(ctx)
+		return logLoaded{epoch, log, err}
+	}
+}
+
+func (a *App) onLog(m logLoaded) tea.Cmd {
+	if m.epoch != a.st.Epoch || m.err != nil {
+		return nil
+	}
+	a.st.Log = m.log
+	return a.seeLog()
+}
+
+// looking at the Activity tab marks its failures seen
+func (a *App) seeLog() tea.Cmd {
+	if a.active != core.ActivityTab || a.st.Log.Unseen == 0 || a.st.C == nil {
+		return nil
+	}
+	a.st.Log.Unseen = 0
+	c := a.st.C
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = c.ActivitySeen(ctx)
+		return nil
+	}
+}
+
+// the Activity tab carries its unseen failures in its name
+func (a *App) tabNames() []string {
+	names := slices.Clone(tabNames)
+	if n := a.st.Log.Unseen; n > 0 {
+		names[core.ActivityTab] += " " + strconv.Itoa(n)
+	}
+	return names
 }
 
 func (a *App) capturing() bool {
@@ -350,7 +404,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 			a.windows = append(a.windows, &update{btn: 1})
 			return nil
 		}
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4", "5", "6":
 		return a.setTab(int(s[0] - '1'))
 	case "left":
 		return a.setTab(max(0, a.active-1))
@@ -388,10 +442,26 @@ func (a *App) busy() bool {
 }
 
 func (a *App) quit() tea.Cmd {
+	if c := a.st.C; c != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = c.SyncKick(ctx)
+		cancel()
+	}
 	if a.stop != nil {
 		a.stop()
 	}
 	return tea.Quit
+}
+
+// opening dokky pulls once, so other devices' changes show without waiting for the next sync
+func (a *App) syncKick() tea.Cmd {
+	c := a.st.C
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = c.SyncKick(ctx)
+		return nil
+	}
 }
 
 func (a *App) small() bool { return a.st.W < 80 || a.st.H < 24 }

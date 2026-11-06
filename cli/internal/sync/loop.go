@@ -235,7 +235,7 @@ func SaveService(ctx context.Context, c *Client, s store.Service) (store.Service
 
 func SaveMount(ctx context.Context, c *Client, m store.Mount) (store.Mount, error) {
 	return accepted(ctx, m, m.Version, c.PutMount, func(cur store.Mount) bool {
-		return cur.Name == m.Name && cur.ServiceID == m.ServiceID && cur.RemotePath == m.RemotePath && cur.VFS == m.VFS
+		return cur.Name == m.Name && cur.ServiceID == m.ServiceID && cur.RemotePath == m.RemotePath && SharedVFS(cur.VFS) == SharedVFS(m.VFS)
 	})
 }
 

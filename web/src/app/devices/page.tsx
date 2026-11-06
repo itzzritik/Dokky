@@ -4,6 +4,8 @@ import { listDevices } from "@/lib/device-auth";
 import { revoke } from "./actions";
 import { RevokeButton } from "./revoke-button";
 
+const LOCAL = /\.local$/u;
+
 const fmt = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
 
 export default async function DevicesPage() {
@@ -33,7 +35,7 @@ export default async function DevicesPage() {
           <tbody>
             {rows.map((d) => (
               <tr className="border-t" key={String(d._id)}>
-                <td className="py-2">{d.name.replace(/\.local$/u, "")}</td>
+                <td className="py-2">{d.name.replace(LOCAL, "")}</td>
                 <td>
                   {d.osName || d.os} / {d.arch}
                 </td>

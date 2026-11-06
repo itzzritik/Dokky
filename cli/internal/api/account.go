@@ -48,4 +48,5 @@ type Device struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	Current    bool      `json:"current"`
 	Drives     int       `json:"drives"`
+	Mounted    []string  `json:"mounted"`
 }

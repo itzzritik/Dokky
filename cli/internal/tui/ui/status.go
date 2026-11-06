@@ -2,8 +2,6 @@ package ui
 
 import (
 	"image/color"
-	"slices"
-	"strings"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
 )
@@ -11,40 +9,36 @@ import (
 type Status struct {
 	Icon, Words string
 	Fg, WordsFg color.Color
+	Bar         float64 // drawn as a short bar instead of the icon when Barred
+	Barred      bool
+	T           float64
 }
 
 func DriveStatus(d api.Drive, t float64) Status {
 	p := P()
 	switch d.State {
 	case api.Connected:
-		return Status{G.Check, "Mounted", p.Kelp, p.Kelp}
+		return Status{Icon: G.Check, Words: "Mounted", Fg: p.Kelp, WordsFg: p.Kelp}
 	case api.Connecting:
-		return Status{Spin(t), "Mounting", SpinFg(t), p.Accent}
+		return Status{Icon: Spin(t), Words: "Mounting", Fg: SpinFg(t), WordsFg: p.Accent}
 	case api.Failed:
-		return Status{G.Cross, failWords(d.Error), p.Coral, p.Coral}
-	case api.Removed:
-		return Status{G.Cross, "Removed elsewhere", p.Faint, p.Muted}
+		return Status{Icon: G.Cross, Words: failWords(d.Error), Fg: p.Coral, WordsFg: p.Coral}
+	case api.Leaving:
+		return Status{Icon: G.Dash, Words: "Leaving", Fg: p.Buoy, WordsFg: p.Buoy}
+	case api.Removing:
+		return Status{Words: "Removing", WordsFg: p.Accent, Bar: d.Progress, Barred: true, T: t}
 	case api.Reconnect:
-		return Status{G.Bang, "Remount to apply", p.Buoy, p.Buoy}
+		return Status{Icon: G.Bang, Words: "Remount to apply", Fg: p.Buoy, WordsFg: p.Buoy}
 	}
-	return Status{G.Dash, "Not mounted", p.Faint, p.Muted}
+	return Status{Icon: G.Dash, Words: "Not mounted", Fg: p.Faint, WordsFg: p.Muted}
 }
 
-var (
-	offline = []string{"no such host", "dial tcp", "connection refused", "connection reset", "timeout", "timed out", "did not answer", "unreachable", "tls", "eof", "502", "503", "504", "unavailable"}
-	signIn  = []string{"login", "unauthorized", "401", "invalid_grant", "token", "expired", "auth", "password", "credential", "access key", "signature"}
-)
-
-// why a drive failed in a word or two; network first, since a sign-in that can't reach the service also says login
+// why a drive failed in a word or two
 func failWords(err string) string {
-	e := strings.ToLower(err)
-	has := func(words []string) bool {
-		return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(e, w) })
-	}
-	switch {
-	case has(offline):
+	switch api.FailKind(err) {
+	case "offline":
 		return "Unreachable"
-	case has(signIn):
+	case "signin":
 		return loginFailed
 	}
 	return "Mount failed"
@@ -57,7 +51,12 @@ func LoginFailed(d api.Drive) bool { return d.State == api.Failed && failWords(d
 
 // icon then words, for the right end of a row or tile
 func (s Status) Line(bg color.Color, words bool) *Line {
-	l := L(bg).B(s.Icon, s.Fg)
+	l := L(bg)
+	if s.Barred {
+		l.Raw(ThinBar(6, s.Bar, s.T, nil, bg))
+	} else {
+		l.B(s.Icon, s.Fg)
+	}
 	if words {
 		l.Sp(1).T(s.Words, s.WordsFg)
 	}

@@ -135,6 +135,13 @@ func (d *Daemon) addDrive(ctx context.Context, p api.NewDrive) (dr api.Drive, er
 		return dr, err
 	}
 	d.progress(api.AddProgress{Step: stepOpen, Done: true})
+	if newService != "" {
+		d.event("signin.added", svc.ID, svc.Name, "", true)
+	}
+	d.event("drive.added", m.ID, m.Name, "", true)
+	if p.AtLogin {
+		d.event("drive.mounted", m.ID, m.Name, "", true)
+	}
 	return d.driveView(m.ID)
 }
 
@@ -142,6 +149,9 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 	m, ok := d.findMount(byID(u.ID))
 	if !ok {
 		return api.Drive{}, fmt.Errorf("no drive with id %q", u.ID)
+	}
+	if d.leaving(u.ID) {
+		return api.Drive{}, &codedError{"removing", m.Name + " is being removed"}
 	}
 	old := m
 	m.Name = cmp.Or(strings.TrimSpace(u.Name), m.Name)
@@ -159,14 +169,20 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 		if err := size.Set(u.CacheMaxSize); err != nil {
 			return api.Drive{}, fmt.Errorf("cache size %q: try a size like 10G", u.CacheMaxSize)
 		}
-		m.VFS.CacheMaxSize = u.CacheMaxSize
 	}
-	m.VFS.CacheMaxAge = cmp.Or(u.CacheMaxAge, m.VFS.CacheMaxAge)
+	if u.CacheMaxAge != "" {
+		if err := engine.ValidCacheMaxAge(u.CacheMaxAge); err != nil {
+			return api.Drive{}, err
+		}
+	}
 
 	d.mu.Lock()
 	st := d.state(u.ID)
-	live, flagged := st.state == stateMounted, d.data.Local[u.ID].Mounted
-	moved := u.LocalFolder != nil && strings.TrimSpace(*u.LocalFolder) != d.data.Local[u.ID].MountPoint
+	lm := d.data.Local[u.ID]
+	live, flagged := st.state == stateMounted, lm.Mounted
+	moved := u.LocalFolder != nil && strings.TrimSpace(*u.LocalFolder) != lm.MountPoint
+	cur := d.effective(m).VFS
+	cache := u.CacheMaxSize != "" && u.CacheMaxSize != cur.CacheMaxSize || u.CacheMaxAge != "" && u.CacheMaxAge != cur.CacheMaxAge
 	waiting := 0
 	if live {
 		s := d.stats[st.name]
@@ -178,7 +194,7 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 		return api.Drive{}, fmt.Errorf("%s still uploading to %s, change its folder once they finish", uploadsLeft(waiting), old.Name)
 	}
 	// a change the live mount can't take: take it down, save, and bring it back, instead of waiting on "Remount to apply"
-	remount := live && (dsync.MountNeedsRemount(old, m) || moved)
+	remount := live && (dsync.MountNeedsRemount(old, m) || moved || cache)
 	if remount {
 		if err := d.unmount(u.ID); err != nil {
 			return api.Drive{}, err
@@ -187,6 +203,18 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 	err := func() error {
 		if m != old {
 			if err := d.putMount(ctx, m); err != nil {
+				return err
+			}
+		}
+		if cache {
+			d.mu.Lock()
+			lm := d.data.Local[u.ID]
+			lm.CacheMaxSize = cmp.Or(u.CacheMaxSize, lm.CacheMaxSize)
+			lm.CacheMaxAge = cmp.Or(u.CacheMaxAge, lm.CacheMaxAge)
+			d.data.Local[u.ID] = lm
+			err := d.save()
+			d.mu.Unlock()
+			if err != nil {
 				return err
 			}
 		}
@@ -219,39 +247,35 @@ func (d *Daemon) updateDrive(ctx context.Context, u api.DriveUpdate) (api.Drive,
 		}
 		d.publish()
 	}
+	if m.Name != old.Name {
+		d.event("drive.renamed", m.ID, m.Name, "Was "+old.Name, true)
+	}
+	if m.RemotePath != old.RemotePath {
+		d.event("drive.folder", m.ID, m.Name, "Folder "+cmp.Or(m.RemotePath, "whole account"), true)
+	}
+	if cache {
+		d.mu.Lock()
+		v := d.effective(m).VFS
+		d.mu.Unlock()
+		d.event("drive.cache", m.ID, m.Name, "Cache "+v.CacheMaxSize+", kept "+v.CacheMaxAge, true)
+	}
 	return d.driveView(u.ID)
 }
 
-func (d *Daemon) removeDrive(ctx context.Context, r api.DriveRemove) (any, error) {
-	m, ok := d.findMount(byID(r.ID))
-	if !ok {
-		return nil, fmt.Errorf("no drive with id %q", r.ID)
-	}
-	if err := d.deleteMount(ctx, r.ID, false); err != nil {
-		return nil, err
-	}
-	// an account's last drive takes its sign-in with it, here and on the server
-	if _, used := d.findMount(func(x store.Mount) bool { return x.ServiceID == m.ServiceID }); used {
-		return nil, nil
-	}
-	return nil, d.deleteService(ctx, m.ServiceID)
-}
-
 func (d *Daemon) connectDrive(p idParams) (api.Drive, error) {
-	if err := d.mount(p.ID); err != nil {
+	if err := d.mountByPerson(p.ID); err != nil {
 		return api.Drive{}, err
 	}
 	return d.driveView(p.ID)
 }
 
 func (d *Daemon) disconnectDrive(p idParams) (api.Drive, error) {
-	if err := d.unmount(p.ID); err != nil {
+	if err := d.unmountIdle(p.ID); err != nil {
 		return api.Drive{}, err
 	}
 	dr, err := d.driveView(p.ID)
 	if err != nil {
-		// a drive removed on another computer goes once it is disconnected here
-		return api.Drive{ID: p.ID, State: api.Removed}, nil
+		return api.Drive{ID: p.ID, State: api.Off}, nil
 	}
 	return dr, nil
 }

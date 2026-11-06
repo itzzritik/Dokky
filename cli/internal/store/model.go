@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"github.com/itzzritik/dokky/cli/internal/api"
+)
 
 type Service struct {
 	ID        string            `json:"id"`
@@ -36,9 +40,11 @@ type Mount struct {
 }
 
 type LocalMount struct {
-	MountPoint      string `json:"mountPoint"`
-	Mounted         bool   `json:"mounted"`
-	RemovedRemotely bool   `json:"removedRemotely"`
+	MountPoint   string `json:"mountPoint"`
+	Mounted      bool   `json:"mounted"`
+	Removing     bool   `json:"removing,omitempty"`
+	CacheMaxSize string `json:"cacheMaxSize,omitempty"`
+	CacheMaxAge  string `json:"cacheMaxAge,omitempty"`
 }
 
 type Settings struct {
@@ -65,6 +71,14 @@ type Data struct {
 	Local    map[string]LocalMount `json:"local"`
 	Settings Settings              `json:"settings"`
 	Account  *Account              `json:"account"`
+	Events   EventLog              `json:"events"`
+}
+
+// Queue waits to reach the server; Local is the log of a device with no account
+type EventLog struct {
+	Queue  []api.Event `json:"queue,omitempty"`
+	Local  []api.Event `json:"local,omitempty"`
+	SeenAt time.Time   `json:"seenAt"`
 }
 
 func Fresh() Data {

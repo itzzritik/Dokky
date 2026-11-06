@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -62,8 +63,8 @@ func TestPullAppliesAndSaves(t *testing.T) {
 	f.mu.Unlock()
 
 	require.NoError(t, call(t, d, "sync.now", nil, nil))
+	require.Eventually(t, func() bool { return slices.Equal([]string{"m1", "m3"}, mountIDs(load(t, st))) }, 5*time.Second, 10*time.Millisecond)
 	saved := load(t, st)
-	require.Equal(t, []string{"m1", "m3"}, mountIDs(saved))
 	require.Equal(t, "movies", saved.Mounts[0].RemotePath)
 	require.Len(t, saved.Services, 2)
 	require.Equal(t, `"5"`, saved.Account.Rev)
@@ -77,7 +78,9 @@ func TestPullAppliesAndSaves(t *testing.T) {
 
 	require.NoError(t, call(t, d, "sync.now", nil, nil))
 	require.Equal(t, []string{"GET /api/v1/sync", "GET /api/v1/sync 304"}, api.requests())
-	require.Equal(t, saved, load(t, st))
+	got := load(t, st)
+	got.Events, saved.Events = store.EventLog{}, store.EventLog{}
+	require.Equal(t, saved, got, "activity entries are written on their own")
 
 	require.NoError(t, call(t, d, "unmount", map[string]string{"name": "media"}, nil))
 	require.NoError(t, call(t, d, "mount", map[string]string{"name": "media"}, nil))
@@ -321,7 +324,7 @@ func TestSavesRefusedWhileLoginPending(t *testing.T) {
 	require.Empty(t, api.requests())
 }
 
-func TestRemovedMountKeepsServiceUntilUnmounted(t *testing.T) {
+func TestRemovedMountDrainsThenServiceGoes(t *testing.T) {
 	api, d, f, st := synced(t)
 	api.set(func() {
 		delete(api.services, "s1")
@@ -331,19 +334,10 @@ func TestRemovedMountKeepsServiceUntilUnmounted(t *testing.T) {
 	})
 
 	require.NoError(t, call(t, d, "sync.now", nil, nil))
+	require.Eventually(t, func() bool { s := load(t, st); return len(s.Mounts) == 0 && s.Account.Rev == "" }, 5*time.Second, 10*time.Millisecond)
 	saved := load(t, st)
-	require.Equal(t, []string{"m1"}, mountIDs(saved))
-	require.True(t, saved.Local["m1"].RemovedRemotely)
-	require.Len(t, saved.Services, 1)
-	require.Contains(t, f.services, "s1")
-	require.Contains(t, f.mounted, "m1")
-	require.Equal(t, stateRemoved, d.mountStatus("m1").State)
-
-	require.NoError(t, call(t, d, "unmount", map[string]string{"name": "media"}, nil))
-	saved = load(t, st)
-	require.Empty(t, saved.Mounts)
-	require.NotContains(t, saved.Local, "m1")
-	require.Empty(t, saved.Account.Rev)
+	require.Empty(t, saved.Local)
+	require.NotContains(t, f.mounted, "m1")
 	require.Contains(t, f.services, "s1", "the next pull decides the service")
 
 	require.NoError(t, call(t, d, "sync.now", nil, nil))

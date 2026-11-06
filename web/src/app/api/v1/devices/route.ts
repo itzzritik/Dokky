@@ -20,6 +20,7 @@ export async function GET(req: Request): Promise<Response> {
       createdAt: d.createdAt,
       current: String(d._id) === who.deviceId,
       drives: d.driveIds?.length ?? 0,
+      mounted: d.driveIds ?? [],
     }))
   );
 }

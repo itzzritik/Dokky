@@ -1,7 +1,6 @@
 package add
 
 import (
-	"context"
 	"runtime"
 	"strconv"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -34,28 +32,6 @@ func (n *nameForm) reset(name string) {
 }
 
 func (a *Add) nameItems() []int { return []int{fName, fFolder, fLogin} }
-
-func (a *Add) remove() tea.Cmd {
-	d := *a.edit
-	line := "Its folder leaves this computer. Your files stay."
-	if d.AccountDrives == 1 {
-		line = "Its folder and sign-in are removed. Your files stay."
-	}
-	return confirm.Open(&confirm.Confirm{
-		Question: "Remove " + core.Safe(d.Name) + "?",
-		Line:     line,
-		Do:       "Remove",
-		Run: func(st *core.State) tea.Cmd {
-			cl, id, name := st.C, d.ID, core.Safe(d.Name)
-			return tea.Batch(core.Close(a), func() tea.Msg {
-				if err := cl.RemoveDrive(context.Background(), api.DriveRemove{ID: id}); err != nil {
-					return core.Toast{Text: core.Report(err), Bad: true}
-				}
-				return core.Toast{Text: name + " removed"}
-			})
-		},
-	})
-}
 
 // cloud sign-ins go through the browser; their details are not edited here
 func oauthType(t string) bool {

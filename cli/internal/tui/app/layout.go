@@ -56,7 +56,7 @@ func (a *App) render() string {
 		left = a.gate.Actions(a.st)
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
-			ui.Header(w, tabNames, a.active, a.account()),
+			ui.Header(w, a.tabNames(), a.active, a.account()),
 			a.tabs[a.active].View(a.st, bw, bh).X(bodyX).Y(bodyY),
 		)
 		passes = append(passes, ui.Pass{Layer: base})

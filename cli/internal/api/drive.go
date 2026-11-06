@@ -9,8 +9,9 @@ const (
 	Connecting DriveState = "connecting"
 	Off        DriveState = "off"
 	Failed     DriveState = "failed"
-	Removed    DriveState = "removed"
 	Reconnect  DriveState = "reconnect"
+	Leaving    DriveState = "leaving"
+	Removing   DriveState = "removing"
 )
 
 type Space struct {
@@ -39,6 +40,7 @@ type Drive struct {
 	Space         *Space     `json:"space"`
 	AccountDrives int        `json:"accountDrives"`
 	AlsoOn        []string   `json:"alsoOn"`
+	Progress      float64    `json:"progress"`
 }
 
 type NewDrive struct {
@@ -66,7 +68,25 @@ type DriveUpdate struct {
 }
 
 type DriveRemove struct {
-	ID string `json:"id"`
+	ID     string `json:"id"`
+	Anyway bool   `json:"anyway"`
+}
+
+// State is "idle", "busy" or "stuck"
+type Usage struct {
+	State  string `json:"state"`
+	Reason string `json:"reason"`
+}
+
+type Peer struct {
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
+}
+
+// Others are the other devices that have the drive mounted
+type DriveCheck struct {
+	Usage  Usage  `json:"usage"`
+	Others []Peer `json:"others"`
 }
 
 type AddProgress struct {

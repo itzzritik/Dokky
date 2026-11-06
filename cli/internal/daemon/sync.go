@@ -24,23 +24,33 @@ type codedError struct{ code, msg string }
 func (e *codedError) Error() string { return e.msg }
 func (e *codedError) Code() string  { return e.code }
 
-func (d *Daemon) syncNow(ctx context.Context) {
+func (d *Daemon) syncNow(ctx context.Context) error {
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 	d.mu.Lock()
 	acct, saves := d.data.Account, d.saves
 	d.mu.Unlock()
 	if acct == nil || acct.Pending {
-		return
+		return nil
 	}
 	snap, err := d.loop.Tick(ctx, client(acct), acct.Rev)
-	if d.answer(acct, err) == nil {
+	err = d.answer(acct, err)
+	if err == nil {
 		d.synced(ctx, acct)
 		if snap != nil {
 			d.apply(acct, saves, *snap)
 		}
+		if d.reportDue.Load() {
+			go d.reportDrives()
+		}
+		go d.flushEvents()
+		d.publishEvents()
+		if d.srv != nil && d.srv.Watching() {
+			go d.refreshPeers()
+		}
 	}
 	d.publish()
+	return err
 }
 
 func (d *Daemon) synced(ctx context.Context, acct *store.Account) {
@@ -77,19 +87,21 @@ func (d *Daemon) reportDrives() {
 	d.reportMu.Lock()
 	defer d.reportMu.Unlock()
 	d.mu.Lock()
-	acct, ids := d.data.Account, []string{}
-	for id, lm := range d.data.Local {
-		if lm.Mounted {
-			ids = append(ids, id)
-		}
-	}
+	acct, ids := d.data.Account, d.mountedIDs()
 	d.mu.Unlock()
 	if acct == nil || acct.Pending {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	if err := client(acct).ReportDrives(ctx, ids); err != nil {
+	err := client(acct).ReportDrives(ctx, ids)
+	d.reportDue.Store(err != nil)
+	if err == nil {
+		d.mu.Lock()
+		d.reported = strings.Join(ids, ",")
+		d.mu.Unlock()
+	}
+	if err != nil {
 		d.log.Warn("report drives", "err", err)
 	}
 }
@@ -101,14 +113,14 @@ func (d *Daemon) apply(acct *store.Account, saves uint64, snap dsync.Snapshot) {
 	d.mu.Lock()
 	if cur := d.data.Account; cur == nil || cur.Token != acct.Token || d.saves != saves || d.loop.Pending() {
 		d.mu.Unlock()
+		// a save raced this pull; pull again rather than wait for the next timer
+		d.kick()
 		return
 	}
 	var changes []dsync.Change
 	d.data, changes = dsync.Apply(d.data, snap)
 	for _, c := range changes {
 		switch {
-		case c.Kind == "removed" && c.MountID != "":
-			delete(d.states, c.MountID)
 		case c.NeedsRemount && d.state(c.MountID).state == stateMounted:
 			d.state(c.MountID).remount = true
 		}
@@ -123,6 +135,8 @@ func (d *Daemon) apply(acct *store.Account, saves uint64, snap dsync.Snapshot) {
 	for _, c := range changes {
 		i := slices.IndexFunc(services, func(s store.Service) bool { return s.ID == c.ServiceID })
 		switch {
+		case c.Kind == "removing":
+			go d.drain(c.MountID)
 		case c.MountID != "":
 		case c.Kind == "removed":
 			d.eng.DeleteService(c.ServiceID)
@@ -170,7 +184,7 @@ func (d *Daemon) onToken(serviceID, token string) {
 	}
 	// the pull right after brings the version the write-back bumped, so the next edit isn't a conflict
 	if acct != nil && !acct.Pending {
-		go d.syncNow(context.Background())
+		go func() { _ = d.syncNow(context.Background()) }()
 	}
 }
 
@@ -331,6 +345,11 @@ func (d *Daemon) devices(ctx context.Context) ([]dsync.Device, error) {
 		return nil, err
 	}
 	list, err := client(acct).Devices(ctx)
+	if err == nil {
+		d.mu.Lock()
+		d.peers = list
+		d.mu.Unlock()
+	}
 	return list, d.answer(acct, err)
 }
 
@@ -374,4 +393,26 @@ func (d *Daemon) account() (*store.Account, error) {
 		return nil, errors.New("not logged in")
 	}
 	return d.data.Account, nil
+}
+
+// caller holds mu; what the server shows as mounted here, so ejects and failed mounts count too
+func (d *Daemon) mountedIDs() []string {
+	ids := []string{}
+	for id, st := range d.states {
+		if st.state == stateMounted {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// a request only when what is mounted changed since the last report
+func (d *Daemon) reportIfChanged() {
+	d.mu.Lock()
+	changed := d.data.Account != nil && strings.Join(d.mountedIDs(), ",") != d.reported
+	d.mu.Unlock()
+	if changed && !d.reportDue.Load() {
+		go d.reportDrives()
+	}
 }

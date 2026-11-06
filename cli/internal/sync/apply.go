@@ -73,10 +73,10 @@ func Apply(d store.Data, s Snapshot) (store.Data, []Change) {
 	for _, m := range snapMnt {
 		o, ok := oldMnt[m.ID]
 		mounted := d.Local[m.ID].Mounted
-		wasRemoved := d.Local[m.ID].RemovedRemotely
+		wasRemoved := d.Local[m.ID].Removing
 		if wasRemoved {
 			l := out.Local[m.ID]
-			l.RemovedRemotely = false
+			l.Removing = false
 			out.Local[m.ID] = l
 		}
 		switch {
@@ -98,18 +98,14 @@ func Apply(d store.Data, s Snapshot) (store.Data, []Change) {
 		if inSnap[m.ID] {
 			continue
 		}
+		// removed elsewhere: kept until this device has finished with it, then purged here
 		l := d.Local[m.ID]
-		if !l.Mounted {
-			delete(out.Local, m.ID)
-			changes = append(changes, Change{Kind: "removed", MountID: m.ID, ServiceID: m.ServiceID})
-			continue
-		}
 		out.Mounts = append(out.Mounts, m)
 		needed[m.ServiceID] = true
-		if !l.RemovedRemotely {
-			l.RemovedRemotely = true
+		if !l.Removing {
+			l.Removing = true
 			out.Local[m.ID] = l
-			changes = append(changes, Change{Kind: "removed_kept", MountID: m.ID, ServiceID: m.ServiceID})
+			changes = append(changes, Change{Kind: "removing", MountID: m.ID, ServiceID: m.ServiceID})
 		}
 	}
 	for _, v := range d.Services {
@@ -130,34 +126,8 @@ func Apply(d store.Data, s Snapshot) (store.Data, []Change) {
 	return out, changes
 }
 
-func DropRemoved(d store.Data, mountID string) store.Data {
-	if !d.Local[mountID].RemovedRemotely {
-		return d
-	}
-	out := d
-	out.Local = maps.Clone(d.Local)
-	delete(out.Local, mountID)
-	out.Mounts = nil
-	used := map[string]bool{}
-	var serviceID string
-	for _, m := range d.Mounts {
-		if m.ID == mountID {
-			serviceID = m.ServiceID
-			continue
-		}
-		out.Mounts = append(out.Mounts, m)
-		used[m.ServiceID] = true
-	}
-	if !used[serviceID] && d.Account != nil {
-		a := *d.Account
-		a.Rev = ""
-		out.Account = &a
-	}
-	return out
-}
-
 func MountNeedsRemount(o, n store.Mount) bool {
-	return o.Name != n.Name || o.ServiceID != n.ServiceID || o.RemotePath != n.RemotePath || o.VFS != n.VFS
+	return o.Name != n.Name || o.ServiceID != n.ServiceID || o.RemotePath != n.RemotePath || SharedVFS(o.VFS) != SharedVFS(n.VFS)
 }
 
 func serviceNeedsRemount(o, n store.Service) bool {
@@ -168,4 +138,10 @@ func withoutToken(m map[string]string) map[string]string {
 	c := maps.Clone(m)
 	delete(c, "token")
 	return c
+}
+
+// cache size and age are set per device, so a shared change to them is no reason to remount
+func SharedVFS(v store.VFS) store.VFS {
+	v.CacheMaxSize, v.CacheMaxAge = "", ""
+	return v
 }
