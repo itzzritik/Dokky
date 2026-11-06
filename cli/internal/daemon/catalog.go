@@ -21,6 +21,7 @@ var ranked = []api.Provider{
 	{Type: "box", Name: "Box", Desc: "Box cloud storage for personal and business accounts.", Group: "cloud", Popular: true},
 	{Type: "protondrive", Name: "Proton Drive", Desc: "End to end encrypted cloud storage from Proton.", Group: "cloud", Popular: true},
 	{Type: "pcloud", Name: "pCloud", Desc: "Swiss cloud storage from pCloud.", Group: "cloud", Popular: true},
+	{Type: "mediafire", Name: "MediaFire", Desc: "Cloud storage and file sharing from MediaFire.", Group: "cloud"},
 	{Type: "sftp", Name: "SSH / SFTP", Desc: "Files on any server reachable over SSH, such as a VPS or NAS.", Group: "own", Popular: true},
 	{Type: "smb", Name: "Network share", Desc: "SMB shares on a NAS, Windows PC or file server.", Group: "own", Popular: true},
 	{Type: "webdav", Name: "Nextcloud", Desc: "Nextcloud, ownCloud and any other WebDAV server.", Group: "own", Popular: true},

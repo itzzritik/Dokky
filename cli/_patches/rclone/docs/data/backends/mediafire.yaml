@@ -1,0 +1,19 @@
+backend: mediafire
+name: MediaFire
+tier: Tier 3
+maintainers: External
+features_score: 0
+integration_tests: Passing
+data_integrity: Hash
+performance: Medium
+adoption: Some use
+docs: Full
+security: High
+virtual: false
+remote: 'TestMediafire:'
+features:
+- About
+- CanHaveEmptyDirectories
+hashes:
+- sha256
+precision: 3153600000000000000

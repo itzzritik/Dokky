@@ -13,7 +13,11 @@ import (
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/backend/mediafire/api"
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config/configmap"
+	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fshttp"
+	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/lib/rest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -192,10 +196,27 @@ func stubTime(t *testing.T) *fakeClock {
 
 func newTestFs(t *testing.T, fake *fakeAPI) *Fs {
 	ctx := context.Background()
-	f := &Fs{name: "TestFake", srv: testClient(ctx), pacer: newPacer(ctx)}
-	f.opt.Email, f.opt.Password, f.opt.AppID = "user@example.com", "password", defaultAppID
-	f.sess = getSession(f.opt.Email, f.opt.Password, f.opt.AppID, f.srv, f.pacer)
-	return f
+	oldSleep := sleep
+	sleep = func(time.Duration) { select {} }
+	t.Cleanup(func() { sleep = oldSleep })
+	fake.mu.Lock()
+	_, hasLogin := fake.routes["user/get_session_token"]
+	fake.mu.Unlock()
+	if !hasLogin {
+		tokens(fake, "user/get_session_token", "session_token")
+	}
+	f, err := NewFs(ctx, "TestFake", "", configmap.Simple{"email": "user@example.com", "password": obscure.MustObscure("password")})
+	require.NoError(t, err)
+	return f.(*Fs)
+}
+
+func folderListing(folders []map[string]any, files []map[string]any) route {
+	return func(form url.Values, _ *http.Request) any {
+		if form.Get("content_type") == "folders" {
+			return success("folder_content", map[string]any{"folders": folders, "more_chunks": "no"})
+		}
+		return success("folder_content", map[string]any{"files": files, "more_chunks": "no"})
+	}
 }
 
 func tokens(fake *fakeAPI, name, field string) {
@@ -313,4 +334,76 @@ func TestKeepAliveRenewsWhileUsedAndStopsWhenIdle(t *testing.T) {
 	_, err = f.sess.Token(ctx)
 	require.NoError(t, err)
 	assert.True(t, f.sess.running())
+}
+
+func TestListPagesFoldersAndFiles(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", func(form url.Values, _ *http.Request) any {
+		if form.Get("content_type") == "folders" {
+			if form.Get("chunk") == "1" {
+				return success("folder_content", map[string]any{"folders": []map[string]any{{"folderkey": "fA", "name": "A"}}, "more_chunks": "yes"})
+			}
+			return success("folder_content", map[string]any{"folders": []map[string]any{{"folderkey": "fB", "name": "B"}}, "more_chunks": "no"})
+		}
+		return success("folder_content", map[string]any{"files": []map[string]any{{
+			"quickkey": "q1", "filename": "x.mp4", "size": "872632354", "hash": "ab12", "created_utc": "2026-11-07T10:00:00Z",
+		}}, "more_chunks": "no"})
+	})
+	f := newTestFs(t, fake)
+	entries, err := f.List(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	assert.Equal(t, "A", entries[0].Remote())
+	assert.Equal(t, "B", entries[1].Remote())
+	o, ok := entries[2].(fs.Object)
+	require.True(t, ok)
+	assert.Equal(t, "x.mp4", o.Remote())
+	assert.Equal(t, int64(872632354), o.Size())
+	sum, err := o.Hash(ctx, hash.SHA256)
+	require.NoError(t, err)
+	assert.Equal(t, "ab12", sum)
+	assert.Equal(t, time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC), o.ModTime(ctx).UTC())
+	fake.mu.Lock()
+	first := fake.calls["folder/get_content"][0]
+	fake.mu.Unlock()
+	assert.Equal(t, "myfiles", first.Get("folder_key"))
+	assert.Equal(t, "yes", first.Get("details"))
+	assert.Equal(t, "1000", first.Get("chunk_size"))
+}
+
+func TestListKeepsDuplicateNames(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing(nil, []map[string]any{
+		{"quickkey": "q1", "filename": "a.txt", "size": "1"},
+		{"quickkey": "q2", "filename": "a.txt", "size": "2"},
+	}))
+	f := newTestFs(t, fake)
+	entries, err := f.List(ctx, "")
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
+}
+
+func TestNewObjectNotFound(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing(nil, nil))
+	f := newTestFs(t, fake)
+	_, err := f.NewObject(ctx, "nope.txt")
+	assert.ErrorIs(t, err, fs.ErrorObjectNotFound)
+}
+
+func TestAbout(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("user/get_info", func(url.Values, *http.Request) any {
+		return success("user_info", map[string]any{"used_storage_size": "1000", "storage_limit": "10737418240"})
+	})
+	f := newTestFs(t, fake)
+	u, err := f.About(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), *u.Used)
+	assert.Equal(t, int64(10737418240), *u.Total)
+	assert.Equal(t, int64(10737417240), *u.Free)
 }
