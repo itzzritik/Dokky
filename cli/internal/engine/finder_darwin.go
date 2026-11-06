@@ -41,6 +41,14 @@ var rootIcons = map[string][]byte{"._.": customIconFlag, ".VolumeIcon.icns": vol
 
 func init() { mountlib.AddRc("dokky", mountNFS) }
 
+// every drive sits under Dokky in Finder's sidebar
+func mountHost() string {
+	if platform.FinderHostReady() {
+		return platform.FinderHost
+	}
+	return "localhost"
+}
+
 func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan error, func() error, string, error) {
 	h, err := nfs.NewHandler(context.Background(), VFS, &nfs.Opt)
 	if err != nil {
@@ -64,8 +72,7 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 	for _, o := range opt.ExtraOptions {
 		args = append(args, "-o", o)
 	}
-	// the drive's own server name, so Finder lists it on its own rather than under Dokky
-	args = append(args, platform.MountHost(opt.VolumeName)+":/", mountpoint)
+	args = append(args, mountHost()+":/", mountpoint)
 	if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil {
 		_ = l.Close()
 		return nil, nil, "", fmt.Errorf("%s: failed to mount NFS volume: %w", bytes.TrimSpace(out), err)

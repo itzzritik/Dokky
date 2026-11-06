@@ -2,6 +2,8 @@ package platform
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,22 +24,30 @@ func fakeHost(t *testing.T, addrs []string) *[]string {
 	return &asked
 }
 
-func TestEnsureFinderHostsAsksWhileMissing(t *testing.T) {
+func TestEnsureFinderHostAsksWhileMissing(t *testing.T) {
 	asked := fakeHost(t, nil)
 
-	require.NoError(t, EnsureFinderHosts([]string{"Google Drive"}))
+	require.NoError(t, EnsureFinderHost())
 	require.Len(t, *asked, 1)
-	require.Contains(t, (*asked)[0], "127.0.0.1 Dokky Google\u00a0Drive Google-Drive # dokky")
+	require.Contains(t, (*asked)[0], "127.0.0.1 Dokky # dokky")
 	require.Contains(t, (*asked)[0], "with administrator privileges")
 
-	require.NoError(t, EnsureFinderHosts(nil))
+	require.NoError(t, EnsureFinderHost())
 	require.Len(t, *asked, 2, "a removed line is asked for again")
 }
 
-func TestEnsureFinderHostsSkipsWhenResolved(t *testing.T) {
+func TestEnsureFinderHostSkipsWhenClean(t *testing.T) {
 	asked := fakeHost(t, []string{"127.0.0.1"})
-	require.True(t, FinderHostReady())
-	require.NoError(t, EnsureFinderHosts([]string{"Jarvis"}))
+	hosts := filepath.Join(t.TempDir(), "hosts")
+	old := hostsFile
+	hostsFile = hosts
+	t.Cleanup(func() { hostsFile = old })
+
+	require.NoError(t, os.WriteFile(hosts, []byte("127.0.0.1 localhost\n127.0.0.1 Dokky # dokky\n"), 0o644))
+	require.NoError(t, EnsureFinderHost())
 	require.Empty(t, *asked)
-	require.Equal(t, "Jarvis", MountHost("Jarvis"))
+
+	require.NoError(t, os.WriteFile(hosts, []byte("127.0.0.1 Dokky Jarvis Google-Drive # dokky\n"), 0o644))
+	require.NoError(t, EnsureFinderHost())
+	require.Len(t, *asked, 1, "old drive names are cleaned out")
 }
