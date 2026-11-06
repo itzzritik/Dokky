@@ -61,25 +61,25 @@ func OpenFolder(path string) tea.Cmd {
 	}
 }
 
-// the state's own action: open, connect, remove here or reconnect
-func Primary(d api.Drive) string {
+// what m does to a drive in its state; a drive removed on another computer leaves this one with d
+func MountLabel(d api.Drive) string {
 	switch d.State {
 	case api.Connected:
-		return "open"
+		return "unmount"
 	case api.Off, api.Failed:
-		return "connect"
-	case api.Removed:
-		return "remove here"
+		return "mount"
 	case api.Reconnect:
-		return "reconnect"
+		return "remount"
 	}
 	return ""
 }
 
-func RunPrimary(st *State, d api.Drive) tea.Cmd {
+func ViewLabel() string { return "view in " + FileManager() }
+
+func RunMount(st *State, d api.Drive) tea.Cmd {
 	switch d.State {
 	case api.Connected:
-		return OpenFolder(d.Folder)
+		return Disconnect(st, d.ID)
 	case api.Off, api.Failed:
 		return Connect(st, d.ID)
 	case api.Removed:

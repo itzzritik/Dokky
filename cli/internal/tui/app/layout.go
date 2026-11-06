@@ -93,7 +93,7 @@ func (a *App) render() string {
 	return out
 }
 
-var moreKey = core.Action{Key: "m", Label: "more"}
+var moreKey = core.Action{Key: "?", Label: "more"}
 
 // actions on every tab, in the footer's right side and the menu
 func (a *App) globals() []core.Action {

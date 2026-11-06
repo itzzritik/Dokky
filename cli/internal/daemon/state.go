@@ -56,12 +56,12 @@ func (d *Daemon) drive(m store.Mount) api.Drive {
 	if st.state == stateMounted {
 		ms := d.stats[st.name]
 		dr.Folder, dr.CacheBytes, dr.Uploads = st.point, ms.CacheBytes, ms.UploadsQueued+ms.UploadsInProgress
-		if sp, ok := d.space[m.ID]; ok {
-			dr.Space = &sp
-		}
 		if st.remount {
 			dr.State = api.Reconnect
 		}
+	}
+	if sp, ok := d.space[m.ID]; ok {
+		dr.Space = &sp
 	}
 	if lm.RemovedRemotely {
 		dr.State = api.Removed

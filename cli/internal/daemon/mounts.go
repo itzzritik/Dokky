@@ -53,7 +53,7 @@ type mountEngine interface {
 	Sample() (int64, []engine.Moving, error)
 	Finished() ([]engine.Finished, error)
 	Retry(id, name string) error
-	Space(id string) (free, total int64, ok bool)
+	Space(store.Mount) (free, total int64, ok bool)
 }
 
 type mountState struct {

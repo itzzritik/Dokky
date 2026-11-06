@@ -3,7 +3,7 @@ package api
 type Provider struct {
 	Type    string `json:"type"`
 	Name    string `json:"name"`
-	Hint    string `json:"hint"`
+	Desc    string `json:"desc"`
 	Group   string `json:"group"`
 	Popular bool   `json:"popular"`
 }

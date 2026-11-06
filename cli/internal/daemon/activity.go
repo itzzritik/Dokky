@@ -13,13 +13,16 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/logx"
+	"github.com/itzzritik/dokky/cli/internal/store"
 )
 
 const (
 	earlierLen = 50
 	heartbeat  = 5 * time.Second
 	spaceEvery = 30 * time.Second
-	spaceRetry = 5 * time.Second
+	// a drive that isn't connected has no open session, and some services log in again for each check
+	spaceIdle  = 15 * time.Minute
+	spaceRetry = time.Minute
 )
 
 type activity struct {
@@ -221,40 +224,46 @@ func (d *Daemon) retry(p retryParams) (any, error) {
 }
 
 func (d *Daemon) refreshSpace(now time.Time) {
-	type due struct{ id, key string }
-	var list []due
+	var list []store.Mount
 	d.mu.Lock()
-	for id, st := range d.states {
-		switch {
-		case st.state != stateMounted:
-			delete(d.spaceAt, id)
+	kept := map[string]bool{}
+	for _, m := range d.data.Mounts {
+		kept[m.ID] = true
+		st := d.states[m.ID]
+		if d.data.Local[m.ID].RemovedRemotely || st != nil && st.state == stateMounting || now.Before(d.spaceAt[m.ID]) {
+			continue
+		}
+		every := spaceIdle
+		if st != nil && st.state == stateMounted {
+			every = spaceEvery
+		}
+		d.spaceAt[m.ID] = now.Add(every)
+		list = append(list, m)
+	}
+	for id := range d.space {
+		if !kept[id] {
 			delete(d.space, id)
-		case now.Sub(d.spaceAt[id]) >= spaceEvery:
-			d.spaceAt[id] = now
-			list = append(list, due{id, st.name})
+			delete(d.spaceAt, id)
 		}
 	}
 	d.mu.Unlock()
-	for _, x := range list {
+	for _, m := range list {
 		go func() {
-			free, total, ok := d.eng.Space(x.key)
+			free, total, ok := d.eng.Space(m)
+			d.mu.Lock()
 			if !ok {
 				// a slow or failed check keeps the last answer, and a drive with none yet asks again soon
-				d.mu.Lock()
-				if _, had := d.space[x.id]; !had {
-					d.spaceAt[x.id] = time.Now().Add(spaceRetry - spaceEvery)
+				if _, had := d.space[m.ID]; !had {
+					d.spaceAt[m.ID] = time.Now().Add(spaceRetry)
 				}
 				d.mu.Unlock()
 				return
 			}
-			d.mu.Lock()
-			old, had := d.space[x.id]
-			changed := !had || old != api.Space{Free: free, Total: total}
-			if d.states[x.id] != nil && d.states[x.id].state == stateMounted {
-				d.space[x.id] = api.Space{Free: free, Total: total}
-			}
+			old, had := d.space[m.ID]
+			sp := api.Space{Free: free, Total: total}
+			d.space[m.ID] = sp
 			d.mu.Unlock()
-			if changed {
+			if !had || old != sp {
 				d.publish()
 			}
 		}()
