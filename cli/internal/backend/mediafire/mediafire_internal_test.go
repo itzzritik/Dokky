@@ -2,12 +2,15 @@ package mediafire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +23,7 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/lib/rest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -475,4 +479,198 @@ func TestOpenWithoutLinkFails(t *testing.T) {
 	assert.ErrorContains(t, err, "no download link")
 	assert.Nil(t, rc)
 	assert.Equal(t, 1, fake.count("file/get_links"))
+}
+
+type uploadFake struct {
+	mu      sync.Mutex
+	units   map[string][]byte
+	headers map[string]http.Header
+	forms   []url.Values
+}
+
+func sha256Hex(b []byte) string {
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}
+
+func fakeUpload(t *testing.T, fake *fakeAPI, check map[string]any, polls ...map[string]any) *uploadFake {
+	old := pollInterval
+	pollInterval = time.Millisecond
+	t.Cleanup(func() { pollInterval = old })
+	u := &uploadFake{units: map[string][]byte{}, headers: map[string]http.Header{}}
+	fake.handle("upload/check", func(url.Values, *http.Request) any {
+		return success(append([]any{}, flatten(check)...)...)
+	})
+	fake.handle("upload/resumable", func(form url.Values, r *http.Request) any {
+		b, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		id := r.Header.Get("x-unit-id")
+		u.mu.Lock()
+		u.units[id] = b
+		u.headers[id] = r.Header.Clone()
+		u.forms = append(u.forms, form)
+		u.mu.Unlock()
+		return success("doupload", map[string]any{"result": "0", "key": "k1"})
+	})
+	n := 0
+	fake.handle("upload/poll_upload", func(url.Values, *http.Request) any {
+		p := polls[min(n, len(polls)-1)]
+		n++
+		return success("doupload", p)
+	})
+	return u
+}
+
+func flatten(m map[string]any) []any {
+	var kv []any
+	for k, v := range m {
+		kv = append(kv, k, v)
+	}
+	return kv
+}
+
+func resumable(units, unitSize int, words ...string) map[string]any {
+	return map[string]any{
+		"hash_exists": "no",
+		"resumable_upload": map[string]any{
+			"number_of_units": strconv.Itoa(units),
+			"unit_size":       strconv.Itoa(unitSize),
+			"upload_key":      "k1",
+			"bitmap":          map[string]any{"count": strconv.Itoa(len(words)), "words": words},
+		},
+	}
+}
+
+var finished = map[string]any{"result": "0", "status": "99", "quickkey": "q1", "size": "10"}
+
+func srcInfo(content string, withHash bool) fs.ObjectInfo {
+	var hashes map[hash.Type]string
+	if withHash {
+		hashes = map[hash.Type]string{hash.SHA256: sha256Hex([]byte(content))}
+	}
+	return object.NewStaticObjectInfo("v.bin", time.Now(), int64(len(content)), true, hashes, nil)
+}
+
+func TestUnitDone(t *testing.T) {
+	words := []string{"5", "1"}
+	assert.True(t, unitDone(words, 0))
+	assert.False(t, unitDone(words, 1))
+	assert.True(t, unitDone(words, 2))
+	assert.True(t, unitDone(words, 16))
+	assert.False(t, unitDone(words, 40))
+}
+
+func TestPutUploadsUnitsAndPolls(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	u := fakeUpload(t, fake, resumable(3, 4), map[string]any{"result": "0", "status": "17"}, finished)
+	f := newTestFs(t, fake)
+	o, err := f.Put(ctx, strings.NewReader(content), srcInfo(content, true))
+	require.NoError(t, err)
+	assert.Equal(t, "q1", o.(*Object).id)
+	assert.Equal(t, int64(10), o.Size())
+	require.Len(t, u.units, 3)
+	for id, want := range map[string]string{"0": "0123", "1": "4567", "2": "89"} {
+		assert.Equal(t, want, string(u.units[id]))
+		h := u.headers[id]
+		assert.Equal(t, strconv.Itoa(len(want)), h.Get("x-unit-size"))
+		assert.Equal(t, sha256Hex([]byte(want)), h.Get("x-unit-hash"))
+		assert.Equal(t, sha256Hex([]byte(content)), h.Get("x-filehash"))
+		assert.Equal(t, "10", h.Get("x-filesize"))
+		assert.Equal(t, "v.bin", h.Get("x-filename"))
+	}
+	assert.Equal(t, "replace", u.forms[0].Get("action_on_duplicate"))
+	assert.Equal(t, "myfiles", u.forms[0].Get("folder_key"))
+	assert.Equal(t, 2, fake.count("upload/poll_upload"))
+	assert.Equal(t, "k1", fake.last("upload/poll_upload").Get("key"))
+	check := fake.last("upload/check")
+	assert.Equal(t, "v.bin", check.Get("filename"))
+	assert.Equal(t, "10", check.Get("size"))
+	assert.Equal(t, sha256Hex([]byte(content)), check.Get("hash"))
+	assert.Equal(t, "yes", check.Get("resumable"))
+}
+
+func TestPutSkipsUnitsAlreadyDone(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	u := fakeUpload(t, fake, resumable(3, 4, "1"), finished)
+	f := newTestFs(t, fake)
+	_, err := f.Put(ctx, strings.NewReader(content), srcInfo(content, true))
+	require.NoError(t, err)
+	assert.Len(t, u.units, 2)
+	assert.Equal(t, "4567", string(u.units["1"]))
+	assert.Equal(t, "89", string(u.units["2"]))
+}
+
+func TestPutInstantWhenHashExists(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	u := fakeUpload(t, fake, map[string]any{"hash_exists": "yes"}, finished)
+	fake.handle("upload/instant", func(url.Values, *http.Request) any {
+		return success("quickkey", "qi", "filename", "v.bin")
+	})
+	f := newTestFs(t, fake)
+	o, err := f.Put(ctx, strings.NewReader(content), srcInfo(content, true))
+	require.NoError(t, err)
+	assert.Equal(t, "qi", o.(*Object).id)
+	assert.Empty(t, u.units)
+	form := fake.last("upload/instant")
+	assert.Equal(t, sha256Hex([]byte(content)), form.Get("hash"))
+	assert.Equal(t, "10", form.Get("size"))
+	assert.Equal(t, "v.bin", form.Get("filename"))
+	assert.Equal(t, "replace", form.Get("action_on_duplicate"))
+}
+
+func TestPutHashesUnknownSource(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	u := fakeUpload(t, fake, resumable(1, 16), finished)
+	f := newTestFs(t, fake)
+	_, err := f.Put(ctx, strings.NewReader(content), srcInfo(content, false))
+	require.NoError(t, err)
+	assert.Equal(t, sha256Hex([]byte(content)), fake.last("upload/check").Get("hash"))
+	assert.Equal(t, content, string(u.units["0"]))
+}
+
+func TestUpdateSendsQuickKey(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	u := fakeUpload(t, fake, resumable(1, 16), finished)
+	f := newTestFs(t, fake)
+	o := &Object{fs: f, remote: "v.bin", id: "q0", size: 3}
+	require.NoError(t, o.Update(ctx, strings.NewReader(content), srcInfo(content, true)))
+	require.Len(t, u.forms, 1)
+	assert.Equal(t, "q0", u.forms[0].Get("quick_key"))
+	assert.Empty(t, u.forms[0].Get("action_on_duplicate"))
+	assert.Equal(t, int64(10), o.Size())
+}
+
+func TestUploadPollFileErrorFails(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	fakeUpload(t, fake, resumable(1, 16), map[string]any{"result": "0", "status": "99", "fileerror": "5"})
+	f := newTestFs(t, fake)
+	o, err := f.Put(ctx, strings.NewReader(content), srcInfo(content, true))
+	assert.Error(t, err)
+	assert.Nil(t, o)
+}
+
+func TestMkdirCreatesFolder(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing(nil, nil))
+	fake.handle("folder/create", func(url.Values, *http.Request) any {
+		return success("folder_key", "fNew")
+	})
+	f := newTestFs(t, fake)
+	require.NoError(t, f.Mkdir(ctx, "New"))
+	form := fake.last("folder/create")
+	assert.Equal(t, "New", form.Get("foldername"))
+	assert.Equal(t, "myfiles", form.Get("parent_key"))
 }

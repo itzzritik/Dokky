@@ -165,12 +165,24 @@ func (f *Fs) Precision() time.Duration { return fs.ModTimeNotSupported }
 func (f *Fs) Hashes() hash.Set         { return hash.Set(hash.SHA256) }
 func (f *Fs) DirCacheFlush()           { f.dirCache.ResetRoot() }
 
-func (f *Fs) call(ctx context.Context, method string, params url.Values, result apiResult) error {
+func (f *Fs) withToken(ctx context.Context, fn func(token string) error) error {
 	for attempt := 0; ; attempt++ {
 		token, err := f.sess.Token(ctx)
 		if err != nil {
 			return err
 		}
+		err = fn(token)
+		var apiErr *api.Error
+		if attempt == 0 && errors.As(err, &apiErr) && apiErr.Code == api.CodeSessionInvalid {
+			f.sess.Invalidate(token)
+			continue
+		}
+		return err
+	}
+}
+
+func (f *Fs) call(ctx context.Context, method string, params url.Values, result apiResult) error {
+	return f.withToken(ctx, func(token string) error {
 		p := maps.Clone(params)
 		if p == nil {
 			p = url.Values{}
@@ -180,17 +192,11 @@ func (f *Fs) call(ctx context.Context, method string, params url.Values, result 
 		env := struct {
 			Response any `json:"response"`
 		}{result}
-		err = postForm(ctx, f.srv, f.pacer, method, p, &env)
-		if err == nil {
-			err = result.Err()
+		if err := postForm(ctx, f.srv, f.pacer, method, p, &env); err != nil {
+			return err
 		}
-		var apiErr *api.Error
-		if attempt == 0 && errors.As(err, &apiErr) && apiErr.Code == api.CodeSessionInvalid {
-			f.sess.Invalidate(token)
-			continue
-		}
-		return err
-	}
+		return result.Err()
+	})
 }
 
 func (f *Fs) listAll(ctx context.Context, dirID string, kinds []string, fn func(folder *api.Folder, file *api.File) bool) (found bool, err error) {
@@ -240,7 +246,12 @@ func (f *Fs) FindLeaf(ctx context.Context, pathID, leaf string) (pathIDOut strin
 }
 
 func (f *Fs) CreateDir(ctx context.Context, pathID, leaf string) (newID string, err error) {
-	return "", fs.ErrorNotImplemented
+	var out api.FolderCreate
+	params := url.Values{"foldername": {f.opt.Enc.FromStandardName(leaf)}, "parent_key": {pathID}}
+	if err := f.call(ctx, "folder/create", params, &out); err != nil {
+		return "", fmt.Errorf("couldn't create folder %q: %w", leaf, err)
+	}
+	return out.FolderKey, nil
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
@@ -307,11 +318,20 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return nil, fs.ErrorNotImplemented
+	leaf, dirID, err := f.dirCache.FindPath(ctx, src.Remote(), true)
+	if err != nil {
+		return nil, err
+	}
+	o := &Object{fs: f, remote: src.Remote()}
+	if err := o.upload(ctx, in, src, leaf, dirID); err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-	return fs.ErrorNotImplemented
+	_, err := f.dirCache.FindDir(ctx, dir, true)
+	return err
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
@@ -409,7 +429,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	return fs.ErrorNotImplemented
+	leaf, dirID, err := o.fs.dirCache.FindPath(ctx, o.remote, true)
+	if err != nil {
+		return err
+	}
+	return o.upload(ctx, in, src, leaf, dirID)
 }
 
 func (o *Object) Remove(ctx context.Context) error {

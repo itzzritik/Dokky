@@ -110,3 +110,8 @@ type Upload struct {
 		Size        string `json:"size"`
 	} `json:"doupload"`
 }
+
+type Instant struct {
+	Base
+	QuickKey string `json:"quickkey"`
+}
