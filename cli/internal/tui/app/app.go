@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/client"
+	"github.com/itzzritik/dokky/cli/internal/tui/brand"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/activity"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/drives"
@@ -33,6 +34,8 @@ type App struct {
 	fixedOnOpen    bool
 	pendingRestart string // an installed dokky this TUI restarts onto once uploads finish
 	restartOpen    bool
+	restartAt      time.Time
+	mark           *brand.Mark // the splash's logo, new each time the splash shows so it fills again
 	everConnected  bool
 	autoStarted    bool
 	st             *core.State
@@ -223,6 +226,7 @@ func (a *App) setSnap(s api.State) tea.Cmd {
 	if len(s.Clashes) > 0 && s.Account.Pending && !a.hasClashWindow() {
 		a.windows = append(a.windows, gate.NewClashes(s.Clashes))
 	}
+	a.followService()
 	return tea.Batch(a.nextToast(), a.checkUpdate(), a.restartWhenIdle())
 }
 
@@ -310,6 +314,8 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		return a.quit()
 	}
 	switch {
+	case a.restartOpen:
+		return nil
 	case a.small():
 		if s == "q" {
 			return a.quit()
@@ -397,8 +403,8 @@ func (a *App) animating() bool {
 	if a.toast != nil && a.toast.Moving(a.st.Now) {
 		return true
 	}
-	if !a.st.Connected {
-		return !a.veil && (a.starting || !a.failed) && !ui.Reduced()
+	if a.restartOpen || !a.st.Connected {
+		return !a.veil && !ui.Reduced()
 	}
 	if a.busy() && !ui.Reduced() {
 		return true

@@ -45,10 +45,15 @@ func failWords(err string) string {
 	case has(offline):
 		return "Unreachable"
 	case has(signIn):
-		return "Login failed"
+		return loginFailed
 	}
 	return "Mount failed"
 }
+
+const loginFailed = "Login failed"
+
+// signing in again is what this drive needs next
+func LoginFailed(d api.Drive) bool { return d.State == api.Failed && failWords(d.Error) == loginFailed }
 
 // icon then words, for the right end of a row or tile
 func (s Status) Line(bg color.Color, words bool) *Line {

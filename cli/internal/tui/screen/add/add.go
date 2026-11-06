@@ -46,13 +46,21 @@ func Open(st *core.State, typ string) tea.Cmd {
 	return tea.Sequence(core.Open(a), cmd)
 }
 
-func Edit(st *core.State, d api.Drive) tea.Cmd {
+func Edit(st *core.State, d api.Drive) tea.Cmd { return core.Open(editing(st, d)) }
+
+// straight to signing in again, for a drive whose login failed; esc lands on its edit window
+func SignIn(st *core.State, d api.Drive) tea.Cmd {
+	a := editing(st, d)
+	return tea.Sequence(core.Open(a), a.toSignIn(st))
+}
+
+func editing(st *core.State, d api.Drive) *Add {
 	a := &Add{edit: &d, step: name, ed: editForm{saving: -1, saved: -1}}
 	a.prov, _ = provider(st, d.ServiceType)
 	if a.prov.Type == "" {
 		a.prov = api.Provider{Type: d.ServiceType, Name: d.ServiceName}
 	}
-	return core.Open(a)
+	return a
 }
 
 // "Home NAS", then "Home NAS 2" when a drive already has that folder name

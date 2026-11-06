@@ -43,9 +43,12 @@ func (a *App) render() string {
 	var more *core.Action
 	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
-	case !a.st.Connected:
-		passes = append(passes, ui.Pass{Layer: a.down(w, h)})
-		if a.failed {
+	case a.restartOpen || !a.st.Connected:
+		passes = append(passes, ui.Pass{Layer: a.splashLayer(a.splash(), w, h)})
+		switch {
+		case a.restartOpen:
+			right = nil
+		case a.failed:
 			left = []core.Action{{Key: "enter", Label: "start dokky"}}
 		}
 	case a.gate != nil:
@@ -57,12 +60,16 @@ func (a *App) render() string {
 			a.tabs[a.active].View(a.st, bw, bh).X(bodyX).Y(bodyY),
 		)
 		passes = append(passes, ui.Pass{Layer: base})
+		a.mark = nil
 		left, right, more = a.tabs[a.active].Actions(a.st), a.globals(), &moreKey
 		if a.capturing() {
 			right, more = nil, nil
 		}
 	}
 	for i, win := range a.windows {
+		if a.restartOpen {
+			break
+		}
 		// windows stay clear of the footer row
 		l := win.View(a.st, w-4, h-4)
 		b := lipgloss.NewCompositor(l).Bounds()
@@ -140,26 +147,4 @@ func (a *App) account() string {
 		return spin(ui.Paint("Checking", p.Muted, nil, false))
 	}
 	return ui.L(nil).B(ui.G.Check, p.Kelp).Sp(1).T("Healthy", p.Muted).String()
-}
-
-// calm full screen while the daemon is away
-func (a *App) down(w, h int) *lipgloss.Layer {
-	p := ui.P()
-	b := ui.NewBox()
-	title := ui.Paint("dokky isn't running", p.Text, nil, true)
-	sub := ui.Paint("Start it and your drives come back.", p.Muted, nil, false)
-	switch {
-	case a.starting:
-		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).B("Starting dokky", p.Text).String(), ""
-	case !a.failed:
-		word := "Connecting"
-		if !a.lostAt.IsZero() {
-			word = "Reconnecting"
-		}
-		title, sub = ui.L(nil).B(ui.Spin(a.st.T), ui.SpinFg(a.st.T)).Sp(1).T(word, p.Muted).String(), ""
-	}
-	y := h/2 - 2
-	b.Put((w-ui.Width(title))/2, y, title)
-	b.Put((w-ui.Width(sub))/2, y+1, sub)
-	return b.Layer()
 }
