@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "github.com/itzzritik/dokky/cli/internal/backend/mediafire"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	_ "github.com/rclone/rclone/backend/all"
 	_ "github.com/rclone/rclone/backend/local"
