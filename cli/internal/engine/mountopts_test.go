@@ -12,7 +12,7 @@ func TestMountParamsDarwin(t *testing.T) {
 	require.Equal(t, "svc:Media", p["fs"])
 	require.Equal(t, "/u/dokky/nas", p["mountPoint"])
 	require.Equal(t, "dokky", p["mountType"])
-	require.Equal(t, []string{"rsize=1048576", "wsize=1048576", "readahead=16"}, p["mountOpt"].(map[string]any)["ExtraOptions"])
+	require.Equal(t, []string{"rsize=1048576", "wsize=131072", "readahead=16"}, p["mountOpt"].(map[string]any)["ExtraOptions"])
 	require.Equal(t, "nas", p["volname"])
 	require.Equal(t, true, p["vfs_fast_fingerprint"])
 	require.Equal(t, "full", p["vfs_cache_mode"])
