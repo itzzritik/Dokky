@@ -133,7 +133,12 @@ func (d *Daemon) observe(now time.Time) bool {
 		if !ok || first || dt <= 0 || !f.At.After(prev) {
 			continue
 		}
-		speed := float64(max(0, f.Size-a.done[fmt.Sprint(id, "\x00", f.Up, "\x00", f.Name)])) / dt
+		// bytes it really sent: a server that already has the file finishes without any
+		sent := f.Bytes
+		if f.Size >= 0 {
+			sent = min(sent, f.Size)
+		}
+		speed := float64(max(0, sent-a.done[fmt.Sprint(id, "\x00", f.Up, "\x00", f.Name)])) / dt
 		if f.Up {
 			up += speed
 			perUp[id] += speed
