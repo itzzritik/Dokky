@@ -22,6 +22,11 @@ var patches = map[string]string{
 	"github.com/willscott/go-nfs/conn.go":                   "a62885ef2f7ff40355c3fe8112832e86456342c6f07d2016788c0ca87a254e6e",
 }
 
+// files upstream lacks; once upstream has one, ours must go.
+var added = []string{
+	"github.com/rclone/rclone/docs/data/backends/mediafire.yaml",
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "overlay:", err)
@@ -47,6 +52,14 @@ func run() error {
 		}
 		if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != want {
 			return fmt.Errorf("%s changed upstream, redo _patches/%s against the new version", file, patch)
+		}
+		replace[upstream] = filepath.Join(here, "_patches", filepath.FromSlash(patch))
+	}
+	for _, file := range added {
+		upstream := filepath.Join(here, "vendor", filepath.FromSlash(file))
+		patch := strings.SplitN(file, "/", 3)[2]
+		if _, err := os.Stat(upstream); err == nil {
+			return fmt.Errorf("%s now exists upstream, delete _patches/%s", file, patch)
 		}
 		replace[upstream] = filepath.Join(here, "_patches", filepath.FromSlash(patch))
 	}
