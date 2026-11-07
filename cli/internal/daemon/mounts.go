@@ -372,6 +372,11 @@ func (d *Daemon) refreshStats() error {
 func (d *Daemon) remountFlagged() {
 	now := time.Now()
 	d.mu.Lock()
+	// a lost or stolen device never shows its files again
+	if r := d.data.Removal; r != nil && r.Mode == "erase" {
+		d.mu.Unlock()
+		return
+	}
 	var due []store.Mount
 	for _, m := range d.data.Mounts {
 		// a drive being removed still mounts again here, so its unsent uploads finish

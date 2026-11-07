@@ -32,6 +32,7 @@ type activity struct {
 	done     map[string]int64
 	cur      api.Activity
 	lastRead map[string]time.Time
+	lastUp   map[string]time.Time
 	// a drive whose upload queue couldn't be read counts as busy
 	queueErr map[string]time.Time
 }
@@ -175,7 +176,7 @@ func (d *Daemon) observe(now time.Time) bool {
 	}
 
 	if a.lastRead == nil {
-		a.lastRead, a.queueErr = map[string]time.Time{}, map[string]time.Time{}
+		a.lastRead, a.queueErr, a.lastUp = map[string]time.Time{}, map[string]time.Time{}, map[string]time.Time{}
 	}
 	for _, id := range unread {
 		a.queueErr[id] = now
@@ -183,6 +184,11 @@ func (d *Daemon) observe(now time.Time) bool {
 	for id, down := range perDown {
 		if down > 0 {
 			a.lastRead[id] = now
+		}
+	}
+	for id, sent := range perUp {
+		if sent > 0 {
+			a.lastUp[id] = now
 		}
 	}
 	cur.History = keep(a.cur.History, api.Sample{At: now, Down: cur.Down, Up: cur.Up})

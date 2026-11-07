@@ -25,6 +25,9 @@ func (d *Daemon) snapshot() api.State {
 		s.Account = api.Account{LoggedIn: true, Pending: a.Pending, Name: a.Name, Email: a.Email, LastSyncAt: a.LastSyncAt}
 	}
 	s.Account.Offline, s.Account.SignedOut = d.offline, d.signedOut
+	if r := d.data.Removal; r != nil {
+		s.Removed = &api.Removed{Mode: r.Mode, Waiting: d.leaveWaiting, Progress: d.leaveProgress}
+	}
 	for _, c := range d.clashes {
 		s.Clashes = append(s.Clashes, api.Clash{Kind: c.Kind, Name: c.Name, Local: c.Local, Account: c.Account})
 	}

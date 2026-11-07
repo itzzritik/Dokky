@@ -359,89 +359,38 @@ func (d *Daemon) finishLogin(uploaded bool) error {
 	return d.save()
 }
 
+// the server records the removal first; then this device leaves like any other removed device
 func (d *Daemon) logout(ctx context.Context, p logoutParams) (logoutReply, error) {
-	if !d.loggedIn() {
-		return logoutReply{}, errors.New("not logged in")
-	}
-	for {
-		if !p.Force {
-			if err := d.waitUploads(ctx); err != nil {
-				return logoutReply{}, err
-			}
-		}
-		d.opMu.Lock()
-		if p.Force {
-			break
-		}
-		// an upload queued while waiting for opMu would be deleted with the cache
-		d.mu.Lock()
-		all := slices.Clone(d.data.Mounts)
-		d.mu.Unlock()
-		_, n, err := d.busyMount(all)
-		if err != nil {
-			d.opMu.Unlock()
-			return logoutReply{}, fmt.Errorf("%w; nothing was removed", err)
-		}
-		if n == 0 {
-			break
-		}
-		d.opMu.Unlock()
-	}
-	defer d.opMu.Unlock()
 	d.mu.Lock()
-	acct, mounts := d.data.Account, slices.Clone(d.data.Mounts)
+	acct, r := d.data.Account, d.data.Removal
 	d.mu.Unlock()
 	if acct == nil {
 		return logoutReply{}, errors.New("not logged in")
 	}
-	const unsentFix = "to finish, or use --force to drop them"
-	if !p.Force {
-		if err := d.refuseUnsent(mounts, unsentFix); err != nil {
-			return logoutReply{}, err
+	mode := "remove"
+	if p.Force {
+		mode = "erase"
+	}
+	if r == nil {
+		err := client(acct).Revoke(ctx, "self", mode)
+		if errors.Is(err, dsync.ErrRevoked) {
+			mode = stronger(mode, dsync.RevokedMode(err))
+		}
+		// already removed, or a login the server never finished: this device leaves on its own
+		if err != nil && !errors.Is(err, dsync.ErrRevoked) && !errors.Is(err, dsync.ErrUnauthorized) {
+			return logoutReply{}, d.answer(acct, err)
 		}
 	}
-	for _, m := range mounts {
-		if err := d.release(m); err != nil {
-			return logoutReply{}, fmt.Errorf("could not unmount %s, close its open files and try again: %w", m.Name, err)
-		}
-	}
-	// an upload that started after the check above was paused by the unmount
-	if !p.Force {
-		if err := d.refuseUnsent(mounts, unsentFix); err != nil {
-			return logoutReply{}, err
-		}
-	}
-
-	var warnings []string
-	if err := d.clearCache(); err != nil {
-		warnings = append(warnings, fmt.Sprintf("could not remove the cache: %v", err))
-	}
-	// the device is wiped even when the caller is gone or offline
-	if err := client(acct).Revoke(context.WithoutCancel(ctx), "self"); err != nil && !errors.Is(err, dsync.ErrRevoked) && !errors.Is(err, dsync.ErrUnauthorized) {
-		d.log.Warn("revoke device", "err", err)
-		warnings = append(warnings, fmt.Sprintf("could not reach dokky to remove this device, remove it at %s/devices", acct.APIBase))
-	}
-	err := d.forget()
-	d.log.Info("logged out")
-	return logoutReply{Warning: strings.Join(warnings, "\n")}, err
-}
-
-func (d *Daemon) waitUploads(ctx context.Context) error {
-	for {
-		n := 0
-		for _, m := range d.status().Mounts {
-			n += m.UploadsQueued + m.UploadsInProgress
-		}
-		if n == 0 {
-			return nil
-		}
-		d.publish()
+	d.startLeaving(mode)
+	for d.loggedIn() {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("logout stopped with %d uploads still waiting", n)
+			return logoutReply{Warning: "Removal continues in the background"}, nil
 		case <-time.After(uploadWait):
 		}
 	}
+	d.log.Info("logged out")
+	return logoutReply{}, nil
 }
 
 func (d *Daemon) loggedIn() bool {

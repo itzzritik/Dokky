@@ -202,25 +202,18 @@ func (d *Daemon) serverFirst(save func(*dsync.Client) error) error {
 	return d.checked(acct, save(client(acct)))
 }
 
-// caller holds opMu
 func (d *Daemon) checked(acct *store.Account, err error) error {
 	if d.note(err) {
-		d.wipeLocked(acct)
+		d.removedBy(acct, err)
 	}
 	return coded(err)
 }
 
-// caller must not hold opMu
 func (d *Daemon) answer(acct *store.Account, err error) error {
-	if d.note(err) {
-		d.opMu.Lock()
-		d.wipeLocked(acct)
-		d.opMu.Unlock()
-	}
-	return coded(err)
+	return d.checked(acct, err)
 }
 
-// true means the server revoked this device and it must be wiped
+// true means the server removed this device and it must leave
 func (d *Daemon) note(err error) bool {
 	d.mu.Lock()
 	d.offline, d.signedOut = dsync.Offline(err), errors.Is(err, dsync.ErrUnauthorized)
@@ -228,7 +221,6 @@ func (d *Daemon) note(err error) bool {
 	switch {
 	case err == nil:
 	case errors.Is(err, dsync.ErrRevoked):
-		d.log.Warn("this device was removed from the account, wiping it")
 		return true
 	default:
 		d.log.Warn("dokky server", "err", err)
@@ -244,7 +236,7 @@ func coded(err error) error {
 	case errors.As(err, &ce):
 		return &codedError{"conflict", withoutSecrets(ce.Current)}
 	case errors.Is(err, dsync.ErrRevoked):
-		return &codedError{"revoked", "this device was removed from your dokky account, so dokky wiped it"}
+		return &codedError{"revoked", "This device was removed from your dokky account"}
 	case errors.Is(err, dsync.ErrUnauthorized):
 		return &codedError{"signed_out", "signed out on the server: run dokky logout, then dokky login"}
 	case errors.Is(err, dsync.ErrNameTaken):
@@ -278,21 +270,6 @@ func notFoundOK(err error) error {
 }
 
 // caller holds opMu; a revoked device unmounts at once and keeps nothing, unsent uploads included
-func (d *Daemon) wipeLocked(acct *store.Account) {
-	d.mu.Lock()
-	cur, mounts := d.data.Account, slices.Clone(d.data.Mounts)
-	d.mu.Unlock()
-	if cur == nil || cur.Token != acct.Token {
-		return
-	}
-	d.releaseAll(mounts)
-	_ = d.clearCache()
-	if err := d.forget(); err != nil {
-		d.log.Error("delete store", "err", err)
-	}
-	d.log.Warn("wiped this device")
-}
-
 // caller holds opMu
 func (d *Daemon) releaseAll(mounts []store.Mount) {
 	for _, m := range mounts {
@@ -361,15 +338,17 @@ func (d *Daemon) revokeDevice(ctx context.Context, id string) error {
 	if id == acct.DeviceID {
 		id = "self"
 	}
-	if err := d.answer(acct, client(acct).Revoke(ctx, id)); err != nil {
-		return err
+	err = client(acct).Revoke(ctx, id, "remove")
+	// already removed, or signed out on the server: this device still leaves
+	if id == "self" && (err == nil || errors.Is(err, dsync.ErrRevoked) || errors.Is(err, dsync.ErrUnauthorized)) {
+		mode := "remove"
+		if errors.Is(err, dsync.ErrRevoked) {
+			mode = dsync.RevokedMode(err)
+		}
+		d.startLeaving(mode)
+		return nil
 	}
-	if id == "self" {
-		d.opMu.Lock()
-		d.wipeLocked(acct)
-		d.opMu.Unlock()
-	}
-	return nil
+	return d.answer(acct, err)
 }
 
 func (d *Daemon) renameDevice(ctx context.Context, id, name string) error {

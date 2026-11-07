@@ -375,6 +375,11 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 			return a.quit()
 		}
 		return nil
+	case a.removedNow():
+		if s == "q" || s == "esc" {
+			return a.quit()
+		}
+		return nil
 	case !a.st.Connected && len(a.windows) == 0:
 		switch s {
 		case "q", "esc":
@@ -473,7 +478,7 @@ func (a *App) animating() bool {
 	if a.toast != nil && a.toast.Moving(a.st.Now) {
 		return true
 	}
-	if a.restartOpen || !a.st.Connected {
+	if a.restartOpen || !a.st.Connected || a.removedNow() {
 		return !a.veil && !ui.Reduced()
 	}
 	if a.busy() && !ui.Reduced() {

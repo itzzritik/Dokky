@@ -93,9 +93,10 @@ export const mountWire = (doc: MountDoc) => ({
 
 export async function caller(
   req: Request,
-  params: IdContext["params"]
+  params: IdContext["params"],
+  opts: { removed?: "report" | "writeback" } = {}
 ): Promise<Caller | Response> {
-  const who = await authDevice(req);
+  const who = await authDevice(req, new Date(), opts);
   if (who instanceof Response) {
     return who;
   }

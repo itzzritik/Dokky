@@ -12,7 +12,7 @@ mock.module("next/cache", () => ({ revalidatePath: () => undefined }));
 
 const list = await import("@/app/api/v1/devices/route");
 const one = await import("@/app/api/v1/devices/[id]/route");
-const { revoke } = await import("@/app/devices/actions");
+const { remove } = await import("@/app/devices/actions");
 const { authDevice } = await import("@/lib/device-auth");
 
 let server: MongoMemoryServer;
@@ -134,9 +134,9 @@ test("the page action revokes only the session user's device", async () => {
     f.set("id", id);
     return f;
   };
-  await revoke(form(theirs.id));
+  await remove(form(theirs.id));
   expect((await list.GET(call(theirs.token))).status).toBe(200);
-  await revoke(form(mine.id));
+  await remove(form(mine.id));
   expect((await list.GET(call(mine.token))).status).toBe(401);
 });
 

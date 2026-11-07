@@ -18,7 +18,10 @@ import (
 )
 
 // one background sync is 15 minutes, so a device seen in the last 16 is still on
-const activeFor = 16 * time.Minute
+const (
+	activeFor = 16 * time.Minute
+	idleFor   = 90 * 24 * time.Hour
+)
 
 // the devices on the account as a table, opened from Settings
 type Devices struct {
@@ -108,11 +111,11 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	case "r":
 		s.rename = ui.NewField("", shown(d.Name), "Device name", false)
 		s.rename.Bare = true
-	case "s":
+	case "d":
 		if d.Current {
-			return tea.Batch(core.Close(s), SignOut())
+			return tea.Batch(core.Close(s), RemoveSelf())
 		}
-		return s.signOut(d)
+		return s.remove(st, d)
 	}
 	return nil
 }
@@ -134,39 +137,70 @@ func (s *Devices) save(st *core.State) tea.Cmd {
 	}, s.load(st))
 }
 
-func SignOut() tea.Cmd {
+const removeLine = "It signs out and erases its dokky data once its transfers finish."
+
+// removing this device, from here or from Settings
+func RemoveSelf() tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
-		Question: "Sign out of dokky?",
-		Line:     "Drives from your account leave this computer.",
-		Do:       "Sign out",
+		Question: "Remove this device?",
+		Line:     "Your files stay in your storage.",
+		Lines:    []string{removeLine},
+		Do:       "Remove",
 		Run: func(st *core.State) tea.Cmd {
 			c := st.C
 			return func() tea.Msg {
-				warn, err := c.Logout(context.Background(), false)
-				if err != nil {
+				if err := c.RevokeDevice(context.Background(), "self"); err != nil {
 					return core.Toast{Text: core.Report(err), Bad: true}
 				}
-				return core.Toast{Text: core.Safe(cmp.Or(warn, "Signed out"))}
+				return nil
 			}
 		},
 	})
 }
 
-func (s *Devices) signOut(d api.Device) tea.Cmd {
-	return confirm.Open(&confirm.Confirm{
-		Question: "Sign out " + core.Safe(shown(d.Name)) + "?",
-		Line:     "Your drives leave that computer. Your files stay.",
-		Do:       "Sign out",
-		Run: func(st *core.State) tea.Cmd {
-			c, id := st.C, d.ID
-			return tea.Sequence(func() tea.Msg {
-				if err := c.RevokeDevice(context.Background(), id); err != nil {
-					return core.Toast{Text: core.Report(err), Bad: true}
-				}
-				return core.Toast{Text: "Signed out " + core.Safe(shown(d.Name))}
-			}, s.load(st))
-		},
-	})
+// an offline device keeps its sign-ins until it comes back, so the accounts it holds are named
+func (s *Devices) remove(st *core.State, d api.Device) tea.Cmd {
+	c, name := st.C, core.Safe(shown(d.Name))
+	offline := st.Now.Sub(d.LastSeenAt) >= activeFor
+	ask := func(accounts []string) tea.Msg {
+		lines := []string{removeLine}
+		if offline {
+			l := "It's offline, so it erases itself when it next comes online."
+			if len(accounts) > 0 {
+				l += " Until then it keeps its sign-ins for: " + strings.Join(accounts, ", ") + "."
+			}
+			lines = append(lines, l)
+		}
+		lines = append(lines, "Lost or stolen? Remove it from the dashboard.")
+		return confirm.Open(&confirm.Confirm{
+			Question: "Remove " + name + "?",
+			Line:     "Your files stay in your storage.",
+			Lines:    lines,
+			Do:       "Remove",
+			Run: func(st *core.State) tea.Cmd {
+				return tea.Sequence(func() tea.Msg {
+					if err := c.RevokeDevice(context.Background(), d.ID); err != nil {
+						return core.Toast{Text: core.Report(err), Bad: true}
+					}
+					return core.Toast{Text: "Removed " + name}
+				}, s.load(st))
+			},
+		})()
+	}
+	return func() tea.Msg {
+		if !offline {
+			return ask(nil)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		refs, _ := c.Accounts(ctx)
+		names := make([]string, 0, len(refs))
+		for _, r := range refs {
+			names = append(names, core.Safe(r.Name))
+		}
+		slices.Sort(names)
+		return ask(names)
+	}
 }
 
 func (s *Devices) Actions(st *core.State) []core.Action {
@@ -180,7 +214,7 @@ func (s *Devices) Actions(st *core.State) []core.Action {
 	if len(s.list) > 1 {
 		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
 	}
-	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "s", Label: "sign out", Danger: true}, core.Action{Key: "esc", Label: "close"})
+	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "d", Label: "remove", Danger: true}, core.Action{Key: "esc", Label: "close"})
 }
 
 func (s *Devices) Animating(*core.State) bool { return s.req != 0 && s.list == nil && !ui.Reduced() }
@@ -262,6 +296,8 @@ func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.L
 			status.B(ui.G.Here, p.Accent).Sp(1).T("This device", p.Accent)
 		case st.Now.Sub(d.LastSeenAt) < activeFor:
 			status.B(ui.G.Here, p.Kelp).Sp(1).T("Active now", p.Kelp)
+		case st.Now.Sub(d.LastSeenAt) >= idleFor:
+			status.T("Not seen in 3 months", p.Buoy)
 		default:
 			status.T("Seen "+core.Ago(d.LastSeenAt, st.Now), p.Faint)
 		}

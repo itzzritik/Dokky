@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { ObjectId } from "mongodb";
+import { ObjectId, type WithId } from "mongodb";
 import { valid } from "semver";
 import type { z } from "zod";
 import { audit } from "@/lib/audit";
@@ -14,14 +14,19 @@ const CODE_CHARS = "BCDFGHJKLMNPQRSTVWXZ";
 const BEARER = /^Bearer dky_[\w-]{43}$/u;
 const OS_NAME = /^[^\p{Cc}]{1,64}$/u;
 
+export type RemoveMode = "remove" | "erase";
+
 export interface Device {
   arch: string;
   createdAt: Date;
   driveIds?: string[];
+  erasedAt?: Date | null;
   lastSeenAt: Date;
   name: string;
   os: string;
   osName?: string;
+  removedBy?: string;
+  removeMode?: RemoveMode;
   revokedAt: Date | null;
   tokenHash: string;
   userId: string;
@@ -152,10 +157,33 @@ export async function decideLogin(
   return modifiedCount === 1;
 }
 
+async function revoked(
+  device: WithId<Device>,
+  aware: boolean,
+  now: Date
+): Promise<Response> {
+  if (!aware) {
+    // an older dokky wipes itself on this answer
+    await devices().updateOne(
+      { _id: device._id, erasedAt: null },
+      { $set: { erasedAt: now } }
+    );
+    return apiError(401, "device_revoked", "this device was revoked");
+  }
+  return Response.json(
+    {
+      error: { code: "device_revoked", message: "this device was removed" },
+      mode: device.removeMode ?? "erase",
+    },
+    { status: 401 }
+  );
+}
+
 export async function authDevice(
   req: Request,
-  now = new Date()
-): Promise<{ userId: string; deviceId: string } | Response> {
+  now = new Date(),
+  opts: { removed?: "report" | "writeback" } = {}
+): Promise<{ userId: string; deviceId: string; removed: boolean } | Response> {
   const header = req.headers.get("authorization") ?? "";
   if (!BEARER.test(header)) {
     return apiError(401, "unauthorized", "a device token is required");
@@ -167,7 +195,19 @@ export async function authDevice(
     return apiError(401, "unauthorized", "unknown device token");
   }
   if (device.revokedAt) {
-    return apiError(401, "device_revoked", "this device was revoked");
+    const aware = req.headers.get("x-dokky-removal") === "1";
+    // a lost or stolen device can still say it erased, but never write tokens other devices use
+    const allowed =
+      opts.removed === "report" ||
+      (opts.removed === "writeback" && device.removeMode === "remove");
+    if (aware && allowed && !device.erasedAt) {
+      return {
+        userId: device.userId,
+        deviceId: String(device._id),
+        removed: true,
+      };
+    }
+    return await revoked(device, aware, now);
   }
   const version = req.headers.get("x-dokky-version") ?? "";
   const osName = (req.headers.get("x-dokky-os") ?? "").trim();
@@ -188,15 +228,21 @@ export async function authDevice(
   if (Object.keys(set).length > 0) {
     await devices().updateOne({ _id: device._id }, { $set: set });
   }
-  return { userId: device.userId, deviceId: String(device._id) };
+  return {
+    userId: device.userId,
+    deviceId: String(device._id),
+    removed: false,
+  };
 }
 
 export const listDevices = (userId: string) =>
   devices().find({ userId, revokedAt: null }).sort({ createdAt: 1 }).toArray();
 
-export async function revokeDevice(
+// the device leaves every list now and erases itself on its next call
+export async function removeDevice(
   userId: string,
   id: string,
+  mode: RemoveMode,
   actorDeviceId: string,
   ip: string,
   now = new Date()
@@ -211,8 +257,21 @@ export async function revokeDevice(
   }
   const { modifiedCount } = await devices().updateOne(
     { _id, userId, revokedAt: null },
-    { $set: { revokedAt: now } }
+    {
+      $set: {
+        revokedAt: now,
+        removeMode: mode,
+        removedBy: actorDeviceId || "Web",
+        erasedAt: null,
+      },
+    }
   );
+  if (modifiedCount === 0 && mode === "erase") {
+    await devices().updateOne(
+      { _id, userId, removeMode: "remove", erasedAt: null },
+      { $set: { removeMode: "erase" } }
+    );
+  }
   if (modifiedCount === 1) {
     await audit(userId, actorDeviceId, "device.revoke", device.name, ip);
     await record(userId, [
@@ -228,6 +287,35 @@ export async function revokeDevice(
     ]);
   }
   return true;
+}
+
+export async function markErased(
+  userId: string,
+  id: string,
+  now = new Date()
+): Promise<void> {
+  const device = await devices().findOneAndUpdate(
+    {
+      _id: new ObjectId(id),
+      userId,
+      revokedAt: { $ne: null },
+      erasedAt: null,
+    },
+    { $set: { erasedAt: now } }
+  );
+  if (device) {
+    await record(userId, [
+      {
+        kind: "device.erased",
+        deviceId: id,
+        target: id,
+        name: device.name,
+        ok: true,
+        reason: "",
+        at: now,
+      },
+    ]);
+  }
 }
 
 export async function renameDevice(

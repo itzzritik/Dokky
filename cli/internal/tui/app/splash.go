@@ -32,6 +32,13 @@ func (a *App) splash() splash {
 		left := max(0, restartIn-a.st.Now.Sub(a.restartAt))
 		return splash{icon: ui.G.Check, iconFg: p.Kelp, words: "Updated to v" + a.pendingRestart,
 			sub: "Restarting in " + strconv.Itoa(int(math.Ceil(left.Seconds()))) + " s", bar: max(.001, float64(left)/float64(restartIn))}
+	case a.removedNow():
+		r := a.st.Snap.Removed
+		sub := "Erasing its dokky data"
+		if r.Waiting != "" {
+			sub = "Finishing " + r.Waiting
+		}
+		return splash{busy: true, words: "This device was removed", sub: sub, bar: r.Progress}
 	case a.starting:
 		return splash{busy: true, words: "Starting dokky", sub: "Your drives come back in a moment."}
 	case a.failed:
@@ -41,6 +48,9 @@ func (a *App) splash() splash {
 	}
 	return splash{busy: true, words: "Connecting"}
 }
+
+// the server removed this device; it only finishes its transfers and erases now
+func (a *App) removedNow() bool { return a.st.Connected && a.st.Snap.Removed != nil }
 
 func (a *App) splashLayer(s splash, w, h int) *lipgloss.Layer {
 	p := ui.P()

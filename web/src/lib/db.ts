@@ -27,7 +27,10 @@ export const db = (): Db => mongo().db(dbName);
 export async function ensureIndexes(): Promise<void> {
   const d = db();
   await Promise.all([
-    d.collection("devices").createIndex({ tokenHash: 1 }, { unique: true }),
+    d.collection("devices").createIndexes([
+      { key: { tokenHash: 1 }, unique: true },
+      { key: { erasedAt: 1 }, expireAfterSeconds: 7_776_000 },
+    ]),
     d
       .collection("services")
       .createIndex({ userId: 1, name: 1 }, { unique: true }),
@@ -53,4 +56,14 @@ export async function ensureIndexes(): Promise<void> {
       { key: { at: 1 }, expireAfterSeconds: 7_776_000 },
     ]),
   ]);
+}
+
+// devices revoked before removal modes existed erase at once; their records stay until they check in
+export async function migrateRemovals(): Promise<void> {
+  await db()
+    .collection("devices")
+    .updateMany(
+      { revokedAt: { $ne: null }, erasedAt: { $exists: false } },
+      { $set: { erasedAt: null, removeMode: "erase" } }
+    );
 }

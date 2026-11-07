@@ -52,6 +52,11 @@ test("ensureIndexes creates the unique and TTL indexes", async () => {
   expect(db().client).toBe(mongo());
   expect(await indexes("devices")).toEqual([
     { name: "tokenHash_1", key: { tokenHash: 1 }, unique: true },
+    {
+      name: "erasedAt_1",
+      key: { erasedAt: 1 },
+      expireAfterSeconds: 7_776_000,
+    },
   ]);
   expect(await indexes("services")).toEqual([
     { name: "userId_1_name_1", key: { userId: 1, name: 1 }, unique: true },

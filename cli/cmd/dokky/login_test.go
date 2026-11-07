@@ -91,5 +91,5 @@ func TestLogoutForceWarnsAboutUploads(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.True(t, forced)
 	require.Contains(t, errOut.String(), "3 unsent uploads will be discarded")
-	require.Contains(t, out.String(), "Logged out.")
+	require.Contains(t, out.String(), "Removed this device.")
 }

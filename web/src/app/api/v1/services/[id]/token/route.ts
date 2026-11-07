@@ -14,7 +14,8 @@ export async function POST(
   req: Request,
   { params }: IdContext
 ): Promise<Response> {
-  const c = await caller(req, params);
+  // a removed device still writes back refreshed tokens while it finishes its uploads
+  const c = await caller(req, params, { removed: "writeback" });
   if (c instanceof Response) {
     return c;
   }

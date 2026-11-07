@@ -86,22 +86,28 @@ type Daemon struct {
 	removeLater func(left []string, state string) error
 	notify      func(title, body string) error
 
-	idle        Idle
-	act         activity
-	upd         updater
-	loop        dsync.Loop
-	syncMu      sync.Mutex // one pull at a time; taken before opMu
-	reportMu    sync.Mutex
-	kicks       chan struct{}
-	reportDue   atomic.Bool
-	reported    string                 // guarded by mu
-	unsent      map[string]unsentCount // guarded by mu
-	purging     map[string]float64     // guarded by mu; removal progress
-	draining    map[string]bool        // guarded by mu
-	stuckSince  map[string]time.Time   // guarded by mu
-	newestEvent time.Time              // guarded by mu
-	flushMu     sync.Mutex
-	peers       []dsync.Device // guarded by mu
+	idle       Idle
+	act        activity
+	upd        updater
+	loop       dsync.Loop
+	syncMu     sync.Mutex // one pull at a time; taken before opMu
+	reportMu   sync.Mutex
+	kicks      chan struct{}
+	reportDue  atomic.Bool
+	reported   string                 // guarded by mu
+	unsent     map[string]unsentCount // guarded by mu
+	purging    map[string]float64     // guarded by mu; removal progress
+	draining   map[string]bool        // guarded by mu
+	stuckSince map[string]time.Time   // guarded by mu
+	// this device was removed: leave() runs, and what it waits for shows in the app; guarded by mu
+	departing     bool
+	leaveWaiting  string
+	leaveProgress float64
+	lost          map[string]lostCheck
+	reached       lostCheck
+	newestEvent   time.Time // guarded by mu
+	flushMu       sync.Mutex
+	peers         []dsync.Device // guarded by mu
 	// guarded by mu; mounts made now are the ones at login
 	loginMounts bool
 
@@ -208,6 +214,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 	d.srv = ipc.NewServer(ln, d.handlers(restart))
 	go d.syncLoop(ctx)
 	d.resumeRemovals()
+	d.resumeLeaving()
 	srvCtx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- d.srv.Serve(srvCtx) }()
@@ -277,7 +284,7 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
 		unmountedAt: map[string]time.Time{}, cleaned: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
 		space: map[string]api.Space{}, spaceAt: map[string]time.Time{}, spaceFails: map[string]int{},
-		kicks: make(chan struct{}, 1), unsent: map[string]unsentCount{}, purging: map[string]float64{}, draining: map[string]bool{}, stuckSince: map[string]time.Time{},
+		kicks: make(chan struct{}, 1), unsent: map[string]unsentCount{}, purging: map[string]float64{}, draining: map[string]bool{}, stuckSince: map[string]time.Time{}, lost: map[string]lostCheck{},
 	}
 }
 
@@ -507,6 +514,11 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	}
 	for _, m := range kickAfter {
 		h[m] = d.kicked(h[m])
+	}
+	for m, fn := range h {
+		if !slices.Contains(whileRemoved, m) {
+			h[m] = d.refuseRemoved(fn)
+		}
 	}
 	return h
 }
