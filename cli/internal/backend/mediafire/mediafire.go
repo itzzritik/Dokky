@@ -740,19 +740,31 @@ func (f *Fs) ChangeNotify(ctx context.Context, notify func(string, fs.EntryType)
 		}
 		var ticker *time.Ticker
 		var tick <-chan time.Time
+		setInterval := func(d time.Duration, ok bool) bool {
+			if ticker != nil {
+				ticker.Stop()
+				ticker, tick = nil, nil
+			}
+			if ok && d > 0 {
+				ticker = time.NewTicker(d)
+				tick = ticker.C
+			}
+			return ok
+		}
 		for {
+			// a new interval or a stop wins over a tick that is already due
 			select {
 			case d, ok := <-intervals:
-				if ticker != nil {
-					ticker.Stop()
-					ticker, tick = nil, nil
-				}
-				if !ok {
+				if !setInterval(d, ok) {
 					return
 				}
-				if d > 0 {
-					ticker = time.NewTicker(d)
-					tick = ticker.C
+				continue
+			default:
+			}
+			select {
+			case d, ok := <-intervals:
+				if !setInterval(d, ok) {
+					return
 				}
 			case <-tick:
 				if err := f.changes(ctx, &st, notify); err != nil {
