@@ -133,12 +133,7 @@ func (d *Daemon) observe(now time.Time) bool {
 		if !ok || first || dt <= 0 || !f.At.After(prev) {
 			continue
 		}
-		// bytes it really sent: a server that already has the file finishes without any
-		sent := f.Bytes
-		if f.Size >= 0 {
-			sent = min(sent, f.Size)
-		}
-		speed := float64(max(0, sent-a.done[fmt.Sprint(id, "\x00", f.Up, "\x00", f.Name)])) / dt
+		speed := float64(max(0, f.Size-a.done[fmt.Sprint(id, "\x00", f.Up, "\x00", f.Name)])) / dt
 		if f.Up {
 			up += speed
 			perUp[id] += speed
@@ -169,9 +164,7 @@ func (d *Daemon) observe(now time.Time) bool {
 	for _, f := range finished {
 		id, ok := keys[f.ID]
 		k := fmt.Sprint(id, "\x00", f.Up, "\x00", f.Name)
-		// another read of the same file is still going, so it isn't done yet
-		_, moving := done[k]
-		if !ok || seen[k] || moving || len(cur.Earlier) == earlierLen {
+		if !ok || seen[k] || len(cur.Earlier) == earlierLen {
 			continue
 		}
 		seen[k] = true

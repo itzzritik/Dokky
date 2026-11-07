@@ -16,10 +16,8 @@ import (
 // sha256 of the upstream file each patch was made from; a mismatch means the patch must be redone.
 // A patch sits at _patches/<repo>/<file>.
 var patches = map[string]string{
-	"github.com/rclone/rclone/vfs/file.go":                  "0411d72fbd6b9e4e73f1e904e0e3d082add590560439a9c3755c17f29c8aa223",
-	"github.com/rclone/rclone/fs/accounting/transfermap.go": "2f7f20476bddc395ed9df86d869ae3ffc2166336f15fbf31fb131b1696d388c9",
-	"github.com/rclone/rclone/fs/accounting/inprogress.go":  "454b32c359cbef429071ac9542b1048317644045125600476d42c440bc884d62",
-	"github.com/willscott/go-nfs/conn.go":                   "a62885ef2f7ff40355c3fe8112832e86456342c6f07d2016788c0ca87a254e6e",
+	"github.com/rclone/rclone/vfs/file.go": "0411d72fbd6b9e4e73f1e904e0e3d082add590560439a9c3755c17f29c8aa223",
+	"github.com/willscott/go-nfs/conn.go":  "a62885ef2f7ff40355c3fe8112832e86456342c6f07d2016788c0ca87a254e6e",
 }
 
 // files upstream lacks; once upstream has one, ours must go.

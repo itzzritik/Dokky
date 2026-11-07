@@ -20,11 +20,11 @@ type Moving struct {
 }
 
 type Finished struct {
-	ID, Name    string
-	Up          bool
-	Size, Bytes int64
-	At          time.Time
-	Error       string
+	ID, Name string
+	Up       bool
+	Size     int64
+	At       time.Time
+	Error    string
 }
 
 type rcTransfer struct {
@@ -92,7 +92,7 @@ func (e *Engine) Finished() ([]Finished, error) {
 			continue
 		}
 		if id, up := owner(live, t); id != "" {
-			done = append(done, Finished{ID: id, Name: t.Name, Up: up, Size: t.Size, Bytes: t.Bytes, At: t.CompletedAt, Error: t.Error})
+			done = append(done, Finished{ID: id, Name: t.Name, Up: up, Size: t.Size, At: t.CompletedAt, Error: t.Error})
 		}
 	}
 	return done, nil

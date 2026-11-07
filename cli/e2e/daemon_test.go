@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -183,7 +182,7 @@ func mountedAt(t *testing.T, name string) string {
 			return false
 		}
 		for _, m := range st.Mounts {
-			if strings.EqualFold(m.Name, name) && m.State == "mounted" {
+			if m.Name == name && m.State == "mounted" {
 				point = m.MountPoint
 				return true
 			}
@@ -212,11 +211,11 @@ func setupDaemonMount(t *testing.T) (point string, d *daemonProc) {
 	url, dir := startWebDAV(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o644))
 	home := daemonHome(t)
-	point = engine.DefaultMountPoint(home, "Media", runtime.GOOS)
+	point = engine.DefaultMountPoint(home, "media", runtime.GOOS)
 	guardMount(t, point)
 	d = startDaemon(t)
 	addWebDAVMount(t, url, "media")
-	require.Contains(t, dokky(t, "mount", "media"), "Media is mounted")
+	require.Contains(t, dokky(t, "mount", "media"), "media")
 	readable(t, mountedAt(t, "media"), "hello.txt", "hello")
 	return point, d
 }
@@ -233,7 +232,7 @@ func TestRemountAfterDaemonRestart(t *testing.T) {
 
 	startDaemon(t)
 	readable(t, mountedAt(t, "media"), "hello.txt", "hello")
-	require.Regexp(t, `(?i)media\s+mounted`, dokky(t, "status"))
+	require.Regexp(t, `media\s+mounted`, dokky(t, "status"))
 }
 
 func TestStartupClearsStaleMount(t *testing.T) {
@@ -260,5 +259,5 @@ func TestMountUnmountMountAgain(t *testing.T) {
 	// time for rclone's second unmount to knock the new mount off
 	time.Sleep(2 * time.Second)
 	readable(t, mp, "hello.txt", "hello")
-	require.Regexp(t, `(?i)media\s+mounted`, dokky(t, "status"))
+	require.Regexp(t, `media\s+mounted`, dokky(t, "status"))
 }
