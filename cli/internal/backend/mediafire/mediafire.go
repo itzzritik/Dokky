@@ -32,16 +32,20 @@ import (
 )
 
 const (
-	defaultAppID  = "42511"
-	rootID        = "myfiles"
-	listChunk     = 1000
-	openTries     = 3
-	linkTTL       = 10 * time.Minute
-	minSleep      = 100 * time.Millisecond
-	maxSleep      = 2 * time.Second
-	dlMinSleep    = 10 * time.Millisecond
-	dlMaxSleep    = 200 * time.Millisecond
-	decayConstant = 2
+	defaultAppID = "42511"
+	rootID       = "myfiles"
+	listChunk    = 1000
+	openTries    = 3
+	linkTTL      = 10 * time.Minute
+	changeBlock  = 500
+	// far behind, refreshing everything is cheaper than reading every block
+	maxChangeBlocks = 20
+	maxSeen         = 100000
+	minSleep        = 100 * time.Millisecond
+	maxSleep        = 2 * time.Second
+	dlMinSleep      = 10 * time.Millisecond
+	dlMaxSleep      = 200 * time.Millisecond
+	decayConstant   = 2
 )
 
 var apiURL = "https://www.mediafire.com/api/1.5"
@@ -150,7 +154,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		// download hosts often reset new connections; retrying them must not slow every API call
 		dlPacer: fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(dlMinSleep), pacer.MaxSleep(dlMaxSleep), pacer.DecayConstant(decayConstant))),
 	}
-	f.features = (&fs.Features{CanHaveEmptyDirectories: true}).Fill(ctx, f)
+	f.features = (&fs.Features{CanHaveEmptyDirectories: true, CaseInsensitive: true, DuplicateFiles: true}).Fill(ctx, f)
 	f.sess = getSession(opt.Email, password, cmp.Or(opt.AppID, defaultAppID), f.srv, f.pacer)
 	f.dirCache = dircache.New(root, rootID, f)
 
@@ -180,7 +184,7 @@ func (f *Fs) Name() string             { return f.name }
 func (f *Fs) Root() string             { return f.root }
 func (f *Fs) String() string           { return fmt.Sprintf("mediafire root '%s'", f.root) }
 func (f *Fs) Features() *fs.Features   { return f.features }
-func (f *Fs) Precision() time.Duration { return fs.ModTimeNotSupported }
+func (f *Fs) Precision() time.Duration { return time.Second }
 func (f *Fs) Hashes() hash.Set         { return hash.Set(hash.SHA256) }
 func (f *Fs) DirCacheFlush()           { f.dirCache.ResetRoot() }
 
@@ -253,13 +257,22 @@ func (f *Fs) listAll(ctx context.Context, dirID string, kinds []string, fn func(
 	return false, nil
 }
 
+// MediaFire ignores case in names, so another case is the same item unless an exact match exists
+func sameName(name, want string, exact *bool) bool {
+	if name == want {
+		*exact = true
+		return true
+	}
+	return strings.EqualFold(name, want)
+}
+
 func (f *Fs) FindLeaf(ctx context.Context, pathID, leaf string) (pathIDOut string, found bool, err error) {
-	found, err = f.listAll(ctx, pathID, listFolders, func(folder *api.Folder, _ *api.File) bool {
-		if folder.Name == leaf {
-			pathIDOut = folder.FolderKey
-			return true
+	_, err = f.listAll(ctx, pathID, listFolders, func(folder *api.Folder, _ *api.File) bool {
+		var exact bool
+		if sameName(folder.Name, leaf, &exact) {
+			pathIDOut, found = folder.FolderKey, true
 		}
-		return false
+		return exact
 	})
 	return pathIDOut, found, err
 }
@@ -321,11 +334,11 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	}
 	var info *api.File
 	_, err = f.listAll(ctx, dirID, listFiles, func(_ *api.Folder, file *api.File) bool {
-		if file.Filename == leaf {
+		var exact bool
+		if sameName(file.Filename, leaf, &exact) {
 			info = file
-			return true
 		}
-		return false
+		return exact
 	})
 	if err != nil {
 		return nil, err
@@ -460,6 +473,10 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	if err != nil {
 		return nil, err
 	}
+	old, err := f.NewObject(ctx, remote)
+	if err != nil && !errors.Is(err, fs.ErrorObjectNotFound) {
+		return nil, err
+	}
 	var out api.FileCopy
 	if err := f.call(ctx, "file/copy", url.Values{"quick_key": {srcObj.id}, "folder_key": {dirID}}, &out); err != nil {
 		return nil, fmt.Errorf("couldn't copy file: %w", err)
@@ -471,6 +488,12 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	if leaf != path.Base(srcObj.remote) {
 		if err := f.renameFile(ctx, id, leaf); err != nil {
 			return nil, err
+		}
+	}
+	// like Drive, the copy takes the name and the file it replaces goes
+	if old != nil && old.(*Object).id != id && old.(*Object).id != srcObj.id {
+		if err := old.Remove(ctx); err != nil {
+			fs.Errorf(old, "mediafire: couldn't remove the file the copy replaced: %v", err)
 		}
 	}
 	return &Object{fs: f, remote: remote, id: id, size: srcObj.size, sha256: srcObj.sha256, modTime: srcObj.modTime}, nil
@@ -540,7 +563,18 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 }
 
 func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
-	return fs.ErrorCantSetModTime
+	var out api.Base
+	params := url.Values{"quick_key": {o.id}, "mtime": {mtimeParam(modTime)}}
+	if err := o.fs.call(ctx, "file/update", params, &out); err != nil {
+		return fmt.Errorf("couldn't set modification time: %w", err)
+	}
+	o.modTime = modTime.Truncate(time.Second)
+	return nil
+}
+
+// RFC 3339 in UTC: a plain date and time is read in the account's own time zone
+func mtimeParam(t time.Time) string {
+	return t.UTC().Truncate(time.Second).Format(time.RFC3339)
 }
 
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
@@ -627,6 +661,11 @@ func (o *Object) Remove(ctx context.Context) error {
 	for _, method := range []string{"file/delete", "file/purge"} {
 		var out api.Base
 		if err := o.fs.call(ctx, method, url.Values{"quick_key": {o.id}}, &out); err != nil {
+			var apiErr *api.Error
+			if errors.As(err, &apiErr) && (apiErr.Code == api.CodeFileUnknown || apiErr.Code == api.CodeFileMissing) {
+				// already gone, for example deleted on another device
+				return nil
+			}
 			return fmt.Errorf("couldn't delete %q: %w", o.remote, err)
 		}
 	}
@@ -687,6 +726,181 @@ var (
 	_ fs.Mover           = (*Fs)(nil)
 	_ fs.DirMover        = (*Fs)(nil)
 	_ fs.Copier          = (*Fs)(nil)
+	_ fs.ChangeNotifier  = (*Fs)(nil)
 	_ fs.Object          = (*Object)(nil)
 	_ fs.IDer            = (*Object)(nil)
 )
+
+// ChangeNotify polls MediaFire's change list, so edits made on the web or another device show up like they do on Drive
+func (f *Fs) ChangeNotify(ctx context.Context, notify func(string, fs.EntryType), intervals <-chan time.Duration) {
+	go func() {
+		var st changeState
+		if err := f.changes(ctx, &st, notify); err != nil {
+			fs.Infof(f, "mediafire: couldn't read the change list: %v", err)
+		}
+		var ticker *time.Ticker
+		var tick <-chan time.Time
+		for {
+			select {
+			case d, ok := <-intervals:
+				if ticker != nil {
+					ticker.Stop()
+					ticker, tick = nil, nil
+				}
+				if !ok {
+					return
+				}
+				if d > 0 {
+					ticker = time.NewTicker(d)
+					tick = ticker.C
+				}
+			case <-tick:
+				if err := f.changes(ctx, &st, notify); err != nil {
+					fs.Infof(f, "mediafire: couldn't read the change list: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+// what the change list last showed; its per-item revisions don't follow the account revision, so items are compared instead
+type changeState struct {
+	rev  int64
+	seen map[string]string
+}
+
+type changedItem struct {
+	key, state, parent, name string
+	dir                      bool
+}
+
+// changes reports what differs since the last call; a failed call changes nothing, so the next one covers it
+func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, fs.EntryType)) error {
+	var status api.DeviceStatus
+	if err := f.call(ctx, "device/get_status", nil, &status); err != nil {
+		return err
+	}
+	cur, err := strconv.ParseInt(status.DeviceRevision, 10, 64)
+	if err != nil {
+		return fmt.Errorf("mediafire: bad revision %q", status.DeviceRevision)
+	}
+	first := st.seen == nil
+	if !first && cur == st.rev {
+		return nil
+	}
+	from := st.rev
+	if first || (cur-st.rev)/changeBlock >= maxChangeBlocks || len(st.seen) > maxSeen {
+		from = cur
+	}
+	var items []changedItem
+	for start := from - from%changeBlock; start <= cur; start += changeBlock {
+		var ch api.Changes
+		if err := f.call(ctx, "device/get_changes", url.Values{"revision": {strconv.FormatInt(start, 10)}}, &ch); err != nil {
+			return err
+		}
+		items = appendChanged(items, &ch.Updated)
+		items = appendChanged(items, &ch.Deleted)
+	}
+	if first || from == cur && st.rev != cur {
+		if !first {
+			notify("", fs.EntryDirectory)
+		}
+		st.rev, st.seen = cur, map[string]string{}
+		for _, it := range items {
+			st.seen[it.key] = it.state
+		}
+		return nil
+	}
+	reported := false
+	present := make(map[string]bool, len(items))
+	for _, it := range items {
+		present[it.key] = true
+	}
+	// a purge removes an item from the list without a trace, so anything gone from the blocks read was removed
+	for key, old := range st.seen {
+		if !present[key] && listedFrom(old) >= from-from%changeBlock {
+			delete(st.seen, key)
+			reported = true
+			f.notifyChanged(changedFrom(key, old), notify)
+		}
+	}
+	for _, it := range items {
+		old, known := st.seen[it.key]
+		if old == it.state {
+			continue
+		}
+		st.seen[it.key] = it.state
+		reported = true
+		f.notifyChanged(it, notify)
+		if known {
+			// a move or rename: the old place changed too
+			f.notifyChanged(changedFrom(it.key, old), notify)
+		}
+	}
+	if !reported {
+		// the revision moved but nothing listed changed, like a purge, so every listing is refreshed
+		notify("", fs.EntryDirectory)
+	}
+	st.rev = cur
+	return nil
+}
+
+func appendChanged(items []changedItem, set *api.ChangeSet) []changedItem {
+	for _, file := range set.Files {
+		items = append(items, changedItem{
+			key:    "f" + file.QuickKey,
+			state:  strings.Join([]string{file.Revision + "/" + file.CreatedUTC, file.ParentFolderKey, file.Filename}, "\x00"),
+			parent: file.ParentFolderKey, name: file.Filename,
+		})
+	}
+	for _, folder := range set.Folders {
+		if folder.FolderKey == "trash" {
+			continue
+		}
+		items = append(items, changedItem{
+			key:    "d" + folder.FolderKey,
+			state:  strings.Join([]string{folder.Revision, folder.ParentFolderKey, folder.FolderKey}, "\x00"),
+			parent: folder.ParentFolderKey, name: folder.FolderKey, dir: true,
+		})
+	}
+	return items
+}
+
+func changedFrom(key, state string) changedItem {
+	parts := strings.SplitN(state, "\x00", 3)
+	for len(parts) < 3 {
+		parts = append(parts, "")
+	}
+	return changedItem{key: key, parent: parts[1], name: parts[2], dir: strings.HasPrefix(key, "d")}
+}
+
+// the revision an item is listed under, which decides the block it shows up in
+func listedFrom(state string) int64 {
+	rev, _, _ := strings.Cut(state, "\x00")
+	rev, _, _ = strings.Cut(rev, "/")
+	n, err := strconv.ParseInt(rev, 10, 64)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+func (f *Fs) notifyChanged(it changedItem, notify func(string, fs.EntryType)) {
+	dirOf := func(key string) (string, bool) {
+		if key == "" {
+			key = rootID
+		}
+		return f.dirCache.GetInv(key)
+	}
+	if it.dir {
+		if p, ok := dirOf(strings.TrimPrefix(it.key, "d")); ok {
+			notify(p, fs.EntryDirectory)
+		} else if parent, ok := dirOf(it.parent); ok && it.parent != "trash" {
+			notify(parent, fs.EntryDirectory)
+		}
+		return
+	}
+	if dir, ok := dirOf(it.parent); ok {
+		notify(path.Join(dir, f.opt.Enc.ToStandardName(it.name)), fs.EntryObject)
+	}
+}

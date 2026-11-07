@@ -12,12 +12,14 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/backend/mediafire/api"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
+	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/lib/rest"
 )
@@ -85,7 +87,8 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, le
 		in = wrap(in)
 	}
 	name := o.fs.opt.Enc.FromStandardName(leaf)
-	target := url.Values{"folder_key": {dirID}}
+	modTime := src.ModTime(ctx)
+	target := url.Values{"folder_key": {dirID}, "mtime": {mtimeParam(modTime)}}
 	if o.id != "" {
 		target.Set("quick_key", o.id)
 	} else {
@@ -101,7 +104,14 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, le
 		"resumable":  {"yes"},
 	}
 	if err := o.fs.call(ctx, "upload/check", params, &check); err != nil {
+		var apiErr *api.Error
+		if errors.As(err, &apiErr) && apiErr.Code == api.CodeFileTooBig {
+			return fserrors.NoRetryError(fmt.Errorf("mediafire: %q is larger than MediaFire allows for this account", o.remote))
+		}
 		return fmt.Errorf("couldn't start upload: %w", err)
+	}
+	if err := checkSpace(&check, size, o.id == ""); err != nil {
+		return err
 	}
 
 	if check.HashExists == "yes" {
@@ -112,12 +122,13 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, le
 			"filename":            {name},
 			"size":                {strconv.FormatInt(size, 10)},
 			"hash":                {sum},
+			"mtime":               {mtimeParam(modTime)},
 		}
 		var out api.Instant
 		if err := o.fs.call(ctx, "upload/instant", p, &out); err != nil {
 			return fmt.Errorf("couldn't upload: %w", err)
 		}
-		return o.uploaded(out.QuickKey, size, sum)
+		return o.uploaded(out.QuickKey, size, sum, modTime)
 	}
 
 	key, err := o.uploadUnits(ctx, in, &check, name, size, sum, target)
@@ -128,16 +139,34 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, le
 	if err != nil {
 		return err
 	}
-	return o.uploaded(done.Doupload.QuickKey, size, sum)
+	// what MediaFire stored, so a damaged upload is sent again instead of kept
+	d := done.Doupload
+	if d.Hash != "" && !strings.EqualFold(d.Hash, sum) {
+		return fserrors.RetryErrorf("mediafire: %q arrived with a different sha256", o.remote)
+	}
+	if got, err := strconv.ParseInt(d.Size, 10, 64); d.Size != "" && (err != nil || got != size) {
+		return fserrors.RetryErrorf("mediafire: %q arrived as %s bytes, sent %d", o.remote, d.Size, size)
+	}
+	return o.uploaded(d.QuickKey, size, sum, modTime)
 }
 
-func (o *Object) uploaded(quickKey string, size int64, sum string) error {
+func checkSpace(check *api.UploadCheck, size int64, newFile bool) error {
+	if check.StorageLimitExceeded == "yes" {
+		return fserrors.NoRetryError(errors.New("mediafire: the account is over its storage limit"))
+	}
+	if free, err := strconv.ParseInt(check.AvailableSpace, 10, 64); newFile && err == nil && free < size {
+		return fserrors.NoRetryError(fmt.Errorf("mediafire: not enough space: need %s, %s free", fs.SizeSuffix(size), fs.SizeSuffix(free)))
+	}
+	return nil
+}
+
+func (o *Object) uploaded(quickKey string, size int64, sum string, modTime time.Time) error {
 	if quickKey == "" {
 		return fmt.Errorf("mediafire: upload of %q finished without a file key", o.remote)
 	}
 	o.linkMu.Lock()
 	o.id, o.link = quickKey, ""
-	o.size, o.sha256, o.modTime = size, sum, now()
+	o.size, o.sha256, o.modTime = size, strings.ToLower(sum), modTime.Truncate(time.Second)
 	o.linkMu.Unlock()
 	return nil
 }

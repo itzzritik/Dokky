@@ -21,6 +21,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/obscure"
+	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/object"
@@ -991,7 +992,7 @@ func TestOpenRejectsWrongSize(t *testing.T) {
 func TestUploadForgetsLink(t *testing.T) {
 	o := testObject(newTestFs(t, newFakeAPI(t)), 5)
 	o.link, o.linkAt = "http://old", now()
-	require.NoError(t, o.uploaded("q1", 6, "sum"))
+	require.NoError(t, o.uploaded("q1", 6, "sum", mtime))
 	assert.Empty(t, o.link)
 }
 
@@ -1028,4 +1029,346 @@ func TestOpenRecoversQuicklyFromResets(t *testing.T) {
 	_ = rc.Close()
 	assert.Less(t, time.Since(start), 1200*time.Millisecond)
 	assert.Equal(t, int32(6), hits.Load())
+}
+
+var mtime = time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
+
+func kind(t fs.EntryType) string {
+	if t == fs.EntryDirectory {
+		return "directory"
+	}
+	return "object"
+}
+
+func srcAt(content string) fs.ObjectInfo {
+	return object.NewStaticObjectInfo("v.bin", mtime, int64(len(content)), true, map[hash.Type]string{hash.SHA256: sha256Hex([]byte(content))}, nil)
+}
+
+func TestPrecisionIsOneSecond(t *testing.T) {
+	assert.Equal(t, time.Second, newTestFs(t, newFakeAPI(t)).Precision())
+}
+
+func TestPutSendsModTime(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	u := fakeUpload(t, fake, resumable(1, 16), finished)
+	o, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.NoError(t, err)
+	assert.Equal(t, "2021-03-04T05:06:07Z", u.forms[0].Get("mtime"))
+	assert.True(t, mtime.Equal(o.ModTime(ctx)))
+}
+
+func TestInstantSendsModTime(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	fakeUpload(t, fake, map[string]any{"hash_exists": "yes"}, finished)
+	fake.handle("upload/instant", func(url.Values, *http.Request) any { return success("quickkey", "qi") })
+	_, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.NoError(t, err)
+	assert.Equal(t, "2021-03-04T05:06:07Z", fake.last("upload/instant").Get("mtime"))
+}
+
+func TestSetModTimeUpdatesFile(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("file/update", func(url.Values, *http.Request) any { return success() })
+	o := testObject(newTestFs(t, fake), 5)
+	require.NoError(t, o.SetModTime(ctx, mtime))
+	form := fake.last("file/update")
+	assert.Equal(t, "q1", form.Get("quick_key"))
+	assert.Equal(t, "2021-03-04T05:06:07Z", form.Get("mtime"))
+	assert.True(t, mtime.Equal(o.ModTime(ctx)))
+}
+
+func TestUploadUsesServerHash(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	done := map[string]any{"result": "0", "status": "99", "quickkey": "q1", "size": "10", "hash": strings.ToUpper(sha256Hex([]byte(content)))}
+	fakeUpload(t, fake, resumable(1, 16), done)
+	o, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.NoError(t, err)
+	got, err := o.Hash(ctx, hash.SHA256)
+	require.NoError(t, err)
+	assert.Equal(t, sha256Hex([]byte(content)), got)
+}
+
+func TestUploadRejectsWrongServerHash(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	bad := map[string]any{"result": "0", "status": "99", "quickkey": "q1", "size": "10", "hash": sha256Hex([]byte("other"))}
+	fakeUpload(t, fake, resumable(1, 16), bad)
+	_, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.Error(t, err)
+	assert.True(t, fserrors.IsRetryError(err))
+}
+
+func TestUploadRejectsWrongServerSize(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	bad := map[string]any{"result": "0", "status": "99", "quickkey": "q1", "size": "9"}
+	fakeUpload(t, fake, resumable(1, 16), bad)
+	_, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.Error(t, err)
+	assert.True(t, fserrors.IsRetryError(err))
+}
+
+func TestUploadFailsFastWhenAccountFull(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	check := resumable(1, 16)
+	check["available_space"] = "4"
+	u := fakeUpload(t, fake, check, finished)
+	_, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.Error(t, err)
+	assert.True(t, fserrors.IsNoRetryError(err))
+	assert.Contains(t, err.Error(), "not enough space")
+	assert.Empty(t, u.units)
+}
+
+func TestUploadFailsFastWhenStorageExceeded(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	check := resumable(1, 16)
+	check["storage_limit_exceeded"] = "yes"
+	fakeUpload(t, fake, check, finished)
+	o := &Object{fs: newTestFs(t, fake), remote: "v.bin", id: "q0"}
+	err := o.Update(ctx, strings.NewReader(content), srcAt(content))
+	require.Error(t, err)
+	assert.True(t, fserrors.IsNoRetryError(err))
+}
+
+func TestUploadTooBigIsNotRetried(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("upload/check", func(url.Values, *http.Request) any { return apiError(282, "File size exceeds maximum limit.") })
+	_, err := newTestFs(t, fake).Put(ctx, strings.NewReader("0123456789"), srcAt("0123456789"))
+	require.Error(t, err)
+	assert.True(t, fserrors.IsNoRetryError(err))
+	assert.Contains(t, err.Error(), "larger than MediaFire allows")
+}
+
+func TestFeaturesMatchMediaFire(t *testing.T) {
+	ft := newTestFs(t, newFakeAPI(t)).Features()
+	assert.True(t, ft.CaseInsensitive)
+	assert.True(t, ft.DuplicateFiles)
+	assert.True(t, ft.CanHaveEmptyDirectories)
+	assert.NotNil(t, ft.ChangeNotify)
+}
+
+func TestFindLeafIgnoresCase(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing([]map[string]any{{"folderkey": "fd", "name": "Dir"}, {"folderkey": "fx", "name": "dir2"}}, nil))
+	f := newTestFs(t, fake)
+	id, found, err := f.FindLeaf(ctx, rootID, "dir")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "fd", id)
+}
+
+func TestFindLeafPrefersExactCase(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing([]map[string]any{{"folderkey": "fu", "name": "DIR"}, {"folderkey": "fd", "name": "dir"}}, nil))
+	id, _, err := newTestFs(t, fake).FindLeaf(ctx, rootID, "dir")
+	require.NoError(t, err)
+	assert.Equal(t, "fd", id)
+}
+
+func TestNewObjectIgnoresCase(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing(nil, []map[string]any{{"quickkey": "q1", "filename": "Photo.JPG", "size": "5"}}))
+	o, err := newTestFs(t, fake).NewObject(ctx, "photo.jpg")
+	require.NoError(t, err)
+	assert.Equal(t, "q1", o.(*Object).id)
+}
+
+func TestRemoveAlreadyGoneIsDone(t *testing.T) {
+	ctx := context.Background()
+	for _, code := range []int{110, 111} {
+		fake := newFakeAPI(t)
+		fake.handle("file/delete", func(url.Values, *http.Request) any { return apiError(code, "Unknown or invalid QuickKey") })
+		assert.NoError(t, testObject(newTestFs(t, fake), 5).Remove(ctx), code)
+	}
+}
+
+func TestCopyReplacesExistingFile(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing(nil, []map[string]any{{"quickkey": "qold", "filename": "b.bin", "size": "3"}}))
+	fake.handle("file/copy", func(url.Values, *http.Request) any { return success("new_quickkeys", []string{"qnew"}) })
+	fake.handle("file/update", func(url.Values, *http.Request) any { return success() })
+	fake.handle("file/delete", func(url.Values, *http.Request) any { return success() })
+	fake.handle("file/purge", func(url.Values, *http.Request) any { return success() })
+	f := newTestFs(t, fake)
+	src := &Object{fs: f, remote: "a.bin", id: "qsrc", size: 5}
+	o, err := f.Copy(ctx, src, "b.bin")
+	require.NoError(t, err)
+	assert.Equal(t, "qnew", o.(*Object).id)
+	assert.Equal(t, "qold", fake.last("file/purge").Get("quick_key"))
+}
+
+type changeFeed struct {
+	mu    sync.Mutex
+	rev   int
+	files []map[string]any
+	dirs  []map[string]any
+	trash []map[string]any
+}
+
+func (c *changeFeed) set(rev int, files, dirs, trash []map[string]any) {
+	c.mu.Lock()
+	c.rev, c.files, c.dirs, c.trash = rev, files, dirs, trash
+	c.mu.Unlock()
+}
+
+func feed(fake *fakeAPI) *changeFeed {
+	c := &changeFeed{}
+	fake.handle("device/get_status", func(url.Values, *http.Request) any {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return success("device_revision", strconv.Itoa(c.rev))
+	})
+	fake.handle("device/get_changes", func(url.Values, *http.Request) any {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return success("device_revision", strconv.Itoa(c.rev), "changes_list_block", "500",
+			"updated", map[string]any{"files": c.files, "folders": c.dirs},
+			"deleted", map[string]any{"files": c.trash, "folders": []any{}})
+	})
+	return c
+}
+
+func changed(key, name, parent, rev string) map[string]any {
+	return map[string]any{"quickkey": key, "filename": name, "parent_folderkey": parent, "revision": rev, "created_utc": "2026-11-07T10:00:00Z"}
+}
+
+func collect(got *[]string) func(string, fs.EntryType) {
+	return func(p string, typ fs.EntryType) { *got = append(*got, kind(typ)+":"+p) }
+}
+
+func TestChangesFirstPollOnlyRemembers(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	feed(fake).set(900, []map[string]any{changed("q0", "old.txt", "", "880")}, nil, nil)
+	var st changeState
+	require.NoError(t, newTestFs(t, fake).changes(ctx, &st, func(string, fs.EntryType) { t.Fatal("no change expected") }))
+	assert.Equal(t, int64(900), st.rev)
+}
+
+func TestChangesReportNewAndMovedItems(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	c := feed(fake)
+	c.set(510, []map[string]any{changed("q0", "old.txt", "fa", "300"), changed("q1", "keep.txt", "fa", "301")}, []map[string]any{{"folderkey": "fb", "parent_folderkey": "", "revision": "302"}}, nil)
+	f := newTestFs(t, fake)
+	f.dirCache.Put("a", "fa")
+	f.dirCache.Put("b", "fb")
+	f.dirCache.Put("c", "fc")
+	var st changeState
+	require.NoError(t, f.changes(ctx, &st, func(string, fs.EntryType) { t.Fatal("no change expected") }))
+	// q0 moves to c, a new file arrives labelled with an older revision, a folder is trashed
+	c.set(512, []map[string]any{changed("q0", "old.txt", "fc", "511"), changed("q1", "keep.txt", "fa", "301"), changed("q2", "new.txt", "fa", "250")},
+		[]map[string]any{{"folderkey": "fb", "parent_folderkey": "", "revision": "302"}},
+		[]map[string]any{changed("q3", "gone.txt", "fa", "512")})
+	var got []string
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.ElementsMatch(t, []string{"object:a/old.txt", "object:c/old.txt", "object:a/new.txt", "object:a/gone.txt"}, got)
+	assert.Equal(t, int64(512), st.rev)
+}
+
+func TestChangesNothingNewIsOneCall(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	feed(fake).set(42, nil, nil, nil)
+	f := newTestFs(t, fake)
+	st := changeState{rev: 42, seen: map[string]string{}}
+	require.NoError(t, f.changes(ctx, &st, func(string, fs.EntryType) { t.Fatal("no change expected") }))
+	assert.Equal(t, 0, fake.count("device/get_changes"))
+}
+
+func TestChangesUnseenChangeRefreshesEverything(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	c := feed(fake)
+	c.set(600, []map[string]any{changed("q1", "keep.txt", "", "590")}, nil, nil)
+	f := newTestFs(t, fake)
+	var st changeState
+	require.NoError(t, f.changes(ctx, &st, func(string, fs.EntryType) {}))
+	// a purge leaves no trace in the change list, only a new revision
+	c.set(601, []map[string]any{changed("q1", "keep.txt", "", "590")}, nil, nil)
+	var got []string
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.Equal(t, []string{"directory:"}, got)
+}
+
+func TestChangesFarBehindForgetsEverything(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	feed(fake).set(100000, nil, nil, nil)
+	var got []string
+	st := changeState{rev: 10, seen: map[string]string{}}
+	require.NoError(t, newTestFs(t, fake).changes(ctx, &st, collect(&got)))
+	assert.Equal(t, int64(100000), st.rev)
+	assert.Equal(t, []string{"directory:"}, got)
+	assert.Equal(t, 1, fake.count("device/get_changes"))
+}
+
+func TestChangesErrorKeepsRevision(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("device/get_status", func(url.Values, *http.Request) any { return success("device_revision", "50") })
+	fake.handle("device/get_changes", func(url.Values, *http.Request) any { return apiError(999, "busy") })
+	st := changeState{rev: 40, seen: map[string]string{}}
+	require.Error(t, newTestFs(t, fake).changes(ctx, &st, func(string, fs.EntryType) {}))
+	assert.Equal(t, int64(40), st.rev)
+}
+
+func TestChangeNotifyPollsUntilClosed(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	c := feed(fake)
+	c.set(10, nil, nil, nil)
+	f := newTestFs(t, fake)
+	got := make(chan string, 10)
+	intervals := make(chan time.Duration)
+	f.ChangeNotify(ctx, func(p string, typ fs.EntryType) { got <- kind(typ) + ":" + p }, intervals)
+	intervals <- 10 * time.Millisecond
+	require.Eventually(t, func() bool { return fake.count("device/get_status") >= 2 }, 2*time.Second, 5*time.Millisecond)
+	c.set(11, []map[string]any{changed("q", "x.txt", "", "11")}, nil, nil)
+	select {
+	case p := <-got:
+		assert.Equal(t, "object:x.txt", p)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no change reported")
+	}
+	close(intervals)
+	// a poll already running finishes; the pacer spaces calls 100ms apart
+	time.Sleep(500 * time.Millisecond)
+	n := fake.count("device/get_status")
+	time.Sleep(300 * time.Millisecond)
+	assert.Equal(t, n, fake.count("device/get_status"))
+}
+
+func TestChangesVanishedItemIsReported(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	c := feed(fake)
+	c.set(600, []map[string]any{changed("q1", "purged.txt", "fa", "590")}, nil, nil)
+	f := newTestFs(t, fake)
+	f.dirCache.Put("a", "fa")
+	var st changeState
+	require.NoError(t, f.changes(ctx, &st, func(string, fs.EntryType) {}))
+	c.set(602, []map[string]any{changed("q2", "new.txt", "fa", "601")}, nil, nil)
+	var got []string
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.ElementsMatch(t, []string{"object:a/purged.txt", "object:a/new.txt"}, got)
 }

@@ -2,7 +2,12 @@ package api
 
 import "fmt"
 
-const CodeSessionInvalid = 105
+const (
+	CodeSessionInvalid = 105
+	CodeFileUnknown    = 110
+	CodeFileMissing    = 111
+	CodeFileTooBig     = 282
+)
 
 type Error struct {
 	Code    int
@@ -82,10 +87,12 @@ type FileCopy struct {
 
 type UploadCheck struct {
 	Base
-	HashExists      string `json:"hash_exists"`
-	InAccount       string `json:"in_account"`
-	FileExists      string `json:"file_exists"`
-	ResumableUpload struct {
+	HashExists           string `json:"hash_exists"`
+	InAccount            string `json:"in_account"`
+	FileExists           string `json:"file_exists"`
+	AvailableSpace       string `json:"available_space"`
+	StorageLimitExceeded string `json:"storage_limit_exceeded"`
+	ResumableUpload      struct {
 		AllUnitsReady string `json:"all_units_ready"`
 		NumberOfUnits string `json:"number_of_units"`
 		UnitSize      string `json:"unit_size"`
@@ -114,4 +121,36 @@ type Upload struct {
 type Instant struct {
 	Base
 	QuickKey string `json:"quickkey"`
+}
+
+type DeviceStatus struct {
+	Base
+	DeviceRevision string `json:"device_revision"`
+}
+
+type ChangedFile struct {
+	QuickKey        string `json:"quickkey"`
+	Filename        string `json:"filename"`
+	ParentFolderKey string `json:"parent_folderkey"`
+	Revision        string `json:"revision"`
+	CreatedUTC      string `json:"created_utc"`
+}
+
+type ChangedFolder struct {
+	FolderKey       string `json:"folderkey"`
+	ParentFolderKey string `json:"parent_folderkey"`
+	Revision        string `json:"revision"`
+}
+
+type ChangeSet struct {
+	Files   []ChangedFile   `json:"files"`
+	Folders []ChangedFolder `json:"folders"`
+}
+
+type Changes struct {
+	Base
+	DeviceRevision   string    `json:"device_revision"`
+	ChangesListBlock string    `json:"changes_list_block"`
+	Updated          ChangeSet `json:"updated"`
+	Deleted          ChangeSet `json:"deleted"`
 }
