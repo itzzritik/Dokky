@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -201,7 +202,7 @@ func stubTime(t *testing.T) *fakeClock {
 	return c
 }
 
-func newTestFs(t *testing.T, fake *fakeAPI) *Fs {
+func newTestFs(t *testing.T, fake *fakeAPI, extra ...configmap.Simple) *Fs {
 	ctx := context.Background()
 	oldSleep := sleep
 	sleep = func(time.Duration) { select {} }
@@ -214,7 +215,11 @@ func newTestFs(t *testing.T, fake *fakeAPI) *Fs {
 	}
 	ri, err := fs.Find("mediafire")
 	require.NoError(t, err)
-	m := fs.ConfigMap(ri.Prefix, ri.Options, "TestFake", configmap.Simple{"email": "user@example.com", "password": obscure.MustObscure("password")})
+	opts := configmap.Simple{"email": "user@example.com", "password": obscure.MustObscure("password")}
+	for _, e := range extra {
+		maps.Copy(opts, e)
+	}
+	m := fs.ConfigMap(ri.Prefix, ri.Options, "TestFake", opts)
 	f, err := NewFs(ctx, "TestFake", "", m)
 	require.NoError(t, err)
 	return f.(*Fs)
@@ -699,7 +704,9 @@ func file(key, name string) map[string]any {
 	return map[string]any{"quickkey": key, "filename": name, "size": "1"}
 }
 
-func moveFs(t *testing.T) (*Fs, *fakeAPI) {
+var hardDelete = configmap.Simple{"hard_delete": "true"}
+
+func moveFs(t *testing.T, extra ...configmap.Simple) (*Fs, *fakeAPI) {
 	fake := newFakeAPI(t)
 	fake.handle("folder/get_content", tree(map[string]node{
 		"myfiles": {folders: []map[string]any{folder("fA", "A"), folder("fB", "B")}, files: []map[string]any{file("q1", "a.txt")}},
@@ -722,12 +729,20 @@ func moveFs(t *testing.T) (*Fs, *fakeAPI) {
 	}
 	purgeAfterDelete("file", "quick_key")
 	purgeAfterDelete("folder", "folder_key")
-	return newTestFs(t, fake), fake
+	return newTestFs(t, fake, extra...), fake
 }
 
-func TestRemovePurgesFile(t *testing.T) {
+func TestRemoveTrashesFileByDefault(t *testing.T) {
 	ctx := context.Background()
 	f, fake := moveFs(t)
+	require.NoError(t, testObject(f, 1).Remove(ctx))
+	assert.Equal(t, "q1", fake.last("file/delete").Get("quick_key"))
+	assert.Equal(t, 0, fake.count("file/purge"))
+}
+
+func TestRemoveHardDeletePurgesFile(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t, hardDelete)
 	require.NoError(t, testObject(f, 1).Remove(ctx))
 	assert.Equal(t, "q1", fake.last("file/delete").Get("quick_key"))
 	assert.Equal(t, "q1", fake.last("file/purge").Get("quick_key"))
@@ -735,21 +750,38 @@ func TestRemovePurgesFile(t *testing.T) {
 
 func TestRmdirRefusesNonEmpty(t *testing.T) {
 	ctx := context.Background()
-	f, fake := moveFs(t)
+	f, fake := moveFs(t, hardDelete)
 	assert.ErrorIs(t, f.Rmdir(ctx, "A"), fs.ErrorDirectoryNotEmpty)
+	assert.Equal(t, 0, fake.count("folder/delete"))
 	assert.Equal(t, 0, fake.count("folder/purge"))
 }
 
-func TestRmdirPurgesEmptyFolder(t *testing.T) {
+func TestRmdirTrashesEmptyFolderByDefault(t *testing.T) {
 	ctx := context.Background()
 	f, fake := moveFs(t)
+	require.NoError(t, f.Rmdir(ctx, "B"))
+	assert.Equal(t, "fB", fake.last("folder/delete").Get("folder_key"))
+	assert.Equal(t, 0, fake.count("folder/purge"))
+}
+
+func TestRmdirHardDeletePurgesEmptyFolder(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t, hardDelete)
 	require.NoError(t, f.Rmdir(ctx, "B"))
 	assert.Equal(t, "fB", fake.last("folder/purge").Get("folder_key"))
 }
 
-func TestPurgeRemovesFolderWithContents(t *testing.T) {
+func TestPurgeTrashesFolderWithContentsByDefault(t *testing.T) {
 	ctx := context.Background()
 	f, fake := moveFs(t)
+	require.NoError(t, f.Purge(ctx, "A"))
+	assert.Equal(t, "fA", fake.last("folder/delete").Get("folder_key"))
+	assert.Equal(t, 0, fake.count("folder/purge"))
+}
+
+func TestPurgeHardDeleteRemovesFolderWithContents(t *testing.T) {
+	ctx := context.Background()
+	f, fake := moveFs(t, hardDelete)
 	require.NoError(t, f.Purge(ctx, "A"))
 	assert.Equal(t, "fA", fake.last("folder/purge").Get("folder_key"))
 }
@@ -1213,7 +1245,8 @@ func TestCopyReplacesExistingFile(t *testing.T) {
 	o, err := f.Copy(ctx, src, "b.bin")
 	require.NoError(t, err)
 	assert.Equal(t, "qnew", o.(*Object).id)
-	assert.Equal(t, "qold", fake.last("file/purge").Get("quick_key"))
+	assert.Equal(t, "qold", fake.last("file/delete").Get("quick_key"))
+	assert.Equal(t, 0, fake.count("file/purge"))
 }
 
 type changeFeed struct {
