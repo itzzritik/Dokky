@@ -164,7 +164,9 @@ func (d *Daemon) observe(now time.Time) bool {
 	for _, f := range finished {
 		id, ok := keys[f.ID]
 		k := fmt.Sprint(id, "\x00", f.Up, "\x00", f.Name)
-		if !ok || seen[k] || len(cur.Earlier) == earlierLen {
+		// another read of the same file is still going, so it isn't done yet
+		_, moving := done[k]
+		if !ok || seen[k] || moving || len(cur.Earlier) == earlierLen {
 			continue
 		}
 		seen[k] = true
