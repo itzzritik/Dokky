@@ -39,6 +39,8 @@ const (
 	linkTTL       = 10 * time.Minute
 	minSleep      = 100 * time.Millisecond
 	maxSleep      = 2 * time.Second
+	dlMinSleep    = 10 * time.Millisecond
+	dlMaxSleep    = 200 * time.Millisecond
 	decayConstant = 2
 )
 
@@ -110,6 +112,7 @@ type Fs struct {
 	features *fs.Features
 	srv      *rest.Client
 	pacer    *fs.Pacer
+	dlPacer  *fs.Pacer
 	sess     *session
 	dirCache *dircache.DirCache
 }
@@ -144,6 +147,8 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		opt:   *opt,
 		srv:   rest.NewClient(fshttp.NewClient(ctx)).SetErrorHandler(errorHandler),
 		pacer: newPacer(ctx),
+		// download hosts often reset new connections; retrying them must not slow every API call
+		dlPacer: fs.NewPacer(ctx, pacer.NewDefault(pacer.MinSleep(dlMinSleep), pacer.MaxSleep(dlMaxSleep), pacer.DecayConstant(decayConstant))),
 	}
 	f.features = (&fs.Features{CanHaveEmptyDirectories: true}).Fill(ctx, f)
 	f.sess = getSession(opt.Email, password, cmp.Or(opt.AppID, defaultAppID), f.srv, f.pacer)
@@ -564,7 +569,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 func (o *Object) get(ctx context.Context, link string, options []fs.OpenOption) (io.ReadCloser, error) {
 	opts := rest.Opts{Method: "GET", RootURL: link, Options: options}
 	var resp *http.Response
-	err := o.fs.pacer.Call(func() (bool, error) {
+	err := o.fs.dlPacer.Call(func() (bool, error) {
 		var err error
 		resp, err = o.fs.srv.Call(ctx, &opts)
 		return shouldRetry(ctx, resp, err)

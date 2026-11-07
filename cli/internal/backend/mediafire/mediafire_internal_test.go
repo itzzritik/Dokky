@@ -841,7 +841,7 @@ func TestOpenFetchesFreshLinkAfterManyResets(t *testing.T) {
 		_, _ = w.Write([]byte("hello"))
 	}
 	f := newTestFs(t, fake)
-	f.pacer.SetRetries(2)
+	f.dlPacer.SetRetries(2)
 	rc, err := testObject(f, 5).Open(ctx)
 	require.NoError(t, err)
 	defer func() { _ = rc.Close() }()
@@ -1006,4 +1006,26 @@ func TestOpenAcceptsWholeFileForFullRange(t *testing.T) {
 	b, err := io.ReadAll(rc)
 	require.NoError(t, err)
 	assert.Equal(t, "hello", string(b))
+}
+
+func TestOpenRecoversQuicklyFromResets(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	var hits atomic.Int32
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) <= 5 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			require.NoError(t, err)
+			_ = conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte("hello"))
+	}
+	start := time.Now()
+	rc, err := testObject(newTestFs(t, fake), 5).Open(ctx)
+	require.NoError(t, err)
+	_ = rc.Close()
+	assert.Less(t, time.Since(start), 1200*time.Millisecond)
+	assert.Equal(t, int32(6), hits.Load())
 }
