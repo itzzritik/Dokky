@@ -30,6 +30,23 @@ var (
 	ErrNotFound     = errors.New("not found")
 )
 
+// the server removed this device; Mode says whether it finishes its uploads first
+type RevokedError struct {
+	Mode, Msg string
+}
+
+func (e *RevokedError) Error() string      { return ErrRevoked.Error() + ": " + e.Msg }
+func (*RevokedError) Is(target error) bool { return target == ErrRevoked }
+
+// an answer without a mode comes from before modes existed, which always erased
+func RevokedMode(err error) string {
+	var re *RevokedError
+	if errors.As(err, &re) && re.Mode == "remove" {
+		return "remove"
+	}
+	return "erase"
+}
+
 type ConflictError struct {
 	Current json.RawMessage
 }
@@ -129,6 +146,7 @@ func (c *Client) do(ctx context.Context, method, path string, auth bool, headers
 	}
 	req.Header.Set("X-Dokky-Version", version)
 	req.Header.Set("X-Dokky-OS", platform.OSName())
+	req.Header.Set("X-Dokky-Removal", "1")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -160,6 +178,7 @@ func failure(resp *http.Response, data []byte) error {
 			Message string `json:"message"`
 		} `json:"error"`
 		Current json.RawMessage `json:"current"`
+		Mode    string          `json:"mode"`
 	}
 	_ = json.Unmarshal(data, &env)
 	code, msg := env.Error.Code, env.Error.Message
@@ -168,7 +187,7 @@ func failure(resp *http.Response, data []byte) error {
 	}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized && code == "device_revoked":
-		return fmt.Errorf("%w: %s", ErrRevoked, msg)
+		return &RevokedError{Mode: env.Mode, Msg: msg}
 	case resp.StatusCode == http.StatusUnauthorized:
 		return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
 	case resp.StatusCode == http.StatusConflict && code == "conflict":
@@ -288,8 +307,12 @@ func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 	return out, err
 }
 
-func (c *Client) Revoke(ctx context.Context, id string) error {
-	return c.call(ctx, http.MethodDelete, "/devices/"+url.PathEscape(id), true, nil, nil, http.StatusNoContent)
+func (c *Client) Revoke(ctx context.Context, id, mode string) error {
+	return c.call(ctx, http.MethodDelete, "/devices/"+url.PathEscape(id)+"?mode="+url.QueryEscape(mode), true, nil, nil, http.StatusNoContent)
+}
+
+func (c *Client) Erased(ctx context.Context) error {
+	return c.call(ctx, http.MethodPost, "/devices/self/erased", true, nil, nil, http.StatusNoContent)
 }
 
 func (c *Client) Me(ctx context.Context) (Me, error) {

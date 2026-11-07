@@ -21,6 +21,14 @@ type State struct {
 	CacheBytes int64    `json:"cacheBytes"`
 	CacheDir   string   `json:"cacheDir"`
 	Settings   Settings `json:"settings"`
+	Removed    *Removed `json:"removed,omitempty"`
+}
+
+// this device was removed from the account and is leaving
+type Removed struct {
+	Mode     string  `json:"mode"`
+	Waiting  string  `json:"waiting"`
+	Progress float64 `json:"progress"`
 }
 
 type Settings struct {

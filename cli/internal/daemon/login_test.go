@@ -473,48 +473,6 @@ func TestUploadChecksFailClosed(t *testing.T) {
 	err := call(t, d, "login.resolve", map[string]string{"kind": "service", "name": "nas", "keep": "account"}, nil)
 	require.ErrorContains(t, err, "could not check uploads")
 	requireUnmoved(t, f, st)
-
-	err = call(t, d, "logout", map[string]bool{"force": false}, nil)
-	require.ErrorContains(t, err, "nothing was removed")
-	requireUnmoved(t, f, st)
-	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
-}
-
-func TestLogoutRecheckKeepsCacheForNewUpload(t *testing.T) {
-	api := newFakeAPI(t, "approved")
-	d, f, st := newTestDaemon(t, loggedIn(api.srv.URL))
-	d.start()
-	fillCache(t, d)
-
-	logout := handler(d, "logout")
-	d.opMu.Lock()
-	done := make(chan error, 1)
-	go func() {
-		_, err := logout(context.Background(), map[string]bool{"force": false})
-		done <- err
-	}()
-	time.Sleep(30 * time.Millisecond)
-	setUploads(f, 1)
-	d.opMu.Unlock()
-
-	select {
-	case err := <-done:
-		t.Fatalf("logout went ahead with a new upload queued: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
-	require.NotNil(t, load(t, st).Account)
-	require.Contains(t, f.mounted, "m1")
-	require.False(t, api.wasRevoked())
-
-	setUploads(f, 0)
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("logout did not finish after the upload drained")
-	}
-	requireWiped(t, d, f, d.cacheDir)
 }
 
 func writeMeta(t *testing.T, d *Daemon, rel string, dirty bool) {
@@ -572,7 +530,7 @@ func TestDeleteMountRefusesUnsentUploads(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestLogoutRefusesPausedUploads(t *testing.T) {
+func TestLogoutWaitsForPausedUploads(t *testing.T) {
 	api := newFakeAPI(t, "approved")
 	data := loggedIn(api.srv.URL)
 	data.Mounts[1].RemotePath = "docs"
@@ -582,30 +540,18 @@ func TestLogoutRefusesPausedUploads(t *testing.T) {
 	writeMeta(t, d, "s1/docs/report.pdf", true)
 	writeMeta(t, d, "s1/docs/notes.txt", true)
 
-	err := call(t, d, "logout", map[string]bool{"force": false}, nil)
-	require.ErrorContains(t, err, "2 files on docs are not uploaded yet")
-	require.ErrorContains(t, err, "mount docs to finish, or use --force")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	r, err := handler(d, "logout")(ctx, map[string]bool{"force": false})
+	require.NoError(t, err)
+	require.Equal(t, "Removal continues in the background", r.(logoutReply).Warning)
 	require.NotNil(t, load(t, st).Account)
 	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
 	require.Contains(t, f.mounted, "m1")
-	require.False(t, api.wasRevoked())
+	require.True(t, api.wasRevoked())
 
 	require.NoError(t, call(t, d, "logout", map[string]bool{"force": true}, nil))
 	requireWiped(t, d, f, d.cacheDir)
-}
-
-func TestLogoutRechecksCacheAfterUnmount(t *testing.T) {
-	api := newFakeAPI(t, "approved")
-	d, f, st := newTestDaemon(t, loggedIn(api.srv.URL))
-	d.start()
-	fillCache(t, d)
-	f.onUnmount = func(string) { writeMeta(t, d, "s1/late.mkv", true) }
-
-	err := call(t, d, "logout", map[string]bool{"force": false}, nil)
-	require.ErrorContains(t, err, "1 files on media are not uploaded yet")
-	require.NotNil(t, load(t, st).Account)
-	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
-	require.False(t, api.wasRevoked())
 }
 
 func TestResolveRefusesPausedUploads(t *testing.T) {
@@ -770,6 +716,7 @@ func fillCache(t *testing.T, d *Daemon) {
 
 func requireWiped(t *testing.T, d *Daemon, f *fakeEngine, dir string) {
 	t.Helper()
+	require.Eventually(t, func() bool { return !d.status().LoggedIn }, 10*time.Second, 5*time.Millisecond)
 	require.NoDirExists(t, filepath.Join(d.cacheDir, "vfs"))
 	require.NoDirExists(t, filepath.Join(d.cacheDir, "vfsMeta"))
 	require.Empty(t, f.mounted)
@@ -789,49 +736,6 @@ func requireWiped(t *testing.T, d *Daemon, f *fakeEngine, dir string) {
 	require.True(t, got.Settings.AutoUpdate)
 }
 
-func TestLogoutWaitsForUploads(t *testing.T) {
-	api := newFakeAPI(t, "approved")
-	d, f, st := newTestDaemon(t, loggedIn(api.srv.URL))
-	d.start()
-	fillCache(t, d)
-	require.Contains(t, f.mounted, "m1")
-	f.mu.Lock()
-	f.uploads = 2
-	f.mu.Unlock()
-	logout := handler(d, "logout")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	_, err := logout(ctx, map[string]bool{"force": false})
-	require.ErrorContains(t, err, "2 uploads")
-	require.NotNil(t, load(t, st).Account)
-	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
-	require.Contains(t, f.mounted, "m1")
-	require.False(t, api.wasRevoked())
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := logout(context.Background(), map[string]bool{"force": false})
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		t.Fatalf("logout returned with uploads waiting: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	f.mu.Lock()
-	f.uploads = 0
-	f.mu.Unlock()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("logout did not finish after uploads drained")
-	}
-	require.True(t, api.wasRevoked())
-	requireWiped(t, d, f, d.cacheDir)
-}
-
 func TestLogoutForceSkipsWait(t *testing.T) {
 	api := newFakeAPI(t, "approved")
 	d, f, _ := newTestDaemon(t, loggedIn(api.srv.URL))
@@ -847,19 +751,17 @@ func TestLogoutForceSkipsWait(t *testing.T) {
 	requireWiped(t, d, f, d.cacheDir)
 }
 
-func TestLogoutOfflineRevokeStillWipes(t *testing.T) {
+func TestLogoutOfflineChangesNothing(t *testing.T) {
 	api := newFakeAPI(t, "approved")
 	api.srv.Close()
-	d, f, _ := newTestDaemon(t, loggedIn(api.srv.URL))
+	d, f, st := newTestDaemon(t, loggedIn(api.srv.URL))
 	d.start()
 	fillCache(t, d)
-	var r struct {
-		Warning string `json:"warning"`
-	}
-	require.NoError(t, call(t, d, "logout", map[string]bool{"force": false}, &r))
-	require.Contains(t, r.Warning, api.srv.URL+"/devices")
-	requireWiped(t, d, f, d.cacheDir)
-	require.ErrorContains(t, call(t, d, "logout", nil, nil), "not logged in")
+	err := call(t, d, "logout", map[string]bool{"force": false}, nil)
+	require.Equal(t, "offline", codeOf(t, err))
+	require.NotNil(t, load(t, st).Account)
+	require.FileExists(t, filepath.Join(d.cacheDir, "vfs", "s1", "queued.mkv"))
+	require.Contains(t, f.mounted, "m1")
 }
 
 func TestLoginTokenNeverInLogsOrErrors(t *testing.T) {
@@ -886,7 +788,9 @@ func TestLoginTokenNeverInLogsOrErrors(t *testing.T) {
 	d.log.Error("request failed", "err", "Authorization: Bearer "+testToken)
 
 	api.srv.Close()
-	require.NoError(t, call(t, d, "logout", map[string]bool{"force": true}, nil))
+	if err := call(t, d, "logout", map[string]bool{"force": true}, nil); err != nil {
+		require.NotContains(t, err.Error(), testToken)
+	}
 
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)

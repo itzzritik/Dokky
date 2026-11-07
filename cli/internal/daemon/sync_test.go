@@ -180,6 +180,7 @@ func TestRevokedWipeForcesBusyMount(t *testing.T) {
 	f.mu.Unlock()
 
 	require.NoError(t, call(t, d, "sync.now", nil, nil))
+	require.Eventually(t, func() bool { return !d.status().LoggedIn }, 10*time.Second, 5*time.Millisecond)
 	f.mu.Lock()
 	require.Contains(t, f.forced, point)
 	require.False(t, f.os[point])

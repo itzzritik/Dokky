@@ -78,7 +78,7 @@ func (s *Settings) rows(st *core.State) []row {
 	if acct.LoggedIn {
 		rows = append(rows,
 			row{group: "Account", label: "Your devices", kind: action, run: devices.Open},
-			row{label: "Sign out", kind: action, run: func(*core.State) tea.Cmd { return devices.SignOut() }})
+			row{label: "Remove this device", kind: action, run: func(*core.State) tea.Cmd { return devices.RemoveSelf() }})
 	} else {
 		rows = append(rows, row{group: "Account", label: "Sign in", kind: action, run: gate.Open})
 	}
@@ -147,7 +147,7 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			}
 		case "s":
 			if st.Snap.Account.SignedOut {
-				return s, devices.SignOut()
+				return s, devices.RemoveSelf()
 			}
 		}
 	}
@@ -171,7 +171,7 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "enter", Label: "uninstall", Danger: true})
 	}
 	if st.Snap.Account.SignedOut {
-		acts = append(acts, core.Action{Key: "s", Label: "sign out"})
+		acts = append(acts, core.Action{Key: "s", Label: "remove this device"})
 	}
 	return acts
 }

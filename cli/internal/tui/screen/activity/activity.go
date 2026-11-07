@@ -127,7 +127,9 @@ func Summary(e api.Event) string {
 	case "device.added":
 		return "Added device " + n
 	case "device.removed":
-		return "Signed out " + n
+		return "Removed device " + n
+	case "device.erased":
+		return n + " erased"
 	case "device.renamed":
 		return "Renamed a device to " + n
 	}

@@ -72,6 +72,14 @@ type Data struct {
 	Settings Settings              `json:"settings"`
 	Account  *Account              `json:"account"`
 	Events   EventLog              `json:"events"`
+	Removal  *Removal              `json:"removal,omitempty"`
+}
+
+// the server removed this device; it is kept until the erase is reported
+type Removal struct {
+	Mode   string    `json:"mode"`
+	Erased bool      `json:"erased"`
+	At     time.Time `json:"at"`
 }
 
 // Queue waits to reach the server; Local is the log of a device with no account

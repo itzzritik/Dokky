@@ -95,7 +95,7 @@ func newLogoutCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:          "logout",
-		Short:        "Log this device out and remove your account's data from it",
+		Short:        "Remove this device from your account and erase dokky's data on it",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -142,7 +142,7 @@ func newLogoutCmd() *cobra.Command {
 			var ie *ipc.Error
 			switch {
 			case errors.Is(err, context.Canceled):
-				return errors.New("logout stopped; dokky logout --force skips waiting for uploads")
+				return errors.New("stopped waiting; the removal continues in the background")
 			case errors.As(err, &ie):
 				return errors.New(ie.Message)
 			case err != nil:
@@ -151,11 +151,11 @@ func newLogoutCmd() *cobra.Command {
 			if r.Warning != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), r.Warning)
 			}
-			_, err = fmt.Fprintln(out, "Logged out.")
+			_, err = fmt.Fprintln(out, "Removed this device.")
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "log out without waiting for uploads to finish")
+	cmd.Flags().BoolVar(&force, "force", false, "erase right away without waiting for uploads")
 	return cmd
 }
 

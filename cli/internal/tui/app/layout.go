@@ -43,7 +43,7 @@ func (a *App) render() string {
 	var more *core.Action
 	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
-	case a.restartOpen || !a.st.Connected:
+	case a.restartOpen || !a.st.Connected || a.removedNow():
 		passes = append(passes, ui.Pass{Layer: a.splashLayer(a.splash(), w, h)})
 		switch {
 		case a.restartOpen:

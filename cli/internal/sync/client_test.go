@@ -251,7 +251,7 @@ func TestDevicesAndRevoke(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ds[0].Current)
 	require.Equal(t, "mac", ds[0].Name)
-	require.NoError(t, c.Revoke(context.Background(), "d2"))
+	require.NoError(t, c.Revoke(context.Background(), "d2", "remove"))
 	require.Equal(t, "/api/v1/devices/d2", delPath)
 }
 

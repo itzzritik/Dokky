@@ -265,8 +265,11 @@ func DeepClean(d *Daemon) {
 
 	if acct != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), revokeTimeout)
-		if err := client(acct).Revoke(ctx, "self"); err != nil {
+		// uninstall already erased everything here, so the server hears both at once
+		if err := client(acct).Revoke(ctx, "self", "erase"); err != nil {
 			d.log.Warn("revoke device", "err", err)
+		} else if err := client(acct).Erased(ctx); err != nil {
+			d.log.Warn("report device erased", "err", err)
 		}
 		cancel()
 		if err := d.forget(); err != nil {

@@ -30,8 +30,9 @@ const (
 )
 
 type unsentCount struct {
-	n  int
-	at time.Time
+	n       int
+	at      time.Time
+	changed time.Time // the newest write to any of them
 }
 
 func (d *Daemon) usage(id string) api.Usage { return d.usageOf(id, false) }
@@ -46,10 +47,11 @@ func (d *Daemon) usageOf(id string, draining bool) api.Usage {
 	st := d.states[id]
 	mounted := st != nil && st.state == stateMounted
 	flagged := d.data.Local[id].Mounted
+	whole := d.departing
 	d.mu.Unlock()
 
 	d.act.mu.Lock()
-	read, queueErr := d.act.lastRead[id], d.act.queueErr[id]
+	read, queueErr, sent := d.act.lastRead[id], d.act.queueErr[id], d.act.lastUp[id]
 	failing := map[string]string{}
 	for _, t := range d.act.cur.Earlier {
 		if t.DriveID == id && t.Up && t.Error != "" {
@@ -80,18 +82,24 @@ func (d *Daemon) usageOf(id string, draining bool) api.Usage {
 	d.act.mu.Unlock()
 
 	now := time.Now()
-	stuckFor := d.failingFor(id, mounted && uploading == 0 && waiting > 0 && allFailing && !offline, now)
+	// a leaving device lets go of a storage that doesn't answer while dokky does, never when the laptop is offline
+	waitNet := offline && !(whole && d.storageLost(m))
+	stuckFor := d.failingFor(id, mounted && uploading == 0 && waiting > 0 && allFailing && !waitNet, now)
+	// rclone retries an unreachable storage inside one upload that never sends a byte
+	stalled := whole && d.failingFor("stall:"+id, mounted && uploading > 0 && now.Sub(sent) >= readBusyFor && d.storageLost(m), now) >= stuckAfter
 	switch {
 	case mounted && now.Sub(queueErr) < readBusyFor:
 		return api.Usage{State: usageBusy, Reason: "Checking uploads"}
+	case stalled:
+		return api.Usage{State: usageStuck, Reason: files(uploading) + " can't upload"}
 	case mounted && (uploading > 0 || waiting > 0 && !allFailing):
 		return api.Usage{State: usageBusy, Reason: files(uploading+waiting) + " uploading"}
 	case now.Sub(read) < readBusyFor:
 		return api.Usage{State: usageBusy, Reason: "Reading files"}
-	case mounted && d.unsentOf(m) > waiting:
+	case mounted && d.unsentOf(m) > waiting && !(whole && now.Sub(d.lastWrite(id)) >= stuckAfter):
 		// rclone holds a file out of its queue while it is still being written
 		return api.Usage{State: usageBusy, Reason: "Writing files"}
-	case mounted && waiting > 0 && offline:
+	case mounted && waiting > 0 && waitNet:
 		return api.Usage{State: usageBusy, Reason: files(waiting) + " waiting for the network"}
 	case mounted && waiting > 0 && stuckFor < stuckAfter:
 		return api.Usage{State: usageBusy, Reason: files(waiting) + " retrying"}
@@ -142,12 +150,14 @@ func (d *Daemon) unsentOf(m store.Mount) int {
 	d.mu.Lock()
 	c, ok := d.unsent[m.ID]
 	all := slices.Clone(d.data.Mounts)
+	// a leaving device drops every drive, so a file another drive shows is not safe either
+	whole := d.departing
 	d.mu.Unlock()
 	if ok && time.Since(c.at) < unsentFor {
 		return c.n
 	}
 	root := filepath.Join(d.cacheDir, "vfsMeta")
-	n := 0
+	n, changed := 0, time.Time{}
 	err := filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
 		switch {
 		case errors.Is(err, os.ErrNotExist):
@@ -159,11 +169,16 @@ func (d *Daemon) unsentOf(m store.Mount) int {
 		if err != nil {
 			return err
 		}
-		if rel = filepath.ToSlash(rel); !covers(m, rel) || coveredByOther(m, all, rel) {
+		if rel = filepath.ToSlash(rel); !covers(m, rel) || !whole && coveredByOther(m, all, rel) {
 			return nil
 		}
 		if dirtyMeta(p) {
 			n++
+			for _, f := range []string{p, filepath.Join(d.cacheDir, "vfs", filepath.FromSlash(rel))} {
+				if fi, err := os.Stat(f); err == nil && fi.ModTime().After(changed) {
+					changed = fi.ModTime()
+				}
+			}
 		}
 		return nil
 	})
@@ -171,7 +186,7 @@ func (d *Daemon) unsentOf(m store.Mount) int {
 		d.log.Warn("count unsent files", "drive", m.Name, "err", err)
 	}
 	d.mu.Lock()
-	d.unsent[m.ID] = unsentCount{n, time.Now()}
+	d.unsent[m.ID] = unsentCount{n, time.Now(), changed}
 	d.mu.Unlock()
 	return n
 }

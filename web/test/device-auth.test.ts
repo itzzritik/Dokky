@@ -57,6 +57,7 @@ test("a valid token returns the device and its user", async () => {
   expect(await authDevice(bearer(token), minutes(1))).toEqual({
     userId: "user-1",
     deviceId,
+    removed: false,
   });
 });
 
@@ -126,6 +127,7 @@ test("lastSeenAt is written at most once a minute", async () => {
   expect(await authDevice(bearer(token), minutes(1))).toEqual({
     userId: "user-1",
     deviceId,
+    removed: false,
   });
   expect(await lastSeen()).toEqual(minutes(1));
 
