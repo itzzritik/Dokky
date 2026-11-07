@@ -69,8 +69,7 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 	// locallocks: macOS only reads AppleDouble attributes (the mount icon) under a lock, and the server has no lock service.
 	// mutejukebox: a call still waiting on the cloud is told to try later, which must not show "Server connections interrupted"
-	// sync: queued writes of a big copy fill the kernel's network buffers, and macOS then kills dokky's sockets
-	args := []string{"-o", "port=" + port, "-o", "mountport=" + port, "-o", "tcp", "-o", "locallocks", "-o", "mutejukebox", "-o", "sync"}
+	args := []string{"-o", "port=" + port, "-o", "mountport=" + port, "-o", "tcp", "-o", "locallocks", "-o", "mutejukebox"}
 	for _, o := range opt.ExtraOptions {
 		args = append(args, "-o", o)
 	}
