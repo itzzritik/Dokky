@@ -37,3 +37,26 @@ func TestEarlierLeavesOutFileStillMoving(t *testing.T) {
 	require.Len(t, a.Earlier, 1)
 	assert.Equal(t, "other.bin", a.Earlier[0].Name)
 }
+
+func TestUploadSkippedByServerAddsNoSpeed(t *testing.T) {
+	d, f, _ := newTestDaemon(t, sample("m1"))
+	d.start()
+	eng := &activityEngine{fakeEngine: f}
+	d.eng = eng
+	d.observe(t0)
+	eng.finished = []engine.Finished{{ID: "m1", Name: "same.bin", Up: true, Size: 200 << 20, At: t0.Add(500 * time.Millisecond)}}
+	d.observe(t0.Add(time.Second))
+	assert.Zero(t, d.activity().Up)
+}
+
+func TestFinishedTransferCountsItsLastBytes(t *testing.T) {
+	d, f, _ := newTestDaemon(t, sample("m1"))
+	d.start()
+	eng := &activityEngine{fakeEngine: f, moving: []engine.Moving{{ID: "m1", Name: "a.bin", Up: true, Size: 100, Done: 60}}}
+	d.eng = eng
+	d.observe(t0)
+	eng.moving = nil
+	eng.finished = []engine.Finished{{ID: "m1", Name: "a.bin", Up: true, Size: 100, Bytes: 100, At: t0.Add(500 * time.Millisecond)}}
+	d.observe(t0.Add(time.Second))
+	assert.InDelta(t, 40.0, d.activity().Up, 0.001)
+}
