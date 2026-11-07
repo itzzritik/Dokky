@@ -615,7 +615,7 @@ func (o *Object) get(ctx context.Context, link string, options []fs.OpenOption) 
 	rng := resp.Request.Header.Get("Range")
 	full := rng == "" || rng == "bytes=0-" || rng == fmt.Sprintf("bytes=0-%d", o.size-1)
 	sized := resp.ContentLength == o.size || (rng == "" && resp.ContentLength < 0)
-	if resp.StatusCode != http.StatusPartialContent && !(full && sized) {
+	if resp.StatusCode != http.StatusPartialContent && (!full || !sized) {
 		_ = resp.Body.Close()
 		return nil, fserrors.RetryErrorf("mediafire: download of %q answered %s with %d bytes", o.remote, resp.Status, resp.ContentLength)
 	}
