@@ -13,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/backend/mediafire/api"
@@ -35,6 +36,7 @@ const (
 	rootID        = "myfiles"
 	listChunk     = 1000
 	openTries     = 3
+	linkTTL       = 10 * time.Minute
 	minSleep      = 100 * time.Millisecond
 	maxSleep      = 2 * time.Second
 	decayConstant = 2
@@ -119,6 +121,9 @@ type Object struct {
 	size    int64
 	sha256  string
 	modTime time.Time
+	linkMu  sync.Mutex
+	link    string
+	linkAt  time.Time
 }
 
 type apiResult interface{ Err() error }
@@ -412,10 +417,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 			return nil, err
 		}
 	}
-	dst := *srcObj
-	dst.fs = f
-	dst.remote = remote
-	return &dst, nil
+	return &Object{fs: f, remote: remote, id: srcObj.id, size: srcObj.size, sha256: srcObj.sha256, modTime: srcObj.modTime}, nil
 }
 
 func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
@@ -466,11 +468,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 			return nil, err
 		}
 	}
-	dst := *srcObj
-	dst.fs = f
-	dst.remote = remote
-	dst.id = id
-	return &dst, nil
+	return &Object{fs: f, remote: remote, id: id, size: srcObj.size, sha256: srcObj.sha256, modTime: srcObj.modTime}, nil
 }
 
 func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
@@ -546,37 +544,69 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	}
 	fs.FixRangeOption(options, o.size)
 	var err error
-	for range openTries {
-		var link string
-		if link, err = o.downloadLink(ctx); err != nil {
-			return nil, err
+	for try := range openTries {
+		link, cached, lerr := o.downloadLink(ctx, try > 0)
+		if lerr != nil {
+			return nil, lerr
 		}
-		opts := rest.Opts{Method: "GET", RootURL: link, Options: options}
-		var resp *http.Response
-		err = o.fs.pacer.Call(func() (bool, error) {
-			resp, err = o.fs.srv.Call(ctx, &opts)
-			return shouldRetry(ctx, resp, err)
-		})
-		if err == nil {
-			return resp.Body, nil
+		var body io.ReadCloser
+		if body, err = o.get(ctx, link, options); err == nil {
+			return body, nil
 		}
-		if !fserrors.ShouldRetry(err) {
+		o.forgetLink(link)
+		if !cached && !fserrors.ShouldRetry(err) && !fserrors.IsRetryError(err) {
 			break
 		}
 	}
 	return nil, err
 }
 
-func (o *Object) downloadLink(ctx context.Context) (string, error) {
+func (o *Object) get(ctx context.Context, link string, options []fs.OpenOption) (io.ReadCloser, error) {
+	opts := rest.Opts{Method: "GET", RootURL: link, Options: options}
+	var resp *http.Response
+	err := o.fs.pacer.Call(func() (bool, error) {
+		var err error
+		resp, err = o.fs.srv.Call(ctx, &opts)
+		return shouldRetry(ctx, resp, err)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// an expired link can answer with a web page, which must never pass as file data
+	rng := resp.Request.Header.Get("Range")
+	full := rng == "" || rng == "bytes=0-" || rng == fmt.Sprintf("bytes=0-%d", o.size-1)
+	sized := resp.ContentLength == o.size || (rng == "" && resp.ContentLength < 0)
+	if resp.StatusCode != http.StatusPartialContent && !(full && sized) {
+		_ = resp.Body.Close()
+		return nil, fserrors.RetryErrorf("mediafire: download of %q answered %s with %d bytes", o.remote, resp.Status, resp.ContentLength)
+	}
+	return resp.Body, nil
+}
+
+func (o *Object) downloadLink(ctx context.Context, fresh bool) (link string, cached bool, err error) {
+	o.linkMu.Lock()
+	defer o.linkMu.Unlock()
+	if !fresh && o.link != "" && now().Sub(o.linkAt) < linkTTL {
+		return o.link, true, nil
+	}
 	var links api.Links
 	params := url.Values{"quick_key": {o.id}, "link_type": {"direct_download"}}
 	if err := o.fs.call(ctx, "file/get_links", params, &links); err != nil {
-		return "", fmt.Errorf("couldn't get download link: %w", err)
+		return "", false, fmt.Errorf("couldn't get download link: %w", err)
 	}
 	if len(links.Links) == 0 || links.Links[0].DirectDownload == "" {
-		return "", fmt.Errorf("mediafire: no download link for %q", o.remote)
+		return "", false, fmt.Errorf("mediafire: no download link for %q", o.remote)
 	}
-	return links.Links[0].DirectDownload, nil
+	o.link, o.linkAt = links.Links[0].DirectDownload, now()
+	return o.link, false, nil
+}
+
+func (o *Object) forgetLink(link string) {
+	o.linkMu.Lock()
+	if o.link == link {
+		o.link = ""
+	}
+	o.linkMu.Unlock()
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {

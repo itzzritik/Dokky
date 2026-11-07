@@ -908,3 +908,102 @@ func TestUpdateInstantReplacesByName(t *testing.T) {
 	assert.Equal(t, "v.bin", form.Get("filename"))
 	assert.Equal(t, "q0", o.id)
 }
+
+func TestOpenReusesLink(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("hello")) }
+	o := testObject(newTestFs(t, fake), 5)
+	for range 3 {
+		rc, err := o.Open(ctx)
+		require.NoError(t, err)
+		_ = rc.Close()
+	}
+	assert.Equal(t, 1, fake.count("file/get_links"))
+}
+
+func TestOpenRefetchesOldLink(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("hello")) }
+	clock := stubTime(t)
+	o := testObject(newTestFs(t, fake), 5)
+	rc, err := o.Open(ctx)
+	require.NoError(t, err)
+	_ = rc.Close()
+	clock.Add(11 * time.Minute)
+	rc, err = o.Open(ctx)
+	require.NoError(t, err)
+	_ = rc.Close()
+	assert.Equal(t, 2, fake.count("file/get_links"))
+}
+
+func TestOpenReplacesLinkThatStoppedWorking(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	var links atomic.Int32
+	fake.handle("file/get_links", func(url.Values, *http.Request) any {
+		return success("links", []map[string]any{{"quickkey": "q1", "direct_download": fmt.Sprintf("%s/dl/%d", fake.srv.URL, links.Add(1))}})
+	})
+	fake.raw["/dl/1"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("hello")) }
+	o := testObject(newTestFs(t, fake), 5)
+	rc, err := o.Open(ctx)
+	require.NoError(t, err)
+	_ = rc.Close()
+	fake.raw["/dl/1"] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }
+	fake.raw["/dl/2"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("fresh")) }
+	rc, err = o.Open(ctx)
+	require.NoError(t, err)
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "fresh", string(b))
+}
+
+func TestOpenRejectsPageInsteadOfRange(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>file not found</html>"))
+	}
+	o := testObject(newTestFs(t, fake), 1000)
+	rc, err := o.Open(ctx, &fs.RangeOption{Start: 100, End: 199})
+	assert.Error(t, err)
+	assert.Nil(t, rc)
+	assert.Equal(t, openTries, fake.count("file/get_links"))
+}
+
+func TestOpenRejectsWrongSize(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>file not found</html>"))
+	}
+	rc, err := testObject(newTestFs(t, fake), 1000).Open(ctx)
+	assert.Error(t, err)
+	assert.Nil(t, rc)
+}
+
+func TestUploadForgetsLink(t *testing.T) {
+	o := testObject(newTestFs(t, newFakeAPI(t)), 5)
+	o.link, o.linkAt = "http://old", now()
+	require.NoError(t, o.uploaded("q1", 6, "sum"))
+	assert.Empty(t, o.link)
+}
+
+func TestOpenAcceptsWholeFileForFullRange(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	linkTo(fake, "/dl/x.mp4")
+	fake.raw["/dl/x.mp4"] = func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("hello")) }
+	rc, err := testObject(newTestFs(t, fake), 5).Open(ctx, &fs.RangeOption{Start: 0, End: 4})
+	require.NoError(t, err)
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(b))
+}

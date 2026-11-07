@@ -135,10 +135,10 @@ func (o *Object) uploaded(quickKey string, size int64, sum string) error {
 	if quickKey == "" {
 		return fmt.Errorf("mediafire: upload of %q finished without a file key", o.remote)
 	}
-	o.id = quickKey
-	o.size = size
-	o.sha256 = sum
-	o.modTime = now()
+	o.linkMu.Lock()
+	o.id, o.link = quickKey, ""
+	o.size, o.sha256, o.modTime = size, sum, now()
+	o.linkMu.Unlock()
 	return nil
 }
 
