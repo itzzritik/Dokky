@@ -35,7 +35,8 @@ func MountParams(fsName, mountPoint, volName string, v store.VFS, goos string) m
 	switch goos {
 	case "darwin":
 		p["mountType"] = "dokky"
-		p["mountOpt"] = map[string]any{"ExtraOptions": []string{"rsize=1048576", "wsize=1048576", "readahead=16"}}
+		// macOS queues up to 128 writes per drive; at 1 MiB each a big copy fills the kernel's network buffers and macOS kills dokky's sockets
+		p["mountOpt"] = map[string]any{"ExtraOptions": []string{"rsize=1048576", "wsize=131072", "readahead=16"}}
 	case "windows":
 		// network mode makes the name a UNC share name
 		p["volname"] = SafeFolder(volName, goos)

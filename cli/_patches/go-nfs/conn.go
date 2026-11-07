@@ -78,7 +78,9 @@ func (c *conn) answer(ctx context.Context, w *response) {
 		// dokky: the call outlives this connection, so a retry on a new one still gets its answer
 		run := context.WithoutCancel(ctx)
 		go func() {
+			unlock := lockFile(w.req.file, w.req.write)
 			err := c.handle(run, w)
+			unlock()
 			f.land(w.writer.Bytes(), err)
 		}()
 	}
@@ -284,8 +286,10 @@ func (c *conn) err(ctx context.Context, w *response, err error) error {
 type request struct {
 	xid uint32
 	rpc.Header
-	Body io.Reader
-	raw  []byte
+	Body  io.Reader
+	raw   []byte
+	file  string
+	write bool
 }
 
 // dokky: the same call sent again has the same program, procedure and arguments
@@ -296,6 +300,67 @@ func (r *request) sum() [sha256.Size]byte {
 	var out [sha256.Size]byte
 	copy(out[:], h.Sum(nil))
 	return out
+}
+
+// dokky: calls on one file take turns, since rclone's cache drops a write that extends a file while another call opens it
+var fileLocks = struct {
+	sync.Mutex
+	m map[string]*fileLock
+}{m: map[string]*fileLock{}}
+
+type fileLock struct {
+	sync.RWMutex
+	refs int
+}
+
+func lockFile(key string, write bool) func() {
+	if key == "" {
+		return func() {}
+	}
+	fileLocks.Lock()
+	l := fileLocks.m[key]
+	if l == nil {
+		l = &fileLock{}
+		fileLocks.m[key] = l
+	}
+	l.refs++
+	fileLocks.Unlock()
+	if write {
+		l.Lock()
+	} else {
+		l.RLock()
+	}
+	return func() {
+		if write {
+			l.Unlock()
+		} else {
+			l.RUnlock()
+		}
+		fileLocks.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(fileLocks.m, key)
+		}
+		fileLocks.Unlock()
+	}
+}
+
+// dokky: every NFSv3 call here starts with the file handle (RFC 1813)
+func fileOf(h rpc.Header, body []byte) (file string, write bool) {
+	if h.Prog != nfsServiceID || h.Vers != 3 || len(body) < 4 {
+		return "", false
+	}
+	switch NFSProcedure(h.Proc) {
+	case NFSProcedureRead:
+	case NFSProcedureWrite, NFSProcedureCommit, NFSProcedureSetAttr:
+		write = true
+	default:
+		return "", false
+	}
+	n := binary.BigEndian.Uint32(body)
+	if n == 0 || n > 64 || 4+int(n) > len(body) {
+		return "", false
+	}
+	return string(body[4 : 4+n]), write
 }
 
 func (r *request) String() string {
@@ -451,6 +516,7 @@ func (c *conn) readRequestHeader(ctx context.Context, reader *bufio.Reader) (w *
 	}
 	req.Body = &io.LimitedReader{R: bytes.NewReader(body), N: int64(len(body))}
 	req.raw = body
+	req.file, req.write = fileOf(req.Header, body)
 
 	w = &response{
 		conn:     c,
