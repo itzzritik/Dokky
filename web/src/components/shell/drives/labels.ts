@@ -23,3 +23,9 @@ const TYPES: Record<string, string> = {
 };
 
 export const typeLabel = (type: string) => TYPES[type] ?? type;
+
+// Drives are often named after their account, so only a label that adds something is shown.
+export const via = (account: { name: string; type: string }, drive: string) =>
+  [account.name, typeLabel(account.type)].find(
+    (label) => label.toLowerCase() !== drive.toLowerCase()
+  ) ?? "";

@@ -10,20 +10,19 @@ import {
   useRef,
   useState,
 } from "react";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PHONE, useMedia, WIDE } from "@/hooks/use-media";
+import { useMedia, WIDE } from "@/hooks/use-media";
 import { useNow } from "@/hooks/use-now";
 import { useResource } from "@/hooks/use-resource";
 import { useShortcuts } from "@/hooks/use-shortcuts";
 import { ago, compareText, formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { send } from "../api";
 import { useHints } from "../frame/frame";
 import type { Hint } from "../frame/key-bar";
 import { Action } from "../kit/action";
 import { Count } from "../kit/count";
 import { type Column, DataTable } from "../kit/data-table";
+import { DetailsSheet } from "../kit/details-sheet";
 import { FilterPrompt } from "../kit/filter-prompt";
 import { Panel } from "../kit/panel";
 import { say } from "../message";
@@ -80,7 +79,7 @@ function deviceColumns(now: number): Column<Device>[] {
       ),
       header: "dokky",
       id: "version",
-      wide: true,
+      wide: "xl",
       width: "84px",
     },
     {
@@ -96,7 +95,7 @@ function deviceColumns(now: number): Column<Device>[] {
       header: "Drives",
       id: "drives",
       sort: (a, b) => b.drives.length - a.drives.length,
-      wide: true,
+      wide: "xl",
       width: "64px",
     },
     {
@@ -120,12 +119,14 @@ function deviceColumns(now: number): Column<Device>[] {
     {
       align: "end",
       cell: (device) => (
-        <span className="text-faint">{formatDate(device.createdAt)}</span>
+        <span className="text-faint">
+          {formatDate(device.createdAt, "short")}
+        </span>
       ),
       header: "Added",
       id: "added",
-      wide: true,
-      width: "140px",
+      wide: "xl",
+      width: "100px",
     },
   ];
 }
@@ -187,7 +188,6 @@ export function DevicesPage() {
   const params = useSearchParams();
   const devices = useResource<DevicesData>("/api/dash/devices");
   const wide = useMedia(WIDE, true);
-  const phone = useMedia(PHONE);
   const now = useNow(60_000);
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
   const list = useMemo(
@@ -378,7 +378,7 @@ export function DevicesPage() {
   const inspector = active && (
     <Panel
       aside={active.version ? `dokky ${active.version}` : undefined}
-      className="flex min-h-0 flex-col"
+      className="flex min-h-0 flex-1 flex-col"
       delay={110}
       icon={MonitorSmartphoneIcon}
       title={
@@ -410,24 +410,13 @@ export function DevicesPage() {
       </Panel>
       {wide && inspector}
       {!wide && (
-        <Sheet onOpenChange={setSheetOpen} open={sheetOpen && Boolean(active)}>
-          <SheetContent
-            className={cn(
-              "bg-background gap-0 p-3",
-              phone
-                ? "max-h-[88dvh] rounded-t-2xl pt-7"
-                : "w-[min(420px,100vw)] pt-6 sm:max-w-[420px]"
-            )}
-            showCloseButton={false}
-            side={phone ? "bottom" : "right"}
-          >
-            {phone && <i aria-hidden className="sheet-grab" />}
-            <SheetTitle className="sr-only">
-              {active?.name ?? "Device details"}
-            </SheetTitle>
-            {inspector}
-          </SheetContent>
-        </Sheet>
+        <DetailsSheet
+          onOpenChange={setSheetOpen}
+          open={sheetOpen && Boolean(active)}
+          title={active?.name ?? "Device details"}
+        >
+          {inspector}
+        </DetailsSheet>
       )}
       <RemoveDeviceDialog
         accounts={devices.data?.accounts ?? []}

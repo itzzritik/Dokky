@@ -29,7 +29,8 @@ export interface Column<T> {
   header: string;
   id: string;
   sort?: (a: T, b: T) => number;
-  wide?: boolean;
+  // true shows from 768px, "xl" only from 1280px where the table has room for it
+  wide?: boolean | "xl";
   width: string;
 }
 
@@ -44,7 +45,6 @@ interface DataTableProps<T> {
   defaultSort?: Sort;
   empty?: ReactNode;
   getId: (row: T) => string;
-  group?: (row: T) => ReactNode;
   keyboard?: boolean;
   label: string;
   menu?: (id: string) => ReactNode;
@@ -64,11 +64,12 @@ const PRINT_STEP = 38;
 const PRINT_SPAN = 600;
 const PRINT_MS = 1900;
 const GRID =
-  "grid items-center gap-3.5 pr-4 pl-[18px] [grid-template-columns:var(--cols-narrow)] md:[grid-template-columns:var(--cols)]";
+  "grid items-center gap-3.5 pr-4 pl-[18px] [grid-template-columns:var(--cols-narrow)] md:[grid-template-columns:var(--cols-mid)] xl:[grid-template-columns:var(--cols)]";
 const cellClass = <T,>(column: Column<T>) =>
   cn(
     "min-w-0 truncate",
-    column.wide && "hidden md:block",
+    column.wide === true && "hidden md:block",
+    column.wide === "xl" && "hidden xl:block",
     column.align === "end" && "text-right"
   );
 
@@ -78,7 +79,6 @@ export function DataTable<T>({
   defaultSort,
   empty,
   getId,
-  group,
   keyboard = true,
   label,
   menu,
@@ -154,13 +154,9 @@ export function DataTable<T>({
     replay(band.current, "stretch");
   }, [activeIndex, virtualizer]);
 
-  // Group header rows are skipped by the keyboard.
   const move = (delta: number) => {
-    let index = activeIndex;
-    do {
-      index += delta;
-    } while (index >= 0 && index < ordered.length && group?.(ordered[index]));
-    const next = ordered[index];
+    const next =
+      ordered[Math.min(ordered.length - 1, Math.max(0, activeIndex + delta))];
     if (next) {
       onActiveChange?.(getId(next));
     }
@@ -209,11 +205,14 @@ export function DataTable<T>({
 
   const checks =
     Boolean(selected) && (selectMode === "always" || (selected?.size ?? 0) > 0);
-  const template = (wide: boolean) =>
+  const template = (tier: 0 | 1 | 2) =>
     [
       checks ? "16px" : "",
       ...columns
-        .filter((column) => wide || !column.wide)
+        .filter(
+          (column) =>
+            !column.wide || (column.wide === true ? tier > 0 : tier > 1)
+        )
         .map((column) => column.width),
     ]
       .join(" ")
@@ -228,8 +227,9 @@ export function DataTable<T>({
     )
   );
   const style = {
-    "--cols": template(true),
-    "--cols-narrow": template(false),
+    "--cols": template(2),
+    "--cols-mid": template(1),
+    "--cols-narrow": template(0),
     "--step": `${Math.min(PRINT_STEP, PRINT_SPAN / printed)}ms`,
   } as CSSProperties;
   const allSelected =
@@ -307,29 +307,6 @@ export function DataTable<T>({
             return null;
           }
           const id = getId(row);
-          const heading = group?.(row);
-          if (heading) {
-            return (
-              <div
-                className={cn(GRID, "dt-row dt-group")}
-                data-print={printing ? "" : undefined}
-                key={item.key}
-                onPointerEnter={() => setHover(-1)}
-                role="row"
-                style={
-                  {
-                    "--i": Math.min(item.index, printed),
-                    height: rowHeight,
-                    transform: `translateY(${item.start}px)`,
-                  } as CSSProperties
-                }
-              >
-                <div className="col-span-full min-w-0 truncate" role="gridcell">
-                  {heading}
-                </div>
-              </div>
-            );
-          }
           return (
             <div
               aria-selected={selected ? selected.has(id) : id === activeId}

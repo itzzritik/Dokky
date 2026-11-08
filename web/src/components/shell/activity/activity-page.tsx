@@ -9,9 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PHONE, useMedia, WIDE } from "@/hooks/use-media";
+import { useMedia, WIDE } from "@/hooks/use-media";
 import { useNow } from "@/hooks/use-now";
 import { useResource } from "@/hooks/use-resource";
 import { useShortcuts } from "@/hooks/use-shortcuts";
@@ -21,6 +20,7 @@ import { useHints } from "../frame/frame";
 import type { Hint } from "../frame/key-bar";
 import { Action } from "../kit/action";
 import { type Column, DataTable } from "../kit/data-table";
+import { DetailsSheet } from "../kit/details-sheet";
 import { FilterPrompt } from "../kit/filter-prompt";
 import { Panel } from "../kit/panel";
 import { say } from "../message";
@@ -57,6 +57,7 @@ function entryColumns(now: number): Column<Entry>[] {
       ),
       header: "When",
       id: "at",
+      wide: true,
       width: "120px",
     },
     {
@@ -66,7 +67,7 @@ function entryColumns(now: number): Column<Entry>[] {
             {summary(entry.kind, entry.name)}
           </span>
           <small className="text-muted-foreground block font-sans text-[12px] md:hidden">
-            {device(entry)}
+            {device(entry)}, {ago(entry.at, now)}
           </small>
         </>
       ),
@@ -87,7 +88,7 @@ function entryColumns(now: number): Column<Entry>[] {
       cell: (entry) => <span className="text-faint">{details(entry)}</span>,
       header: "Details",
       id: "details",
-      wide: true,
+      wide: "xl",
       width: "minmax(0,1fr)",
     },
   ];
@@ -96,7 +97,6 @@ function entryColumns(now: number): Column<Entry>[] {
 export function ActivityPage() {
   const first = useResource<Page>("/api/dash/activity");
   const wide = useMedia(WIDE, true);
-  const phone = useMedia(PHONE);
   const now = useNow(60_000);
   const columns = useMemo(() => entryColumns(now), [now]);
   const [older, setOlder] = useState<Page>({ items: [], more: true });
@@ -248,7 +248,7 @@ export function ActivityPage() {
 
   const inspector = active && (
     <Panel
-      className="flex min-h-0 flex-col"
+      className="flex min-h-0 flex-1 flex-col"
       delay={110}
       icon={ActivityIcon}
       title="Details"
@@ -295,22 +295,13 @@ export function ActivityPage() {
       </Panel>
       {wide && inspector}
       {!wide && (
-        <Sheet onOpenChange={setSheetOpen} open={sheetOpen && Boolean(active)}>
-          <SheetContent
-            className={cn(
-              "bg-background gap-0 p-3",
-              phone
-                ? "max-h-[88dvh] rounded-t-2xl pt-7"
-                : "w-[min(420px,100vw)] pt-6 sm:max-w-[420px]"
-            )}
-            showCloseButton={false}
-            side={phone ? "bottom" : "right"}
-          >
-            {phone && <i aria-hidden className="sheet-grab" />}
-            <SheetTitle className="sr-only">Activity details</SheetTitle>
-            {inspector}
-          </SheetContent>
-        </Sheet>
+        <DetailsSheet
+          onOpenChange={setSheetOpen}
+          open={sheetOpen && Boolean(active)}
+          title={"Activity details"}
+        >
+          {inspector}
+        </DetailsSheet>
       )}
     </div>
   );
