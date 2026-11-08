@@ -1,7 +1,7 @@
 {
   "name": "dokky",
   "version": "0.0.2",
-  "description": "Mount your cloud and NAS storage as local folders",
+  "description": "Mount your storage as native drives on macOS, Linux and Windows",
   "license": "MIT",
   "homepage": "https://dokky.ritik.me",
   "repository": {

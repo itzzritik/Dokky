@@ -127,3 +127,117 @@
     @apply font-sans;
   }
 }
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scan {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(260px);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(6%, -4%, 0) scale(1.15);
+  }
+}
+
+@keyframes tide {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-slide-up {
+  opacity: 0;
+  animation: slide-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-scan {
+  animation: scan 5s linear infinite;
+}
+
+.anim-delay-100 {
+  animation-delay: 100ms;
+}
+
+.anim-delay-200 {
+  animation-delay: 200ms;
+}
+
+.anim-delay-300 {
+  animation-delay: 300ms;
+}
+
+/* only the landing and docs are dark; other pages keep their theme */
+:root:has([data-landing]) {
+  color-scheme: dark;
+  background: #000;
+}
+
+[data-landing] {
+  --font-mono: var(--font-geist-mono);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[data-landing] :focus-visible {
+  outline: 2px solid #22b8cc;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-up {
+    opacity: 1;
+    animation: none;
+  }
+
+  .animate-scan,
+  [data-landing] .animate-pulse,
+  [data-water] * {
+    animation: none !important;
+  }
+}
+
+@keyframes dk-rise {
+  0% {
+    transform: translateY(10px);
+  }
+  45% {
+    transform: translateY(0.6px);
+  }
+  70% {
+    transform: translateY(4.2px);
+  }
+  85% {
+    transform: translateY(2.6px);
+  }
+  100% {
+    transform: translateY(3.2px);
+  }
+}
+
+@keyframes dk-wave {
+  to {
+    transform: translateX(-23px);
+  }
+}

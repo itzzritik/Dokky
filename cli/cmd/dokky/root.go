@@ -19,7 +19,7 @@ import (
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "dokky",
-		Short:   "Mount your cloud storage as folders",
+		Short:   "Mount your storage as native drives",
 		Version: buildinfo.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			switch cmd.Name() {

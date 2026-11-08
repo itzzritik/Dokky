@@ -169,7 +169,7 @@ func driverCheck(by map[string]doctor.Check) tui.Check {
 			d = doctor.Check{Detail: err.Error(), Fix: "Install it with: winget install -e --id WinFsp.WinFsp"}
 		}
 	}
-	c := tui.Check{Name: "File system driver", Status: "Installed", Detail: "Lets your drives show up as folders.", Tone: tui.Good, Facts: [][2]string{{"Driver", name}}}
+	c := tui.Check{Name: "File system driver", Status: "Installed", Detail: "Lets your drives show up on this computer.", Tone: tui.Good, Facts: [][2]string{{"Driver", name}}}
 	if !d.OK {
 		c.Status, c.Tone, c.Fix = "Missing", tui.Bad, upper(d.Fix)
 		c.Facts = append(c.Facts, [2]string{"Error", d.Detail})

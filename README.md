@@ -1,6 +1,6 @@
 # dokky
 
-dokky mounts your cloud storage as normal folders on your computer. Open them in Finder, Explorer or any app, and copy files in and out like on any drive. Uploads happen in the background. It works with Google Drive, SMB, WebDAV, SFTP, OneDrive, Dropbox, Mega and many more. You can sync your settings across devices with a free account, or use it with no account at all.
+dokky mounts your cloud storage as native drives on your computer. Open them in Finder, Explorer or any app, and copy files in and out like on any other drive. Uploads happen in the background. It works with Google Drive, SMB, WebDAV, SFTP, OneDrive, Dropbox, Mega and many more. You can sync your settings across devices with a free account, or use it with no account at all.
 
 ## Install
 

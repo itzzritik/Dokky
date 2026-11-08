@@ -1,0 +1,48 @@
+<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <title>dokky</title>
+  <rect fill="#000" height="16" width="16" />
+  <g fill="#22b8cc">
+    <rect height="1" width="1" x="10" y="4" />
+    <rect height="1" width="1" x="11" y="4" />
+    <rect height="1" width="1" x="10" y="5" />
+    <rect height="1" width="1" x="11" y="5" />
+    <rect height="1" width="1" x="5" y="6" />
+    <rect height="1" width="1" x="6" y="6" />
+    <rect height="1" width="1" x="7" y="6" />
+    <rect height="1" width="1" x="8" y="6" />
+    <rect height="1" width="1" x="9" y="6" />
+    <rect height="1" width="1" x="10" y="6" />
+    <rect height="1" width="1" x="11" y="6" />
+    <rect height="1" width="1" x="4" y="7" />
+    <rect height="1" width="1" x="5" y="7" />
+    <rect height="1" width="1" x="6" y="7" />
+    <rect height="1" width="1" x="7" y="7" />
+    <rect height="1" width="1" x="8" y="7" />
+    <rect height="1" width="1" x="9" y="7" />
+    <rect height="1" width="1" x="10" y="7" />
+    <rect height="1" width="1" x="11" y="7" />
+    <rect height="1" width="1" x="4" y="8" />
+    <rect height="1" width="1" x="5" y="8" />
+    <rect height="1" width="1" x="10" y="8" />
+    <rect height="1" width="1" x="11" y="8" />
+    <rect height="1" width="1" x="4" y="9" />
+    <rect height="1" width="1" x="5" y="9" />
+    <rect height="1" width="1" x="10" y="9" />
+    <rect height="1" width="1" x="11" y="9" />
+    <rect height="1" width="1" x="4" y="10" />
+    <rect height="1" width="1" x="5" y="10" />
+    <rect height="1" width="1" x="6" y="10" />
+    <rect height="1" width="1" x="7" y="10" />
+    <rect height="1" width="1" x="8" y="10" />
+    <rect height="1" width="1" x="9" y="10" />
+    <rect height="1" width="1" x="10" y="10" />
+    <rect height="1" width="1" x="11" y="10" />
+    <rect height="1" width="1" x="5" y="11" />
+    <rect height="1" width="1" x="6" y="11" />
+    <rect height="1" width="1" x="7" y="11" />
+    <rect height="1" width="1" x="8" y="11" />
+    <rect height="1" width="1" x="9" y="11" />
+    <rect height="1" width="1" x="10" y="11" />
+    <rect height="1" width="1" x="11" y="11" />
+  </g>
+</svg>
