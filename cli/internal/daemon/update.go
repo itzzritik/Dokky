@@ -38,9 +38,8 @@ var (
 	releaseBase = "https://github.com/itzzritik/dokky/releases/download/"
 	executable  = os.Executable
 	runNPM      = func(ctx context.Context, state string, args ...string) error {
-		// npm 11.19+ skips install scripts it wasn't told to allow, and dokky's postinstall is what puts the new binary in place;
 		// prefer-online skips npm's 5 minute metadata cache, which can still say a just-published version doesn't exist
-		cmd, err := NPM(ctx, state, append(args, "--allow-scripts=dokky", "--prefer-online", "--no-fund", "--no-audit", "--loglevel=error")...)
+		cmd, err := NPM(ctx, state, append(args, "--prefer-online", "--no-fund", "--no-audit", "--loglevel=error")...)
 		if err != nil {
 			return err
 		}
@@ -130,7 +129,6 @@ func Latest(ctx context.Context, hc *http.Client, version, key string) (Release,
 	return r, nil
 }
 
-// npm installs the package; its postinstall downloads that version's binary and writes the version file
 func Install(ctx context.Context, r Release, p Paths) error {
 	// the CLI that asked may go away; a half-done global install would break npm's copy
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), npmTimeout)
@@ -141,13 +139,14 @@ func Install(ctx context.Context, r Release, p Paths) error {
 	for _, name := range []string{"version", "pin"} {
 		_ = os.Remove(filepath.Join(p.State, name))
 	}
-	err := runNPM(ctx, p.State, "install", "-g", "dokky@"+r.Version)
-	if err == nil && installedVersion(p.State) != r.Version {
-		err = fmt.Errorf("npm installed dokky %s but its binary did not change", r.Version)
-	}
+	err := place(ctx, r, p)
 	if err == nil {
 		if err = runSelftest(ctx, p.Bin, p.State); err != nil && valid(prev) {
-			if rerr := runNPM(ctx, p.State, "install", "-g", "dokky@"+prev); rerr != nil {
+			back, rerr := Latest(ctx, http.DefaultClient, prev, runtime.GOOS+"-"+runtime.GOARCH)
+			if rerr == nil {
+				rerr = place(ctx, back, p)
+			}
+			if rerr != nil {
 				err = fmt.Errorf("%w; going back to %s also failed: %v", err, prev, rerr)
 			}
 		}
@@ -161,6 +160,61 @@ func Install(ctx context.Context, r Release, p Paths) error {
 		}
 	}
 	return err
+}
+
+// npm keeps its copy in step; dokky has no install script for npm to block, so the binary is fetched here
+func place(ctx context.Context, r Release, p Paths) error {
+	if err := runNPM(ctx, p.State, "install", "-g", "dokky@"+r.Version); err != nil {
+		return err
+	}
+	res, err := get(ctx, http.DefaultClient, r.URL)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	f, err := os.CreateTemp(filepath.Dir(p.Bin), "dokky-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	h := sha256.New()
+	_, err = io.Copy(io.MultiWriter(f, h), res.Body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && hex.EncodeToString(h.Sum(nil)) != r.SHA256 {
+		err = fmt.Errorf("sha256 mismatch for %s", r.URL)
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), 0o755)
+	}
+	if err == nil {
+		err = swapBinary(f.Name(), p.Bin, p.State)
+	}
+	if err != nil {
+		return err
+	}
+	return writeAtomic(p.State, "version", r.Version)
+}
+
+// Windows can rename a running exe but not replace it, and one moved aside earlier may still run
+func swapBinary(tmp, bin, state string) error {
+	if runtime.GOOS != "windows" {
+		return os.Rename(tmp, bin)
+	}
+	olds, _ := filepath.Glob(filepath.Join(state, "dokky*.old"))
+	for _, f := range olds {
+		_ = os.Remove(f)
+	}
+	old := filepath.Join(state, fmt.Sprintf("dokky.%d.old", time.Now().UnixNano()))
+	if err := os.Rename(bin, old); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(tmp, bin); err != nil {
+		_ = os.Rename(old, bin)
+		return err
+	}
+	return nil
 }
 
 func get(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {

@@ -41,19 +41,19 @@ function installedVersion(dir) {
   }
 }
 
-// exact: npm just installed this version, so the binary follows it, older or pinned or not
-async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch, rename = fs.renameSync, exact = false }) {
+async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetchImpl = fetch, rename = fs.renameSync, say = () => {} }) {
   const bin = binaryPath(home, platform);
   const dir = stateDir({ env, home, platform });
   const have = installedVersion(dir);
   const pinned = fs.existsSync(path.join(dir, "pin"));
-  const keep = exact ? have === pkg.version : pinned || (have && cmp(have, pkg.version) >= 0);
+  const keep = pinned || (have && cmp(have, pkg.version) >= 0);
   if (fs.existsSync(bin) && keep) return bin;
 
   const key = platformKey(platform, arch);
   const entry = key && pkg.dokky && pkg.dokky.binaries && pkg.dokky.binaries[key];
   if (!entry) throw new Error(`dokky ${pkg.version} has no binary for ${platform}/${arch}`);
 
+  say(`dokky: downloading ${pkg.version}`);
   const res = await fetchImpl(entry.url);
   if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
   const data = Buffer.from(await res.arrayBuffer());
