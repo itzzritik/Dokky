@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { signOutOfDokky } from "@/app/actions";
 
@@ -73,12 +72,13 @@ export function UserMenu({
           className="absolute top-11 right-0 w-44 border border-[#27272a] bg-[#050505] py-1 shadow-2xl"
           id="user-menu"
         >
-          <Link
+          {/* a full load lets the dashboard's theme apply before the first paint */}
+          <a
             className="block px-4 py-2.5 font-mono text-[11px] tracking-widest text-[#a1a1aa] uppercase transition-colors hover:bg-white/5 hover:text-white"
-            href="/devices"
+            href="/dashboard"
           >
-            Devices
-          </Link>
+            Dashboard
+          </a>
           <form action={signOutOfDokky}>
             <button
               className="block w-full px-4 py-2.5 text-left font-mono text-[11px] tracking-widest text-[#a1a1aa] uppercase transition-colors hover:bg-white/5 hover:text-[#f2665a]"
