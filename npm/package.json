@@ -12,7 +12,6 @@
     "dokky": "bin/dokky.js"
   },
   "scripts": {
-    "postinstall": "node install.js",
     "test": "node --test"
   },
   "dokky": {
@@ -45,7 +44,6 @@
   },
   "files": [
     "bin",
-    "lib",
-    "install.js"
+    "lib"
   ]
 }

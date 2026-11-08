@@ -10,7 +10,7 @@ const { resolveBinary, recordInstall, stateDir } = require("../lib/binary");
   const pkg = require("../package.json");
   const home = os.homedir();
   const platform = process.platform;
-  const bin = await resolveBinary({ pkg, home, platform, arch: process.arch });
+  const bin = await resolveBinary({ pkg, home, platform, arch: process.arch, say: console.error });
   try {
     recordInstall(stateDir({ env: process.env, home, platform }), pkgDir);
   } catch {}

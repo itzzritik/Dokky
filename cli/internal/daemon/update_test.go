@@ -45,11 +45,14 @@ func installed(t *testing.T, v string) Paths {
 
 type fakeRegistry struct{ hits atomic.Int32 }
 
-// serves every version, and a fake npm whose install writes the "binary" and version file like the postinstall; fail makes npm fail
+// serves every version and its "binary", and a fake npm that only installs the package; fail makes npm fail
 func newRegistry(t *testing.T, latest string, fail bool) *fakeRegistry {
 	t.Helper()
 	r := &fakeRegistry{}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /releases/download/{tag}/{file}", func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte("dokky " + strings.TrimPrefix(req.PathValue("tag"), "v")))
+	})
 	mux.HandleFunc("GET /dokky/{v}", func(w http.ResponseWriter, req *http.Request) {
 		r.hits.Add(1)
 		v := req.PathValue("v")
@@ -65,15 +68,11 @@ func newRegistry(t *testing.T, latest string, fail bool) *fakeRegistry {
 	t.Cleanup(srv.Close)
 	oldRegistry, oldBase, oldNPM := registry, releaseBase, runNPM
 	registry, releaseBase = srv.URL, srv.URL+"/releases/download/"
-	runNPM = func(_ context.Context, state string, args ...string) error {
+	runNPM = func(context.Context, string, ...string) error {
 		if fail {
 			return errors.New("npm ERR! code EACCES")
 		}
-		v := strings.TrimPrefix(args[len(args)-1], "dokky@")
-		if err := os.WriteFile(filepath.Join(filepath.Dir(state), "bin", "dokky"), []byte("dokky "+v), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(filepath.Join(state, "version"), []byte(v), 0o644)
+		return nil
 	}
 	t.Cleanup(func() { registry, releaseBase, runNPM = oldRegistry, oldBase, oldNPM })
 	return r
@@ -118,6 +117,16 @@ func TestInstallSelftestFailureGoesBack(t *testing.T) {
 	fakeSelftest(t, errors.New("engine did not start"))
 	p := installed(t, "0.1.0")
 	require.ErrorContains(t, Install(t.Context(), latestRelease(t), p), "engine did not start")
+	requireOldBinaryKept(t, p)
+}
+
+func TestInstallRejectsABinaryWithTheWrongHash(t *testing.T) {
+	newRegistry(t, "0.2.0", false)
+	fakeSelftest(t, nil)
+	p := installed(t, "0.1.0")
+	r := latestRelease(t)
+	r.SHA256 = strings.Repeat("00", sha256.Size)
+	require.ErrorContains(t, Install(t.Context(), r, p), "sha256 mismatch")
 	requireOldBinaryKept(t, p)
 }
 

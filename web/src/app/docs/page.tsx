@@ -203,13 +203,6 @@ export default function DocsPage() {
               time you run it, it downloads the app for your computer.
             </p>
             <CodeBlock title="macOS, Linux, Windows">npm i -g dokky</CodeBlock>
-            <p>
-              Newer npm versions skip install steps by default. To download the
-              app during install instead of on first run, allow it:
-            </p>
-            <CodeBlock title="Download during install">
-              npm i -g dokky --allow-scripts=dokky
-            </CodeBlock>
             <Note title="What each system needs">
               <p className="mb-3">
                 <span className="text-white">macOS:</span> macOS 13 or newer,
