@@ -43,6 +43,8 @@ type RunChecks struct{}
 // the file system driver is missing; the app offers to install it
 type NeedDriver struct{}
 
+type OfferUpdate struct{}
+
 // quit and open dokky again in this terminal, onto whatever was just installed
 type Reopen struct{}
 

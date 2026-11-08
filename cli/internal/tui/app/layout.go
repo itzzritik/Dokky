@@ -104,7 +104,7 @@ var moreKey = core.Action{Key: "?", Label: "more"}
 
 // actions on every tab, in the footer's right side and the menu
 func (a *App) globals() []core.Action {
-	if a.updateReady() {
+	if a.st.UpdateReady() {
 		return []core.Action{{Key: "u", Label: "update", Accent: true}, {Key: "q", Label: "quit"}}
 	}
 	return []core.Action{{Key: "q", Label: "quit"}}

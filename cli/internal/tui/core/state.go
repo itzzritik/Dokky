@@ -57,6 +57,8 @@ type State struct {
 	Latest    string // a newer dokky to update to
 }
 
+func (s *State) UpdateReady() bool { return s.Latest != "" && s.Updating == "" }
+
 func (s *State) Drive(id string) (api.Drive, bool) {
 	for _, d := range s.Snap.Drives {
 		if d.ID == id {

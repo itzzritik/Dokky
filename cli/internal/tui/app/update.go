@@ -54,7 +54,7 @@ func (a *App) onFound(m found) tea.Cmd {
 		a.st.Updating = ""
 		return nil
 	}
-	a.st.Updating = "Updating to " + m.version
+	a.st.Updating, a.st.Latest = "Updating to "+m.version, m.version
 	c := a.st.C
 	return func() tea.Msg {
 		v, err := c.InstallUpdate(context.Background())
@@ -62,13 +62,14 @@ func (a *App) onFound(m found) tea.Cmd {
 	}
 }
 
+// a failed install keeps Latest, so Settings and the footer still offer it
 func (a *App) onInstalled(m installed) tea.Cmd {
-	switch {
-	case m.err != nil:
-		a.st.Updating = ""
+	a.st.Updating = ""
+	if m.err != nil {
 		return nil
-	case m.version == "" || m.version == buildinfo.Version:
-		a.st.Updating = ""
+	}
+	a.st.Latest = ""
+	if m.version == "" || m.version == buildinfo.Version {
 		return core.Say("dokky is up to date")
 	}
 	a.pendingRestart = m.version
@@ -103,12 +104,10 @@ func (a *App) onRestartNow() tea.Cmd {
 	}
 }
 
-func (a *App) updateReady() bool { return a.st.Latest != "" && !a.st.Snap.Settings.AutoUpdate }
-
 // once a session, under any open window
 func (a *App) onLatest(m latest) {
 	a.st.Latest = m.version
-	if a.updateReady() && a.gate == nil {
+	if a.st.UpdateReady() && a.gate == nil {
 		a.windows = append([]core.Screen{&update{btn: 1}}, a.windows...)
 	}
 }

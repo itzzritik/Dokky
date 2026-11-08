@@ -117,14 +117,18 @@ const runningExe = (bin) => (from, to) => {
   fs.renameSync(from, to);
 };
 
-test("on Windows the running exe moves aside to dokky.old", async () => {
+const olds = (dir) => fs.readdirSync(dir).filter((f) => f.endsWith(".old"));
+
+test("on Windows the running exe moves aside under a fresh name", async () => {
   const home = tmp();
   const bin = binaryPath(home, "win32");
   const dir = stateDir({ env: {}, home, platform: "win32" });
   await ensureBinary(winArgs(home, { pkg: winPkg("y", "1.0.0"), fetchImpl: fakeFetch("y"), rename: runningExe(bin) }));
+  fs.writeFileSync(path.join(dir, "dokky.old"), "w");
   await ensureBinary(winArgs(home, { pkg: winPkg("z", "1.1.0"), fetchImpl: fakeFetch("z"), rename: runningExe(bin) }));
   assert.equal(fs.readFileSync(bin, "utf8"), "z");
-  assert.equal(fs.readFileSync(path.join(dir, "dokky.old"), "utf8"), "y");
+  assert.equal(olds(dir).length, 1, "a free leftover is removed");
+  assert.equal(fs.readFileSync(path.join(dir, olds(dir)[0]), "utf8"), "y");
   assert.equal(fs.readFileSync(path.join(dir, "version"), "utf8"), "1.1.0");
   const calls = [];
   await ensureBinary(winArgs(home, { pkg: winPkg("z", "1.1.0"), fetchImpl: fakeFetch("z", calls), rename: runningExe(bin) }));
@@ -137,7 +141,7 @@ test("on Windows a failed move puts the old exe back", async () => {
   const dir = stateDir({ env: {}, home, platform: "win32" });
   await ensureBinary(winArgs(home, { pkg: winPkg("y", "1.0.0"), fetchImpl: fakeFetch("y") }));
   const failNew = (from, to) => {
-    if (to === bin && from !== path.join(dir, "dokky.old")) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    if (to === bin && !from.endsWith(".old")) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
     fs.renameSync(from, to);
   };
   await assert.rejects(ensureBinary(winArgs(home, { pkg: winPkg("z", "1.1.0"), fetchImpl: fakeFetch("z"), rename: failNew })), /EBUSY/);
