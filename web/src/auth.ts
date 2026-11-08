@@ -12,6 +12,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientSecret: process.env.GITHUB_CLIENT_SECRET,
     }),
   ],
+  pages: { signIn: "/signin", error: "/signin" },
   session: { strategy: "database" },
   events: {
     // removing a lost or stolen device needs a sign-in from the last few minutes

@@ -41,6 +41,7 @@ export interface Entry {
   kind: string;
   name: string;
   ok: boolean;
+  open?: boolean;
   reason: string;
   target: string;
 }

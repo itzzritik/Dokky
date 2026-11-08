@@ -161,6 +161,7 @@ export async function listEvents(
     name: d.name,
     reason: d.reason,
     ok: d.ok,
+    open: d.open === true,
     at: d.at.toISOString(),
   }));
 }

@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { ScrollReveal } from "@/components/landing/client";
 import { DocsTOC, type DocsTOCGroup } from "@/components/landing/docs-toc";
 import { Footer } from "@/components/landing/footer";
-import { Nav } from "@/components/landing/nav";
 
 export const metadata: Metadata = {
   title: "Docs | dokky",
@@ -176,7 +175,6 @@ export default function DocsPage() {
         }}
       />
       <div className="pointer-events-none fixed inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-black to-transparent" />
-      <Nav />
 
       <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-col gap-20 px-6 pt-32 pb-32 lg:flex-row lg:px-16">
         <DocsTOC groups={tocGroups} />
