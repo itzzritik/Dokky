@@ -29,11 +29,12 @@ import { say } from "../message";
 import { drain } from "../motion";
 import { signInFresh } from "../session";
 import { type Device, type DevicesData, isActive } from "../types";
-import { system } from "./labels";
+import { system, systemLabel } from "./labels";
 import { RemoveDeviceDialog } from "./remove-device-dialog";
 
 const SKELETON_ROWS = [0, 1, 2, 3];
 const NAME_SORT = { desc: false, id: "name" };
+const compareVersion = new Intl.Collator(undefined, { numeric: true }).compare;
 const deviceKey = (device: Device) => device.id;
 const seenAt = (device: Device) => Date.parse(device.lastSeenAt) || 0;
 const seen = (device: Device, now: number) =>
@@ -59,6 +60,29 @@ function deviceColumns(now: number): Column<Device>[] {
       id: "name",
       sort: (a, b) => compareText(a.name, b.name),
       width: "minmax(0,1fr)",
+    },
+    {
+      cell: (device) => (
+        <span className="text-muted-foreground">{systemLabel(device)}</span>
+      ),
+      header: "OS",
+      id: "os",
+      sort: (a, b) => compareText(systemLabel(a), systemLabel(b)),
+      wide: true,
+      width: "140px",
+    },
+    {
+      cell: (device) =>
+        device.version ? (
+          <span className="text-muted-foreground">{device.version}</span>
+        ) : (
+          <span className="text-faint">Unknown</span>
+        ),
+      header: "dokky",
+      id: "version",
+      sort: (a, b) => compareVersion(b.version, a.version),
+      wide: true,
+      width: "88px",
     },
     {
       cell: (device) => (
