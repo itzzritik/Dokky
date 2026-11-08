@@ -23,8 +23,8 @@ export const summary = (kind: string, name: string) =>
   SAY[kind]?.(name) ?? name;
 
 export const tone = (kind: string, ok: boolean, open?: boolean) => {
-  if (!ok) {
-    return "text-destructive";
+  if (kind === "signin.expired") {
+    return open ? "text-warning" : "";
   }
-  return kind === "signin.expired" && open ? "text-warning" : "";
+  return ok ? "" : "text-destructive";
 };
