@@ -41,6 +41,7 @@ type App struct {
 	mark           *brand.Mark // the splash's logo, new each time the splash shows so it fills again
 	everConnected  bool
 	autoStarted    bool
+	relaunched     bool
 	st             *core.State
 	deps           core.Deps
 	tabs           []core.Screen
@@ -118,7 +119,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case started:
 		a.starting = false
 		if m.err != nil {
-			return core.Fail(m.err)
+			return tea.Batch(core.Fail(m.err), dial())
 		}
 		return dial()
 	case event:

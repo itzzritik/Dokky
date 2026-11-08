@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"runtime"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,10 +13,11 @@ import (
 )
 
 const (
-	redialMin = 250 * time.Millisecond
-	redialMax = 8 * time.Second
-	quietFor  = 30 * time.Second
-	graceFor  = 30 * time.Second // a daemon restart, e.g. onto a new version, is not "isn't running"
+	redialMin     = 250 * time.Millisecond
+	redialMax     = 8 * time.Second
+	quietFor      = 30 * time.Second
+	graceFor      = 30 * time.Second // a daemon restart, e.g. onto a new version, is not "isn't running"
+	relaunchAfter = 5 * time.Second
 )
 
 type connected struct {
@@ -90,7 +92,7 @@ func (a *App) onConnected(m connected) tea.Cmd {
 	}
 	a.st.C, a.events, a.stop = m.c, m.events, m.stop
 	a.st.Epoch++
-	a.st.Connected, a.starting, a.dialing, a.everConnected = true, false, false, true
+	a.st.Connected, a.starting, a.dialing, a.everConnected, a.relaunched = true, false, false, true, false
 	a.veil, a.failed, a.backoff, a.heard, a.lostAt = false, false, 0, a.st.Now, time.Time{}
 	a.st.Act, a.st.Catalog = m.act, m.cat
 	var kick tea.Cmd
@@ -116,6 +118,12 @@ func (a *App) onLost(m lost) tea.Cmd {
 	// dokky opens at once; when its service isn't up yet, the TUI starts it once on its own
 	if !a.everConnected && !a.autoStarted && notRunning(m.err) {
 		a.autoStarted = true
+		a.st.Connected, a.veil = false, false
+		return a.startDaemon()
+	}
+	// a Windows daemon older than this one leaves nothing behind to start its task again
+	if runtime.GOOS == "windows" && !a.relaunched && !a.lostAt.IsZero() && a.st.Now.Sub(a.lostAt) >= relaunchAfter && notRunning(m.err) {
+		a.relaunched = true
 		a.st.Connected, a.veil = false, false
 		return a.startDaemon()
 	}

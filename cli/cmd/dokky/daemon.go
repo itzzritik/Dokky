@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -30,19 +31,50 @@ const (
 var errNotRunning = errors.New("dokky daemon is not running, start it with: dokky daemon")
 
 func newDaemonCmd() *cobra.Command {
-	return &cobra.Command{
+	var after int
+	cmd := &cobra.Command{
 		Use:          "daemon",
 		Short:        "Run the dokky daemon in the foreground",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if after > 0 {
+				return relaunch(after)
+			}
 			err := daemon.Run(cmd.Context(), daemon.DefaultPaths())
 			if errors.Is(err, daemon.ErrRestart) {
+				relaunchWhenGone()
 				os.Exit(restartExitCode)
 			}
 			return err
 		},
 	}
+	cmd.Flags().IntVar(&after, "relaunch-after", 0, "")
+	_ = cmd.Flags().MarkHidden("relaunch-after")
+	return cmd
+}
+
+// launchd and systemd restart the daemon by themselves, but Task Scheduler leaves a task that exited stopped
+func relaunchWhenGone() {
+	if runtime.GOOS != "windows" || !daemon.ServiceInstalled() {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, "daemon", "--relaunch-after", strconv.Itoa(os.Getpid()))
+	detach(cmd)
+	if cmd.Start() == nil {
+		_ = cmd.Process.Release()
+	}
+}
+
+func relaunch(pid int) error {
+	if p, err := os.FindProcess(pid); err == nil {
+		_, _ = p.Wait()
+	}
+	return startDaemon(io.Discard)
 }
 
 func call(method string, params, result any) error {
@@ -159,10 +191,15 @@ func startDaemon(note io.Writer) error {
 	if err := daemon.StartService(); err != nil {
 		return fmt.Errorf("could not start the dokky service: %w", err)
 	}
-	noted := false
+	noted, ran := false, time.Now()
 	for start := time.Now(); time.Since(start) < startWait; time.Sleep(250 * time.Millisecond) {
 		if socketUp() == nil {
 			return nil
+		}
+		// Task Scheduler ignores a run while the old instance is still exiting
+		if runtime.GOOS == "windows" && time.Since(ran) > taskRestartWait {
+			_ = daemon.StartService()
+			ran = time.Now()
 		}
 		if !noted && time.Since(start) > slowStartNote {
 			noted = true
