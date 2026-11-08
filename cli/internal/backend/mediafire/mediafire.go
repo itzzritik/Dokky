@@ -791,8 +791,9 @@ func (f *Fs) ChangeNotify(ctx context.Context, notify func(string, fs.EntryType)
 
 // what the change list last showed; its per-item revisions don't follow the account revision, so items are compared instead
 type changeState struct {
-	rev  int64
-	seen map[string]string
+	rev     int64
+	seen    map[string]string
+	recheck bool
 }
 
 type changedItem struct {
@@ -811,9 +812,10 @@ func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, f
 		return fmt.Errorf("mediafire: bad revision %q", status.DeviceRevision)
 	}
 	first := st.seen == nil
-	if !first && cur == st.rev {
+	if !first && cur == st.rev && !st.recheck {
 		return nil
 	}
+	moved := cur != st.rev
 	from := st.rev
 	if first || (cur-st.rev)/changeBlock >= maxChangeBlocks || len(st.seen) > maxSeen {
 		from = cur
@@ -831,7 +833,7 @@ func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, f
 		if !first {
 			notify("", fs.EntryDirectory)
 		}
-		st.rev, st.seen = cur, map[string]string{}
+		st.rev, st.seen, st.recheck = cur, map[string]string{}, true
 		for _, it := range items {
 			st.seen[it.key] = it.state
 		}
@@ -863,11 +865,12 @@ func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, f
 			f.notifyChanged(changedFrom(it.key, old), notify)
 		}
 	}
-	if !reported {
+	if !reported && moved {
 		// the revision moved but nothing listed changed, like a purge, so every listing is refreshed
 		notify("", fs.EntryDirectory)
 	}
-	st.rev = cur
+	// a change a moment later can share this revision without moving it, so read the list once more
+	st.rev, st.recheck = cur, moved || reported
 	return nil
 }
 

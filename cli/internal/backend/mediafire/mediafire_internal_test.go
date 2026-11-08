@@ -1328,6 +1328,33 @@ func TestChangesNothingNewIsOneCall(t *testing.T) {
 	assert.Equal(t, 0, fake.count("device/get_changes"))
 }
 
+func TestChangesRecheckCatchesChangeOnSameRevision(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	c := feed(fake)
+	c.set(700, []map[string]any{changed("q1", "one.txt", "fa", "700")}, nil, nil)
+	f := newTestFs(t, fake)
+	f.dirCache.Put("a", "fa")
+	var st changeState
+	require.NoError(t, f.changes(ctx, &st, func(string, fs.EntryType) {}))
+	c.set(701, []map[string]any{changed("q1", "one.txt", "fa", "700"), changed("q2", "two.txt", "fa", "701")}, nil, nil)
+	var got []string
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.Equal(t, []string{"object:a/two.txt"}, got)
+	// MediaFire can file a second change under the same revision without moving the account revision
+	c.set(701, []map[string]any{changed("q1", "one.txt", "fa", "700"), changed("q2", "two.txt", "fa", "701"), changed("q3", "three.txt", "fa", "701")}, nil, nil)
+	got = nil
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.Equal(t, []string{"object:a/three.txt"}, got)
+	got = nil
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.Empty(t, got)
+	calls := fake.count("device/get_changes")
+	require.NoError(t, f.changes(ctx, &st, collect(&got)))
+	assert.Empty(t, got)
+	assert.Equal(t, calls, fake.count("device/get_changes"))
+}
+
 func TestChangesUnseenChangeRefreshesEverything(t *testing.T) {
 	ctx := context.Background()
 	fake := newFakeAPI(t)
