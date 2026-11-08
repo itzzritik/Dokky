@@ -11,14 +11,16 @@ const ARCHES: Record<string, string> = {
   arm64: "ARM64",
 };
 
-export const systemLabel = ({ os }: Device) => PLATFORMS[os] ?? os;
+type Platform = Pick<Device, "arch" | "os">;
 
-export const archLabel = ({ arch, os }: Device) => {
+export const systemLabel = ({ os }: Platform) => PLATFORMS[os] ?? os;
+
+export const archLabel = ({ arch, os }: Platform) => {
   if (os === "darwin" || os.startsWith("macOS")) {
     return arch === "arm64" ? "Apple Silicon" : "Intel";
   }
   return ARCHES[arch] ?? arch;
 };
 
-export const system = (device: Device) =>
+export const system = (device: Platform) =>
   [systemLabel(device), archLabel(device)].filter(Boolean).join(", ");
