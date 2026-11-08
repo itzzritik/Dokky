@@ -23,7 +23,8 @@ func newMemConfig(onToken func(serviceID, token string)) *memConfig {
 
 // parallel parts keep a lossy or high-latency link full; listing modtimes avoid one HEAD per file
 var backendDefaults = map[string]map[string]string{
-	"s3": {"upload_cutoff": "8M", "upload_concurrency": "32", "chunk_size": "5M", "directory_markers": "true", "use_server_modtime": "true"},
+	"mediafire": {"hard_delete": "true"},
+	"s3":        {"upload_cutoff": "8M", "upload_concurrency": "32", "chunk_size": "5M", "directory_markers": "true", "use_server_modtime": "true"},
 }
 
 func (m *memConfig) PutService(s store.Service, isPassword func(typ, key string) bool) {

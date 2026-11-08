@@ -79,6 +79,16 @@ func TestConfigStepRevealsPasswords(t *testing.T) {
 	require.Equal(t, pass, obscure.MustReveal(stored))
 }
 
+func TestAddedMediaFireDriveDeletesPermanently(t *testing.T) {
+	e := startEngine(t)
+	step, err := e.ConfigStep(t.Context(), "mf", "mediafire", map[string]string{"email": "a@b.c", "password": "pw"}, "", "")
+	require.NoError(t, err)
+	require.True(t, step.Done)
+	require.NoError(t, e.PutService(store.Service{ID: "mf", Type: "mediafire", Options: step.Service}))
+	got, _ := e.mem.GetValue("mf", "hard_delete")
+	require.Equal(t, "true", got)
+}
+
 func TestRemoteUsesCurrentConfigAndTimesOut(t *testing.T) {
 	e := startEngine(t)
 	dir := t.TempDir()

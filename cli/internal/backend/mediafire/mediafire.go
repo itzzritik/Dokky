@@ -85,6 +85,11 @@ func init() {
 			Default:  4,
 			Advanced: true,
 		}, {
+			Name:     "hard_delete",
+			Help:     "Permanently delete files and folders on removal.\n\nNormally they go to MediaFire's trash. Setting this deletes them for good, which can't be undone.",
+			Default:  false,
+			Advanced: true,
+		}, {
 			Name:     config.ConfigEncoding,
 			Help:     config.ConfigEncodingHelp,
 			Advanced: true,
@@ -106,6 +111,7 @@ type Options struct {
 	Password          string               `config:"password"`
 	AppID             string               `config:"app_id"`
 	UploadConcurrency int                  `config:"upload_concurrency"`
+	HardDelete        bool                 `config:"hard_delete"`
 	Enc               encoder.MultiEncoder `config:"encoding"`
 }
 
@@ -391,8 +397,12 @@ func (f *Fs) purgeCheck(ctx context.Context, dir string, check bool) error {
 			return fs.ErrorDirectoryNotEmpty
 		}
 	}
-	// MediaFire only purges folders that are already in its trash
-	for _, method := range []string{"folder/delete", "folder/purge"} {
+	methods := []string{"folder/delete"}
+	if f.opt.HardDelete {
+		// MediaFire only purges folders that are already in its trash
+		methods = append(methods, "folder/purge")
+	}
+	for _, method := range methods {
 		var out api.Base
 		if err := f.call(ctx, method, url.Values{"folder_key": {dirID}}, &out); err != nil {
 			return fmt.Errorf("couldn't remove folder %q: %w", dir, err)
@@ -657,8 +667,12 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 }
 
 func (o *Object) Remove(ctx context.Context) error {
-	// file/purge on a file outside the trash answers Success and keeps it
-	for _, method := range []string{"file/delete", "file/purge"} {
+	methods := []string{"file/delete"}
+	if o.fs.opt.HardDelete {
+		// file/purge on a file outside the trash answers Success and keeps it
+		methods = append(methods, "file/purge")
+	}
+	for _, method := range methods {
 		var out api.Base
 		if err := o.fs.call(ctx, method, url.Values{"quick_key": {o.id}}, &out); err != nil {
 			var apiErr *api.Error
@@ -777,8 +791,9 @@ func (f *Fs) ChangeNotify(ctx context.Context, notify func(string, fs.EntryType)
 
 // what the change list last showed; its per-item revisions don't follow the account revision, so items are compared instead
 type changeState struct {
-	rev  int64
-	seen map[string]string
+	rev     int64
+	seen    map[string]string
+	recheck bool
 }
 
 type changedItem struct {
@@ -797,9 +812,10 @@ func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, f
 		return fmt.Errorf("mediafire: bad revision %q", status.DeviceRevision)
 	}
 	first := st.seen == nil
-	if !first && cur == st.rev {
+	if !first && cur == st.rev && !st.recheck {
 		return nil
 	}
+	moved := cur != st.rev
 	from := st.rev
 	if first || (cur-st.rev)/changeBlock >= maxChangeBlocks || len(st.seen) > maxSeen {
 		from = cur
@@ -817,7 +833,7 @@ func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, f
 		if !first {
 			notify("", fs.EntryDirectory)
 		}
-		st.rev, st.seen = cur, map[string]string{}
+		st.rev, st.seen, st.recheck = cur, map[string]string{}, true
 		for _, it := range items {
 			st.seen[it.key] = it.state
 		}
@@ -849,11 +865,12 @@ func (f *Fs) changes(ctx context.Context, st *changeState, notify func(string, f
 			f.notifyChanged(changedFrom(it.key, old), notify)
 		}
 	}
-	if !reported {
+	if !reported && moved {
 		// the revision moved but nothing listed changed, like a purge, so every listing is refreshed
 		notify("", fs.EntryDirectory)
 	}
-	st.rev = cur
+	// a change a moment later can share this revision without moving it, so read the list once more
+	st.rev, st.recheck = cur, moved || reported
 	return nil
 }
 
