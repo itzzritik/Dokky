@@ -66,7 +66,7 @@ func (h *Health) selected(cs []core.Check) int {
 		return max(0, min(h.sel, len(cs)-1))
 	}
 	for i, c := range cs {
-		if c.Tone == core.Warn || c.Tone == core.Bad {
+		if !c.Expected && (c.Tone == core.Warn || c.Tone == core.Bad) {
 			return i
 		}
 	}
@@ -276,10 +276,11 @@ func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
 	p := ui.P()
 	n, bad := 0, false
 	for _, c := range cs {
-		switch c.Tone {
-		case core.Bad:
+		switch {
+		case c.Expected:
+		case c.Tone == core.Bad:
 			n, bad = n+1, true
-		case core.Warn:
+		case c.Tone == core.Warn:
 			n++
 		}
 	}
