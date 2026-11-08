@@ -2,13 +2,10 @@ const DAY = 86_400_000;
 
 export const compareText = new Intl.Collator().compare;
 
-export function formatDate(
-  time: string,
-  month: "long" | "short" = "long"
-): string {
+export function formatDate(time: string): string {
   return new Date(time).toLocaleDateString("en-GB", {
     day: "numeric",
-    month,
+    month: "long",
     year: "numeric",
   });
 }

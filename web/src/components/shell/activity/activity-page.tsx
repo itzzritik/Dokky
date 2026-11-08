@@ -73,7 +73,7 @@ function entryColumns(now: number): Column<Entry>[] {
       ),
       header: "What",
       id: "what",
-      width: "minmax(0,1.4fr)",
+      width: "minmax(0,1.6fr)",
     },
     {
       cell: (entry) => (
@@ -82,14 +82,7 @@ function entryColumns(now: number): Column<Entry>[] {
       header: "Device",
       id: "device",
       wide: true,
-      width: "minmax(0,0.8fr)",
-    },
-    {
-      cell: (entry) => <span className="text-faint">{details(entry)}</span>,
-      header: "Details",
-      id: "details",
-      wide: "xl",
-      width: "minmax(0,1fr)",
+      width: "minmax(0,0.7fr)",
     },
   ];
 }

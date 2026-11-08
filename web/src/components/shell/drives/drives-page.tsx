@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useMedia, WIDE } from "@/hooks/use-media";
 import { useResource } from "@/hooks/use-resource";
 import { useShortcuts } from "@/hooks/use-shortcuts";
-import { compareText, formatDate, plural } from "@/lib/format";
+import { compareText, plural } from "@/lib/format";
 import { send } from "../api";
 import { useHints } from "../frame/frame";
 import type { Hint } from "../frame/key-bar";
@@ -34,7 +34,7 @@ const rowElement = (id: string) =>
 
 function driveColumns(names: Map<string, string>): Column<Row>[] {
   const mounted = (drive: Drive) =>
-    drive.devices.map((id) => names.get(id)).filter(Boolean);
+    drive.devices.filter((id) => names.has(id)).length;
   return [
     {
       cell: ({ account, drive }) => (
@@ -42,8 +42,8 @@ function driveColumns(names: Map<string, string>): Column<Row>[] {
           <span>{drive.name}</span>
           <span className="text-faint ml-2">{via(account, drive.name)}</span>
           <small className="text-muted-foreground block font-sans text-[12px] md:hidden">
-            {mounted(drive).length
-              ? `On ${mounted(drive).join(", ")}`
+            {mounted(drive)
+              ? `On ${plural(mounted(drive), "device")}`
               : "Not mounted"}
           </small>
         </>
@@ -51,32 +51,20 @@ function driveColumns(names: Map<string, string>): Column<Row>[] {
       header: "Drive",
       id: "name",
       sort: (a, b) => compareText(a.drive.name, b.drive.name),
-      width: "minmax(0,1.2fr)",
-    },
-    {
-      cell: ({ drive }) => {
-        const on = mounted(drive);
-        return on.length ? (
-          <span>{on.join(", ")}</span>
-        ) : (
-          <span className="text-faint">Not mounted</span>
-        );
-      },
-      header: "Mounted on",
-      id: "devices",
-      wide: true,
       width: "minmax(0,1fr)",
     },
     {
-      align: "end",
-      cell: ({ drive }) => (
-        <span className="text-faint">{formatDate(drive.addedAt, "short")}</span>
-      ),
-      header: "Added",
-      id: "added",
-      sort: (a, b) => Date.parse(b.drive.addedAt) - Date.parse(a.drive.addedAt),
-      wide: "xl",
-      width: "100px",
+      cell: ({ drive }) =>
+        mounted(drive) ? (
+          <span>{plural(mounted(drive), "device")}</span>
+        ) : (
+          <span className="text-faint">Not mounted</span>
+        ),
+      header: "Mounted on",
+      id: "devices",
+      sort: (a, b) => mounted(b.drive) - mounted(a.drive),
+      wide: true,
+      width: "120px",
     },
   ];
 }

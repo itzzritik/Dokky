@@ -29,8 +29,7 @@ export interface Column<T> {
   header: string;
   id: string;
   sort?: (a: T, b: T) => number;
-  // true shows from 768px, "xl" only from 1280px where the table has room for it
-  wide?: boolean | "xl";
+  wide?: boolean;
   width: string;
 }
 
@@ -64,12 +63,11 @@ const PRINT_STEP = 38;
 const PRINT_SPAN = 600;
 const PRINT_MS = 1900;
 const GRID =
-  "grid items-center gap-3.5 pr-4 pl-[18px] [grid-template-columns:var(--cols-narrow)] md:[grid-template-columns:var(--cols-mid)] xl:[grid-template-columns:var(--cols)]";
+  "grid items-center gap-3.5 pr-4 pl-[18px] [grid-template-columns:var(--cols-narrow)] md:[grid-template-columns:var(--cols)]";
 const cellClass = <T,>(column: Column<T>) =>
   cn(
     "min-w-0 truncate",
-    column.wide === true && "hidden md:block",
-    column.wide === "xl" && "hidden xl:block",
+    column.wide && "hidden md:block",
     column.align === "end" && "text-right"
   );
 
@@ -205,14 +203,11 @@ export function DataTable<T>({
 
   const checks =
     Boolean(selected) && (selectMode === "always" || (selected?.size ?? 0) > 0);
-  const template = (tier: 0 | 1 | 2) =>
+  const template = (wide: boolean) =>
     [
       checks ? "16px" : "",
       ...columns
-        .filter(
-          (column) =>
-            !column.wide || (column.wide === true ? tier > 0 : tier > 1)
-        )
+        .filter((column) => wide || !column.wide)
         .map((column) => column.width),
     ]
       .join(" ")
@@ -227,9 +222,8 @@ export function DataTable<T>({
     )
   );
   const style = {
-    "--cols": template(2),
-    "--cols-mid": template(1),
-    "--cols-narrow": template(0),
+    "--cols": template(true),
+    "--cols-narrow": template(false),
     "--step": `${Math.min(PRINT_STEP, PRINT_SPAN / printed)}ms`,
   } as CSSProperties;
   const allSelected =

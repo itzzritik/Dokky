@@ -15,7 +15,7 @@ import { useMedia, WIDE } from "@/hooks/use-media";
 import { useNow } from "@/hooks/use-now";
 import { useResource } from "@/hooks/use-resource";
 import { useShortcuts } from "@/hooks/use-shortcuts";
-import { ago, compareText, formatDate } from "@/lib/format";
+import { ago, compareText, formatDate, plural } from "@/lib/format";
 import { send } from "../api";
 import { useHints } from "../frame/frame";
 import type { Hint } from "../frame/key-bar";
@@ -51,36 +51,14 @@ function deviceColumns(now: number): Column<Device>[] {
         <>
           <span>{device.name}</span>
           <small className="text-muted-foreground block font-sans text-[12px] md:hidden">
-            {system(device)}, {device.version || "unknown version"},{" "}
-            {seen(device, now)}
+            {seen(device, now)}, {plural(device.drives.length, "drive")}
           </small>
         </>
       ),
       header: "Device",
       id: "name",
       sort: (a, b) => compareText(a.name, b.name),
-      width: "minmax(0,1.2fr)",
-    },
-    {
-      cell: (device) => (
-        <span className="text-muted-foreground">{system(device)}</span>
-      ),
-      header: "System",
-      id: "system",
-      sort: (a, b) => compareText(system(a), system(b)),
-      wide: true,
       width: "minmax(0,1fr)",
-    },
-    {
-      cell: (device) => (
-        <span className="text-muted-foreground">
-          {device.version || "Unknown"}
-        </span>
-      ),
-      header: "dokky",
-      id: "version",
-      wide: "xl",
-      width: "84px",
     },
     {
       cell: (device) => (
@@ -95,7 +73,7 @@ function deviceColumns(now: number): Column<Device>[] {
       header: "Drives",
       id: "drives",
       sort: (a, b) => b.drives.length - a.drives.length,
-      wide: "xl",
+      wide: true,
       width: "64px",
     },
     {
@@ -115,18 +93,6 @@ function deviceColumns(now: number): Column<Device>[] {
       sort: (a, b) => seenAt(b) - seenAt(a),
       wide: true,
       width: "120px",
-    },
-    {
-      align: "end",
-      cell: (device) => (
-        <span className="text-faint">
-          {formatDate(device.createdAt, "short")}
-        </span>
-      ),
-      header: "Added",
-      id: "added",
-      wide: "xl",
-      width: "100px",
     },
   ];
 }
