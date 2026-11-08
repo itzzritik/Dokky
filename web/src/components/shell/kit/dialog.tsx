@@ -122,7 +122,7 @@ export function ShellDialog({
           </div>
           <div className="border-rule mx-6 mt-1 flex items-center justify-between border-t pt-3.5">
             <button
-              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-2 rounded-md px-1 text-[12.5px] outline-none focus-visible:ring-2"
+              className="text-muted-foreground hover:text-foreground inline-flex items-center gap-2 rounded-md px-1 text-[12.5px] outline-none"
               onClick={() => (onCancel ? onCancel() : onOpenChange(false))}
               ref={cancel}
               type="button"

@@ -122,7 +122,10 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+  }
+  :focus-visible {
+    outline: none;
   }
   body {
     @apply bg-background text-foreground;
@@ -204,9 +207,8 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-[data-landing] :focus-visible {
-  outline: 2px solid #22b8cc;
-  outline-offset: 3px;
+[data-tabbing] [data-landing] :focus-visible {
+  color: #22b8cc;
 }
 
 @media (prefers-reduced-motion: reduce) {

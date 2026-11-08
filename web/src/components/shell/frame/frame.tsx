@@ -81,6 +81,9 @@ export function Frame({ children }: { children: ReactNode }) {
     ...Object.fromEntries(
       PAGES.map((page) => [page.key, () => router.push(page.href)])
     ),
+    arrowleft: () => router.push(PAGES[Math.max(0, index - 1)].href),
+    arrowright: () =>
+      router.push(PAGES[Math.min(PAGES.length - 1, index + 1)].href),
     s: () => void logout(),
     "mod+k": () => setPalette((open) => !open),
     t: toggleTheme,
