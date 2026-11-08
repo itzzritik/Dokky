@@ -74,9 +74,12 @@ func (g *Gate) View(st *core.State, w, h int) *lipgloss.Layer {
 		b.Add(x, y+10, ui.Button("btn:"+string(rune('0'+i)), c, i == 0, false, g.sel == i))
 		x += ui.ButtonWidth(c) + 2
 	}
-	if g.err != "" {
+	switch {
+	case g.err != "":
 		center(y+12, ui.Paint(core.Fit(g.err, w-4), p.Coral, nil, false))
-	} else {
+	case st.Updating != "":
+		center(y+12, ui.L(nil).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(st.Updating, p.Muted).String())
+	default:
 		center(y+12, ui.Paint("You can sign in later from Settings.", p.Faint, nil, false))
 	}
 	return b.Layer()
@@ -86,4 +89,4 @@ func (g *Gate) Actions(*core.State) []core.Action {
 	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}}
 }
 
-func (g *Gate) Animating(st *core.State) bool { return g.mark.Animating(st.Now) }
+func (g *Gate) Animating(st *core.State) bool { return g.mark.Animating(st.Now) || st.Updating != "" }

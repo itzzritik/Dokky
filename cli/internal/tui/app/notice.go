@@ -25,15 +25,16 @@ func (a *App) waiting() bool { return a.st.Connected && a.gate != nil && len(a.w
 
 func (a *App) post(t core.Toast) tea.Cmd {
 	t.Text = strings.TrimSpace(t.Text)
+	hold := a.waiting() && !t.Now
 	switch {
 	case t.Text == "":
 		return nil
 	case a.toast != nil && a.toast.Text == t.Text || len(a.pending) > 0 && a.pending[len(a.pending)-1] == t:
 		return nil
-	case !a.waiting() && long(t):
+	case !hold && long(t):
 		a.openInfo(t)
 		return nil
-	case a.waiting() || a.toast != nil || len(a.pending) > 0:
+	case hold || a.toast != nil || len(a.pending) > 0:
 		a.pending = append(a.pending, t)
 		a.pending = a.pending[max(0, len(a.pending)-maxPending):]
 		return nil
@@ -42,7 +43,7 @@ func (a *App) post(t core.Toast) tea.Cmd {
 }
 
 func (a *App) show(t core.Toast) tea.Cmd {
-	a.toast = &ui.Toast{Text: t.Text, Bad: t.Bad, At: a.st.Now}
+	a.toast = &ui.Toast{Text: t.Text, Bad: t.Bad, Now: t.Now, At: a.st.Now}
 	at := a.st.Now
 	return tea.Tick(a.toast.For(), func(time.Time) tea.Msg { return toastGone{at} })
 }

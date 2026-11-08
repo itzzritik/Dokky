@@ -53,7 +53,7 @@ func (a *App) render() string {
 		}
 	case a.gate != nil:
 		passes = append(passes, ui.Pass{Layer: a.gate.View(a.st, w, h)})
-		left = a.gate.Actions(a.st)
+		left, right = a.gate.Actions(a.st), a.globals()
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
 			ui.Header(w, a.tabNames(), a.active, a.account()),
@@ -92,7 +92,7 @@ func (a *App) render() string {
 		version = "vDev"
 	}
 	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, more, version).Y(h - 2)})
-	if a.toast != nil && a.toast.Live(a.st.Now) && !a.waiting() {
+	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
 	out, hits, caret := ui.Compose(w, h, passes...)

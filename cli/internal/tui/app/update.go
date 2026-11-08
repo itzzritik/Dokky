@@ -6,11 +6,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
-	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
-	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
 const restartIn = 3 * time.Second
@@ -50,11 +47,20 @@ func (a *App) checkUpdate() tea.Cmd {
 }
 
 func (a *App) onFound(m found) tea.Cmd {
+	a.st.Updating = ""
 	if m.err != nil || m.version == "" {
-		a.st.Updating = ""
 		return nil
 	}
-	a.st.Updating, a.st.Latest = "Updating to "+m.version, m.version
+	a.st.Latest = m.version
+	return a.startUpdate()
+}
+
+// installs Latest with npm in the background; the header shows the step and a failure is a toast
+func (a *App) startUpdate() tea.Cmd {
+	if !a.st.UpdateReady() || a.st.C == nil {
+		return nil
+	}
+	a.st.Updating = "Updating to " + a.st.Latest
 	c := a.st.C
 	return func() tea.Msg {
 		v, err := c.InstallUpdate(context.Background())
@@ -62,11 +68,11 @@ func (a *App) onFound(m found) tea.Cmd {
 	}
 }
 
-// a failed install keeps Latest, so Settings and the footer still offer it
+// a failed install keeps Latest, so u, Settings and the footer still offer it
 func (a *App) onInstalled(m installed) tea.Cmd {
 	a.st.Updating = ""
 	if m.err != nil {
-		return nil
+		return core.Send(core.Toast{Text: core.Fit("Couldn't update: "+core.Report(m.err), longNotice), Bad: true, Now: true})
 	}
 	a.st.Latest = ""
 	if m.version == "" || m.version == buildinfo.Version {
@@ -104,99 +110,11 @@ func (a *App) onRestartNow() tea.Cmd {
 	}
 }
 
-// once a session, under any open window
-func (a *App) onLatest(m latest) {
+// once a session, with automatic updates off
+func (a *App) onLatest(m latest) tea.Cmd {
 	a.st.Latest = m.version
-	if a.st.UpdateReady() && a.gate == nil {
-		a.windows = append([]core.Screen{&update{btn: 1}}, a.windows...)
-	}
-}
-
-type update struct {
-	btn  int // 0 later, 1 update
-	req  core.Req
-	busy bool
-	err  string
-}
-
-func (m *update) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "esc":
-			return m, core.Close(m)
-		case "left", "right":
-			m.btn = 1 - m.btn
-		case "enter":
-			return m, m.press(st)
-		}
-	case core.Click:
-		switch msg.ID {
-		case "btn:later":
-			m.btn = 0
-			return m, m.press(st)
-		case "btn:update":
-			m.btn = 1
-			return m, m.press(st)
-		}
-	case core.Reply:
-		if msg.Req != m.req || !m.busy {
-			return m, nil
-		}
-		m.busy = false
-		if msg.Err != nil {
-			m.err = core.Report(msg.Err)
-			return m, nil
-		}
-		v, _ := msg.Val.(string)
-		st.Latest = ""
-		return m, tea.Batch(core.Close(m), func() tea.Msg { return installed{version: v} })
-	}
-	return m, nil
-}
-
-func (m *update) press(st *core.State) tea.Cmd {
-	if m.btn == 0 {
-		return core.Close(m)
-	}
-	if m.busy {
+	if !a.st.UpdateReady() {
 		return nil
 	}
-	m.busy, m.err, m.req = true, "", core.NextReq()
-	return core.Do(st, m.req, func(ctx context.Context, c *client.Client) (any, error) { return c.InstallUpdate(ctx) })
+	return core.Say("dokky " + m.version + " is out. Press u to update.")
 }
-
-func (m *update) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
-	p := ui.P()
-	win := &ui.Window{W: min(56, maxW), Title: "Update available", Sub: m.err, SubBad: m.err != "", Active: m.btn}
-	uploads := 0
-	for _, d := range st.Snap.Drives {
-		uploads += d.Uploads
-	}
-	body := ui.NewBox()
-	body.Put(0, 0, ui.L(p.Surface).T(st.Snap.Version, p.Text).Sp(1).T(ui.G.Arrow, p.Muted).Sp(1).B(st.Latest, p.Accent).Pad(win.Inner()))
-	note, nc := "dokky restarts in the background.", p.Muted
-	if uploads > 0 {
-		note, nc = core.Count(uploads, "upload")+" not finished. dokky restarts to update.", p.Buoy
-	}
-	body.Put(0, 2, win.Text(note, nc))
-	rows := 3
-	if m.busy {
-		body.Put(0, 4, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Updating", p.Muted).Pad(win.Inner()))
-		rows = 5
-	} else {
-		win.Buttons = []ui.Btn{{ID: "later", Label: "Later"}, {ID: "update", Label: "Update", Primary: true}}
-	}
-	win.Body = body
-	win.Fit(rows, maxH)
-	return win.Layer()
-}
-
-func (m *update) Actions(*core.State) []core.Action {
-	if m.busy {
-		return []core.Action{{Key: "esc", Label: "close"}}
-	}
-	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}, {Key: "esc", Label: "later"}}
-}
-
-func (m *update) Animating(*core.State) bool { return m.busy && !ui.Reduced() }

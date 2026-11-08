@@ -127,7 +127,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case logLoaded:
 		return a.onLog(m)
 	case latest:
-		a.onLatest(m)
+		return a.onLatest(m)
 	case quiet:
 		return a.onQuiet(m)
 	case refreshed:
@@ -156,7 +156,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case restartNow:
 		return a.onRestartNow()
 	case core.OfferUpdate:
-		a.windows = append(a.windows, &update{btn: 1})
+		return a.startUpdate()
 	case core.FixAll:
 		return a.fixAll(m.Auto)
 	case core.Recheck:
@@ -393,6 +393,8 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 		return nil
+	case s == "u" && a.st.UpdateReady() && len(a.windows) == 0 && !a.capturing():
+		return a.startUpdate()
 	case len(a.windows) > 0 || a.gate != nil || a.capturing():
 		if s == "q" && len(a.windows) == 0 && !a.capturing() {
 			return a.quit()
@@ -407,11 +409,6 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		return a.quit()
 	case "?":
 		return a.openMenu()
-	case "u":
-		if a.st.UpdateReady() {
-			a.windows = append(a.windows, &update{btn: 1})
-			return nil
-		}
 	case "1", "2", "3", "4", "5", "6":
 		return a.setTab(int(s[0] - '1'))
 	case "left":
