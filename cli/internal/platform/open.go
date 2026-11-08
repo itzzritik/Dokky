@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -9,6 +10,10 @@ import (
 const openWait = 5 * time.Second
 
 func OpenURL(url string) error {
+	// VS Code (web, remote, Codespaces) points BROWSER at a helper that opens links on the user's own computer
+	if b := os.Getenv("BROWSER"); b != "" && start(exec.Command(b, url)) == nil {
+		return nil
+	}
 	name, args := "xdg-open", []string{url}
 	switch runtime.GOOS {
 	case "darwin":
@@ -16,7 +21,10 @@ func OpenURL(url string) error {
 	case "windows":
 		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
 	}
-	cmd := exec.Command(name, args...)
+	return start(exec.Command(name, args...))
+}
+
+func start(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
