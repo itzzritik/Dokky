@@ -90,6 +90,8 @@ type UploadCheck struct {
 	HashExists           string `json:"hash_exists"`
 	InAccount            string `json:"in_account"`
 	FileExists           string `json:"file_exists"`
+	DifferentHash        string `json:"different_hash"`
+	DuplicateQuickKey    string `json:"duplicate_quickkey"`
 	AvailableSpace       string `json:"available_space"`
 	StorageLimitExceeded string `json:"storage_limit_exceeded"`
 	ResumableUpload      struct {

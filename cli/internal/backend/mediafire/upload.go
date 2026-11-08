@@ -110,6 +110,13 @@ func (o *Object) upload(ctx context.Context, in io.Reader, src fs.ObjectInfo, le
 		}
 		return fmt.Errorf("couldn't start upload: %w", err)
 	}
+	if check.FileExists == "yes" && check.DifferentHash == "no" && check.DuplicateQuickKey != "" {
+		// MediaFire won't replace a file with the same bytes (error 238), so only the time is set
+		if err := o.uploaded(check.DuplicateQuickKey, size, sum, modTime); err != nil {
+			return err
+		}
+		return o.SetModTime(ctx, modTime)
+	}
 	if err := checkSpace(&check, size, o.id == ""); err != nil {
 		return err
 	}

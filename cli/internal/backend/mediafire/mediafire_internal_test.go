@@ -1249,6 +1249,45 @@ func TestCopyReplacesExistingFile(t *testing.T) {
 	assert.Equal(t, 0, fake.count("file/purge"))
 }
 
+func TestPutUnchangedFileOnlySetsModTime(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	content := "0123456789"
+	fakeUpload(t, fake, map[string]any{"hash_exists": "yes", "file_exists": "yes", "different_hash": "no", "duplicate_quickkey": "qd"}, finished)
+	fake.handle("upload/instant", func(url.Values, *http.Request) any {
+		return map[string]any{"result": "Error", "error": 238, "message": "This file has not changed; no need to update"}
+	})
+	fake.handle("file/update", func(url.Values, *http.Request) any { return success() })
+	o, err := newTestFs(t, fake).Put(ctx, strings.NewReader(content), srcAt(content))
+	require.NoError(t, err)
+	assert.Equal(t, "qd", o.(*Object).id)
+	assert.Equal(t, 0, fake.count("upload/instant"))
+	assert.Equal(t, "qd", fake.last("file/update").Get("quick_key"))
+	assert.Equal(t, "2021-03-04T05:06:07Z", fake.last("file/update").Get("mtime"))
+	assert.True(t, mtime.Equal(o.ModTime(ctx)))
+}
+
+func TestCopyOverSameNameTakesTheName(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeAPI(t)
+	fake.handle("folder/get_content", folderListing(nil, []map[string]any{{"quickkey": "qold", "filename": "a.bin", "size": "3"}}))
+	fake.handle("file/copy", func(url.Values, *http.Request) any { return success("new_quickkeys", []string{"qnew"}) })
+	var order []string
+	fake.handle("file/delete", func(form url.Values, _ *http.Request) any {
+		order = append(order, "delete "+form.Get("quick_key"))
+		return success()
+	})
+	fake.handle("file/update", func(form url.Values, _ *http.Request) any {
+		order = append(order, "rename "+form.Get("quick_key")+" "+form.Get("filename"))
+		return success()
+	})
+	f := newTestFs(t, fake)
+	src := &Object{fs: f, remote: "a.bin", id: "qsrc", size: 5}
+	_, err := f.Copy(ctx, src, "a.bin")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"delete qold", "rename qnew a.bin"}, order)
+}
+
 type changeFeed struct {
 	mu    sync.Mutex
 	rev   int
