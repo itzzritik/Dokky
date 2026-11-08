@@ -2,7 +2,7 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
-export const WIDE = "(min-width: 1100px)";
+export const WIDE = "(min-width: 900px)";
 export const PHONE = "(max-width: 767px)";
 
 export function useMedia(query: string, server = false) {

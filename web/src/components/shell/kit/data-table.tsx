@@ -44,7 +44,6 @@ interface DataTableProps<T> {
   defaultSort?: Sort;
   empty?: ReactNode;
   getId: (row: T) => string;
-  group?: (row: T) => ReactNode;
   keyboard?: boolean;
   label: string;
   menu?: (id: string) => ReactNode;
@@ -78,7 +77,6 @@ export function DataTable<T>({
   defaultSort,
   empty,
   getId,
-  group,
   keyboard = true,
   label,
   menu,
@@ -154,13 +152,9 @@ export function DataTable<T>({
     replay(band.current, "stretch");
   }, [activeIndex, virtualizer]);
 
-  // Group header rows are skipped by the keyboard.
   const move = (delta: number) => {
-    let index = activeIndex;
-    do {
-      index += delta;
-    } while (index >= 0 && index < ordered.length && group?.(ordered[index]));
-    const next = ordered[index];
+    const next =
+      ordered[Math.min(ordered.length - 1, Math.max(0, activeIndex + delta))];
     if (next) {
       onActiveChange?.(getId(next));
     }
@@ -307,29 +301,6 @@ export function DataTable<T>({
             return null;
           }
           const id = getId(row);
-          const heading = group?.(row);
-          if (heading) {
-            return (
-              <div
-                className={cn(GRID, "dt-row dt-group")}
-                data-print={printing ? "" : undefined}
-                key={item.key}
-                onPointerEnter={() => setHover(-1)}
-                role="row"
-                style={
-                  {
-                    "--i": Math.min(item.index, printed),
-                    height: rowHeight,
-                    transform: `translateY(${item.start}px)`,
-                  } as CSSProperties
-                }
-              >
-                <div className="col-span-full min-w-0 truncate" role="gridcell">
-                  {heading}
-                </div>
-              </div>
-            );
-          }
           return (
             <div
               aria-selected={selected ? selected.has(id) : id === activeId}

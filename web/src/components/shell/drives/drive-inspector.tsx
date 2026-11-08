@@ -8,7 +8,7 @@ import { Action } from "../kit/action";
 import { say } from "../message";
 import type { Account, Drive, DrivesData } from "../types";
 import { isActive } from "../types";
-import { typeLabel } from "./labels";
+import { via } from "./labels";
 
 const line = (j: number) => ({ "--j": j }) as CSSProperties;
 
@@ -40,7 +40,7 @@ export function DriveInspector({
         <dt>Account</dt>
         <dd className="truncate">
           {account.name}{" "}
-          <span className="text-faint">{typeLabel(account.type)}</span>
+          <span className="text-faint">{via(account, account.name)}</span>
         </dd>
         <dt>Path</dt>
         <dd className="truncate font-mono">{drive.path || "Whole account"}</dd>

@@ -4,109 +4,67 @@ import { HardDriveIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PHONE, useMedia, WIDE } from "@/hooks/use-media";
+import { useMedia, WIDE } from "@/hooks/use-media";
 import { useResource } from "@/hooks/use-resource";
 import { useShortcuts } from "@/hooks/use-shortcuts";
-import { formatDate, plural } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { compareText, plural } from "@/lib/format";
 import { send } from "../api";
 import { useHints } from "../frame/frame";
 import type { Hint } from "../frame/key-bar";
 import { Action } from "../kit/action";
 import { type Column, DataTable } from "../kit/data-table";
+import { DetailsSheet } from "../kit/details-sheet";
 import { FilterPrompt } from "../kit/filter-prompt";
 import { Panel } from "../kit/panel";
 import { say } from "../message";
 import { drain } from "../motion";
 import type { Account, Drive, DrivesData } from "../types";
 import { DriveInspector, RenameField } from "./drive-inspector";
-import { typeLabel } from "./labels";
+import { typeLabel, via } from "./labels";
 import { RemoveDriveDialog } from "./remove-drive-dialog";
 
-type Row = { account: Account; drive: Drive | null; id: string };
+type Row = { account: Account; drive: Drive; id: string };
 
 const SKELETON_ROWS = [0, 1, 2, 3];
+const NAME_SORT = { desc: false, id: "name" };
 const rowId = (row: Row) => row.id;
 const rowElement = (id: string) =>
   document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`);
 
-function groupLabel({ account, drive }: Row) {
-  if (drive) {
-    return null;
-  }
-  const count = account.drives.length
-    ? plural(account.drives.length, "drive")
-    : "no drives yet, add one in the app";
-  return (
-    <>
-      <b>{account.name}</b>
-      {typeLabel(account.type)} · {count}
-    </>
-  );
-}
-
 function driveColumns(names: Map<string, string>): Column<Row>[] {
   const mounted = (drive: Drive) =>
-    drive.devices.map((id) => names.get(id)).filter(Boolean);
+    drive.devices.filter((id) => names.has(id)).length;
   return [
     {
-      cell: ({ drive }) =>
-        drive && (
-          <>
-            <span>{drive.name}</span>
-            <small className="text-muted-foreground block font-sans text-[12px] md:hidden">
-              {drive.path || "Whole account"},{" "}
-              {mounted(drive).length
-                ? `on ${mounted(drive).join(", ")}`
-                : "not mounted"}
-            </small>
-          </>
-        ),
+      cell: ({ account, drive }) => (
+        <>
+          <span>{drive.name}</span>
+          <span className="text-faint ml-2">{via(account, drive.name)}</span>
+          <small className="text-muted-foreground block font-sans text-[12px] md:hidden">
+            {mounted(drive)
+              ? `On ${plural(mounted(drive), "device")}`
+              : "Not mounted"}
+          </small>
+        </>
+      ),
       header: "Drive",
       id: "name",
+      sort: (a, b) => compareText(a.drive.name, b.drive.name),
       width: "minmax(0,1fr)",
     },
     {
       cell: ({ drive }) =>
-        drive && (
-          <span className="text-muted-foreground">
-            {drive.path || "whole account"}
-          </span>
-        ),
-      header: "Path",
-      id: "path",
-      wide: true,
-      width: "minmax(0,0.9fr)",
-    },
-    {
-      cell: ({ drive }) => {
-        if (!drive) {
-          return null;
-        }
-        const on = mounted(drive);
-        return on.length ? (
-          <span>{on.join(", ")}</span>
+        mounted(drive) ? (
+          <span>{plural(mounted(drive), "device")}</span>
         ) : (
           <span className="text-faint">Not mounted</span>
-        );
-      },
+        ),
       header: "Mounted on",
       id: "devices",
+      sort: (a, b) => mounted(b.drive) - mounted(a.drive),
       wide: true,
-      width: "minmax(0,1.1fr)",
-    },
-    {
-      align: "end",
-      cell: ({ drive }) =>
-        drive && (
-          <span className="text-faint">{formatDate(drive.addedAt)}</span>
-        ),
-      header: "Added",
-      id: "added",
-      wide: true,
-      width: "140px",
+      width: "120px",
     },
   ];
 }
@@ -116,7 +74,6 @@ export function DrivesPage() {
   const params = useSearchParams();
   const drives = useResource<DrivesData>("/api/dash/drives");
   const wide = useMedia(WIDE, true);
-  const phone = useMedia(PHONE);
   const [query, setQuery] = useState("");
   const deferred = useDeferredValue(query.trim().toLowerCase());
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -153,11 +110,12 @@ export function DrivesPage() {
   );
   const total = all.length;
 
-  const rows = useMemo(() => {
-    const out: Row[] = [];
-    for (const account of accounts) {
-      const matched = deferred
-        ? account.drives.filter((drive) =>
+  const rows = useMemo(
+    () =>
+      all
+        .filter(
+          ({ account, drive }) =>
+            !deferred ||
             [
               drive.name,
               drive.path,
@@ -168,18 +126,10 @@ export function DrivesPage() {
               .join(" ")
               .toLowerCase()
               .includes(deferred)
-          )
-        : account.drives;
-      if (deferred && matched.length === 0) {
-        continue;
-      }
-      out.push({ account, drive: null, id: `account:${account.id}` });
-      for (const drive of matched) {
-        out.push({ account, drive, id: drive.id });
-      }
-    }
-    return out;
-  }, [accounts, deferred, names]);
+        )
+        .map(({ account, drive }) => ({ account, drive, id: drive.id })),
+    [all, deferred, names]
+  );
 
   const active = all.find((item) => item.drive.id === activeId) ?? null;
 
@@ -284,7 +234,7 @@ export function DrivesPage() {
   useHints(hints);
 
   const empty =
-    accounts.length === 0 ? (
+    total === 0 ? (
       <div className="grid justify-items-center gap-2 px-6 py-16 text-center font-sans">
         <p className="text-[15px] font-medium">No drives yet</p>
         <p className="text-muted-foreground">
@@ -315,9 +265,9 @@ export function DrivesPage() {
       <DataTable
         activeId={activeId}
         columns={columns}
+        defaultSort={NAME_SORT}
         empty={empty}
         getId={rowId}
-        group={groupLabel}
         label="Drives"
         onActiveChange={choose}
         onOpen={open}
@@ -347,8 +297,8 @@ export function DrivesPage() {
 
   const inspector = active && (
     <Panel
-      aside={typeLabel(active.account.type)}
-      className="flex min-h-0 flex-col"
+      aside={via(active.account, active.drive.name) || undefined}
+      className="flex min-h-0 flex-1 flex-col"
       delay={110}
       icon={HardDriveIcon}
       title={
@@ -396,24 +346,13 @@ export function DrivesPage() {
       </Panel>
       {wide && inspector}
       {!wide && (
-        <Sheet onOpenChange={setSheetOpen} open={sheetOpen && Boolean(active)}>
-          <SheetContent
-            className={cn(
-              "bg-background gap-0 p-3",
-              phone
-                ? "max-h-[88dvh] rounded-t-2xl pt-7"
-                : "w-[min(420px,100vw)] pt-6 sm:max-w-[420px]"
-            )}
-            showCloseButton={false}
-            side={phone ? "bottom" : "right"}
-          >
-            {phone && <i aria-hidden className="sheet-grab" />}
-            <SheetTitle className="sr-only">
-              {active?.drive.name ?? "Drive details"}
-            </SheetTitle>
-            {inspector}
-          </SheetContent>
-        </Sheet>
+        <DetailsSheet
+          onOpenChange={setSheetOpen}
+          open={sheetOpen && Boolean(active)}
+          title={active?.drive.name ?? "Drive details"}
+        >
+          {inspector}
+        </DetailsSheet>
       )}
       <RemoveDriveDialog
         account={target?.account.name ?? "your storage"}
