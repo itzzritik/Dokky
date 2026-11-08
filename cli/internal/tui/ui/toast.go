@@ -15,6 +15,7 @@ const (
 type Toast struct {
 	Text string
 	Bad  bool
+	Now  bool
 	At   time.Time
 }
 

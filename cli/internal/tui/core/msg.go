@@ -14,6 +14,7 @@ type Click struct{ ID string }
 type Toast struct {
 	Text string
 	Bad  bool
+	Now  bool // shows over the gate too
 }
 
 type OpenWindow struct{ Screen Screen }
