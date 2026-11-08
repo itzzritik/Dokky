@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -125,6 +126,8 @@ func keychainCheck(k doctor.Check) tui.Check {
 	case k.Warn:
 		c.Status, c.Tone, c.Fix = "Key in a file", tui.Warn, upper(k.Fix)+"."
 		c.Facts[0][1] = "A file, no keyring found"
+		// a server has no keyring to unlock, so the file is normal there
+		c.Expected = runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == ""
 	case !k.OK:
 		c.Status, c.Tone, c.Fix = "Can't read key", tui.Bad, upper(k.Fix)+"."
 		c.Facts = append(c.Facts, [2]string{"Error", k.Detail})

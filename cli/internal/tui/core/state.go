@@ -30,6 +30,7 @@ type Check struct {
 	Name, Status, Detail, Fix string
 	Facts                     [][2]string
 	Tone                      Tone
+	Expected                  bool         // normal on this computer, so it stays yellow but isn't counted as a problem
 	Auto                      string       // what Fix all does about it
 	Repair                    func() error // Fix all's work, off the update loop
 	Reopen                    bool         // dokky quits and opens again once repaired
@@ -81,10 +82,11 @@ func FileManager() string {
 // problems from the last health checks; bad when something is broken, not just worth a look
 func (s *State) Problems() (n int, bad bool) {
 	for _, c := range s.Checks {
-		switch c.Tone {
-		case Bad:
+		switch {
+		case c.Expected:
+		case c.Tone == Bad:
 			n, bad = n+1, true
-		case Warn:
+		case c.Tone == Warn:
 			n++
 		}
 	}
