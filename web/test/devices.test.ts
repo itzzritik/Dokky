@@ -12,7 +12,7 @@ mock.module("next/cache", () => ({ revalidatePath: () => undefined }));
 
 const list = await import("@/app/api/v1/devices/route");
 const one = await import("@/app/api/v1/devices/[id]/route");
-const { remove } = await import("@/app/devices/actions");
+const dash = await import("@/app/api/dash/devices/[id]/route");
 const { authDevice } = await import("@/lib/device-auth");
 
 let server: MongoMemoryServer;
@@ -125,18 +125,17 @@ test("another user's device is not found", async () => {
   expect((await list.GET(call(other.token))).status).toBe(200);
 });
 
-test("the page action revokes only the session user's device", async () => {
+test("the dashboard revokes only the session user's device", async () => {
   const mine = await seed("u-page", "a");
   const theirs = await seed("u-page-other", "x");
   session = { user: { id: "u-page" } };
-  const form = (id: string) => {
-    const f = new FormData();
-    f.set("id", id);
-    return f;
-  };
-  await remove(form(theirs.id));
+  const remove = (id: string) =>
+    dash.DELETE(new Request(`http://x/api/dash/devices/${id}`), {
+      params: Promise.resolve({ id }),
+    });
+  expect((await remove(theirs.id)).status).toBe(404);
   expect((await list.GET(call(theirs.token))).status).toBe(200);
-  await remove(form(mine.id));
+  expect((await remove(mine.id)).status).toBe(204);
   expect((await list.GET(call(mine.token))).status).toBe(401);
 });
 

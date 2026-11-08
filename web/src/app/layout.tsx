@@ -19,6 +19,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       className={`${geist.variable} ${geistMono.variable} font-sans`}
       lang="en"
+      suppressHydrationWarning
     >
       <body>{children}</body>
     </html>

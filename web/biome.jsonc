@@ -7,5 +7,58 @@
   ],
   "vcs": { "root": ".." },
   // MongoDB key order is meaningful (compound indexes, sorts).
-  "assist": { "actions": { "source": { "useSortedKeys": "off" } } }
+  "assist": { "actions": { "source": { "useSortedKeys": "off" } } },
+  "overrides": [
+    {
+      // Ported from forged's dashboard shell; keeps forged's own rule settings.
+      "includes": [
+        "src/components/shell/**",
+        "src/components/ui/**",
+        "src/hooks/**",
+        "src/lib/format.ts",
+        "src/lib/utils.ts",
+        "src/app/dashboard/**"
+      ],
+      "css": { "linter": { "enabled": false } },
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useButtonType": "off",
+            "noStaticElementInteractions": "off",
+            "useKeyWithClickEvents": "off"
+          },
+          "suspicious": {
+            "noEqualsToNull": "off",
+            "noUnnecessaryConditions": "off",
+            "noLeakedRender": "off"
+          },
+          "style": {
+            "noIncrementDecrement": "off",
+            "noNestedTernary": "off",
+            "useConsistentTypeDefinitions": "off"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": "off",
+            "noVoid": "off"
+          },
+          "performance": {
+            "noBarrelFile": "off",
+            "noJsxPropsBind": "off"
+          }
+        }
+      }
+    },
+    {
+      // ARIA grid: focus stays on the container (aria-activedescendant), so rows and cells only carry roles.
+      "includes": ["src/components/shell/kit/data-table.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useFocusableInteractive": "off",
+            "useSemanticElements": "off"
+          }
+        }
+      }
+    }
+  ]
 }
