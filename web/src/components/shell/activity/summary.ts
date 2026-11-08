@@ -22,9 +22,9 @@ const SAY: Record<string, (name: string) => string> = {
 export const summary = (kind: string, name: string) =>
   SAY[kind]?.(name) ?? name;
 
-export const tone = (kind: string, ok: boolean) => {
+export const tone = (kind: string, ok: boolean, open?: boolean) => {
   if (!ok) {
     return "text-destructive";
   }
-  return kind === "signin.expired" ? "text-warning" : "";
+  return kind === "signin.expired" && open ? "text-warning" : "";
 };

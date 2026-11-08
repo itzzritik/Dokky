@@ -303,7 +303,11 @@ export async function markErased(
     },
     { $set: { erasedAt: now } }
   );
-  if (device) {
+  // devices of a deleted account still report their erase
+  const owner = await db()
+    .collection("users")
+    .countDocuments({ _id: new ObjectId(userId) }, { limit: 1 });
+  if (device && owner) {
     await record(userId, [
       {
         kind: "device.erased",

@@ -10,7 +10,6 @@ import {
 } from "@/components/landing/client";
 import { Footer } from "@/components/landing/footer";
 import { InstallCommand } from "@/components/landing/install-command";
-import { Nav } from "@/components/landing/nav";
 import { Caustics, Waterline } from "@/components/landing/water";
 
 const STATUS_DEMO: TerminalStep[] = [
@@ -601,7 +600,6 @@ function CTA() {
 export default function Home() {
   return (
     <div className="bg-black" data-landing>
-      <Nav />
       <Hero />
       <GridFeatures />
       <TerminalSection />

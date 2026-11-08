@@ -63,7 +63,7 @@ function entryColumns(now: number): Column<Entry>[] {
     {
       cell: (entry) => (
         <>
-          <span className={tone(entry.kind, entry.ok)}>
+          <span className={tone(entry.kind, entry.ok, entry.open)}>
             {summary(entry.kind, entry.name)}
           </span>
           <small className="text-muted-foreground block font-sans text-[12px] md:hidden">
@@ -152,10 +152,8 @@ export function ActivityPage() {
       return;
     }
     const page = (await res.json()) as Page;
-    setOlder((current) => ({
-      items: [...current.items, ...page.items],
-      more: page.more,
-    }));
+    // keeps the first page too, so entries a refresh pushes off it stay listed
+    setOlder({ items: [...list, ...page.items], more: page.more });
   };
 
   const open = (id: string) => {
@@ -250,7 +248,7 @@ export function ActivityPage() {
         <p
           className={cn(
             "px-[18px] pb-3 font-mono text-[14px] font-medium",
-            tone(active.kind, active.ok)
+            tone(active.kind, active.ok, active.open)
           )}
           style={line(0)}
         >

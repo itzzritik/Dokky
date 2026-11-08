@@ -7,9 +7,9 @@ export async function signInWithGitHub(): Promise<void> {
 }
 
 export async function signInAgain(returnTo: string): Promise<void> {
-  await signIn("github", {
-    redirectTo: returnTo.startsWith("/dashboard") ? returnTo : "/dashboard",
-  });
+  const safe =
+    returnTo.startsWith("/dashboard") || returnTo.startsWith("/cli/approve");
+  await signIn("github", { redirectTo: safe ? returnTo : "/dashboard" });
 }
 
 export async function signOutOfDokky(): Promise<void> {
