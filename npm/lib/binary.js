@@ -66,7 +66,7 @@ async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetc
   try {
     fs.writeFileSync(tmp, data, { mode: 0o755 });
     fs.chmodSync(tmp, 0o755);
-    replace(tmp, bin, path.join(dir, "dokky.old"), platform === "win32" && fs.existsSync(bin), rename);
+    replace(tmp, bin, dir, platform === "win32" && fs.existsSync(bin), rename);
   } finally {
     fs.rmSync(tmp, { force: true });
   }
@@ -74,9 +74,16 @@ async function ensureBinary({ pkg, home, platform, arch, env = process.env, fetc
   return bin;
 }
 
-// Windows can rename a running exe but not replace it, so the old one moves aside first
-function replace(tmp, bin, old, aside, rename) {
+// Windows can rename a running exe but not replace or delete it, and one moved aside earlier may still run
+function replace(tmp, bin, dir, aside, rename) {
   if (!aside) return rename(tmp, bin);
+  for (const f of fs.readdirSync(dir)) {
+    if (!/^dokky(\.\d+)?\.old$/.test(f)) continue;
+    try {
+      fs.rmSync(path.join(dir, f));
+    } catch {}
+  }
+  const old = path.join(dir, `dokky.${Date.now()}.old`);
   rename(bin, old);
   try {
     rename(tmp, bin);

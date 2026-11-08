@@ -25,6 +25,7 @@ const (
 	toggle
 	info
 	danger
+	update
 )
 
 const slide = 180 * time.Millisecond
@@ -74,6 +75,10 @@ func (s *Settings) rows(st *core.State) []row {
 		// between the switches, so their pills don't touch
 		{label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
 		s.toggle(st, "", "Automatic updates", set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
+	}
+	if st.UpdateReady() {
+		rows = append([]row{{label: "Update dokky", value: st.Snap.Version + " " + ui.G.Arrow + " " + st.Latest, kind: update, tone: p.Accent,
+			run: func(*core.State) tea.Cmd { return core.Send(core.OfferUpdate{}) }}}, rows...)
 	}
 	if acct.LoggedIn {
 		rows = append(rows,
@@ -169,6 +174,8 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "enter", Label: "run"})
 	case danger:
 		acts = append(acts, core.Action{Key: "enter", Label: "uninstall", Danger: true})
+	case update:
+		acts = append(acts, core.Action{Key: "enter", Label: "update", Accent: true})
 	}
 	if st.Snap.Account.SignedOut {
 		acts = append(acts, core.Action{Key: "s", Label: "remove this device"})
@@ -257,11 +264,14 @@ func (s *Settings) line(r row, on bool, w int) string {
 	p := ui.P()
 	return ui.RowLine(w, on, nil, func(bg color.Color, iw int) string {
 		lc := p.Text
-		if r.kind == danger {
+		switch r.kind {
+		case danger:
 			lc = p.Coral
+		case update:
+			lc = p.Accent
 		}
 		l := ui.L(bg)
-		if on {
+		if on || r.kind == update {
 			l.B(r.label, lc)
 		} else {
 			l.T(r.label, lc)

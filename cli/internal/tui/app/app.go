@@ -154,6 +154,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.onInstalled(m)
 	case restartNow:
 		return a.onRestartNow()
+	case core.OfferUpdate:
+		a.windows = append(a.windows, &update{btn: 1})
 	case core.FixAll:
 		return a.fixAll(m.Auto)
 	case core.Recheck:
@@ -405,7 +407,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 	case "?":
 		return a.openMenu()
 	case "u":
-		if a.updateReady() {
+		if a.st.UpdateReady() {
 			a.windows = append(a.windows, &update{btn: 1})
 			return nil
 		}

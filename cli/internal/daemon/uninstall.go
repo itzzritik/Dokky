@@ -371,11 +371,12 @@ func ownedPaths(p Paths) (files, dirs []string) {
 	if p.Bin != "" {
 		files = append(files, p.Bin)
 	}
-	for _, name := range []string{"dokky.old", "version", "pin", installsFile, "path.json", "dokky.log", "daemon.lock"} {
+	for _, name := range []string{"version", "pin", installsFile, "path.json", "dokky.log", "daemon.lock"} {
 		files = append(files, filepath.Join(p.State, name))
 	}
 	backups, _ := filepath.Glob(filepath.Join(p.State, "dokky-*.log"))
-	files = append(files, backups...)
+	olds, _ := filepath.Glob(filepath.Join(p.State, "dokky*.old"))
+	files = append(append(files, backups...), olds...)
 	if sock := platform.SocketAddr(p.State); filepath.Dir(sock) == p.State {
 		files = append(files, sock)
 	}
