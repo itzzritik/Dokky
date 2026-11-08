@@ -495,15 +495,17 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, fmt.Errorf("mediafire: copy of %q returned no file key", srcObj.remote)
 	}
 	id := out.NewQuickKeys[0]
-	if leaf != path.Base(srcObj.remote) {
-		if err := f.renameFile(ctx, id, leaf); err != nil {
-			return nil, err
-		}
-	}
 	// like Drive, the copy takes the name and the file it replaces goes
-	if old != nil && old.(*Object).id != id && old.(*Object).id != srcObj.id {
+	replaced := old != nil && old.(*Object).id != id && old.(*Object).id != srcObj.id
+	if replaced {
 		if err := old.Remove(ctx); err != nil {
 			fs.Errorf(old, "mediafire: couldn't remove the file the copy replaced: %v", err)
+		}
+	}
+	// a copy onto a taken name arrives as "name(2)"
+	if replaced || leaf != path.Base(srcObj.remote) {
+		if err := f.renameFile(ctx, id, leaf); err != nil {
+			return nil, err
 		}
 	}
 	return &Object{fs: f, remote: remote, id: id, size: srcObj.size, sha256: srcObj.sha256, modTime: srcObj.modTime}, nil
