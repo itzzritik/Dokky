@@ -20,7 +20,7 @@ type driverDone struct{ err error }
 func offerDriver() tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
 		Question: "Install WinFsp?",
-		Line:     "Windows needs it to show your drives as folders. Windows asks for permission first.",
+		Line:     "Windows needs it to show your drives. Windows asks for permission first.",
 		Do:       "Install",
 		Positive: true,
 		Run: func(*core.State) tea.Cmd {
