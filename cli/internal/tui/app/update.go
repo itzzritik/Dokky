@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -99,9 +100,10 @@ func (a *App) restartWhenIdle() tea.Cmd {
 	return tea.Tick(restartIn, func(time.Time) tea.Msg { return restartNow{} })
 }
 
-// the service restarts onto the new dokky unless it already runs it, then this TUI opens again on it
+// the service restarts onto the new dokky unless it already runs it, then this TUI opens again on it and carries Updating on
 func (a *App) onRestartNow() tea.Cmd {
 	c, running, next := a.st.C, a.st.Snap.Version, a.pendingRestart
+	_ = os.Setenv(updatingEnv, buildinfo.Version+" "+next)
 	return func() tea.Msg {
 		if c != nil && running != next {
 			_ = c.RestartDaemon(context.Background())

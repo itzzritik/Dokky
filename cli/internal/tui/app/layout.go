@@ -43,12 +43,12 @@ func (a *App) render() string {
 	var more *core.Action
 	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
-	case a.restartOpen || !a.st.Connected || a.removedNow():
+	case a.updatingNow():
+		passes = append(passes, ui.Pass{Layer: a.updatingLayer(a.updating(), w, h)})
+		right = nil
+	case !a.st.Connected || a.removedNow():
 		passes = append(passes, ui.Pass{Layer: a.splashLayer(a.splash(), w, h)})
-		switch {
-		case a.restartOpen:
-			right = nil
-		case a.failed:
+		if a.failed {
 			left = []core.Action{{Key: "enter", Label: "start dokky"}}
 		}
 	case a.gate != nil:
@@ -67,7 +67,7 @@ func (a *App) render() string {
 		}
 	}
 	for i, win := range a.windows {
-		if a.restartOpen {
+		if a.updatingNow() {
 			break
 		}
 		// windows stay clear of the footer row

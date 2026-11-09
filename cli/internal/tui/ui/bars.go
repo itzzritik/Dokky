@@ -28,6 +28,42 @@ func ThinBar(w int, frac, t float64, tone, bg color.Color) string {
 	return b.String()
 }
 
+// progress that only moves forward: water deepening along the fill with a soft edge and a light running over it; with wait the light runs the whole track, for a step nothing can measure
+func FlowBar(w int, frac, t float64, wait bool) string {
+	p := P()
+	f := float64(w) * math.Max(0, math.Min(1, frac))
+	n := int(f)
+	lo, hi, shine := RampAt(.42), RampAt(.84), color.Color(white)
+	// white washes out on a light screen, so the light there is a paler water
+	if !p.Dark {
+		lo, hi, shine = RampAt(.62), RampAt(.95), p.Ramp[2]
+	}
+	// one speed whatever the fill, so the light never jumps as the bar grows
+	at := math.Mod(t/2.4, 1)*float64(w+12) - 6
+	var b strings.Builder
+	for i := 0; i < w; i++ {
+		fill := Mix(lo, hi, float64(i)/math.Max(1, float64(w-1)))
+		glow := 0.0
+		if !Reduced() {
+			glow = math.Exp(-math.Pow((float64(i)-at)/3, 2))
+		}
+		c := p.Line
+		switch {
+		case i < n:
+			c = Mix(fill, shine, .45*glow)
+			if i == n-1 && frac < 1 {
+				c = Mix(c, shine, .25)
+			}
+		case i == n && f > float64(n):
+			c = Mix(p.Line, fill, f-float64(n))
+		case wait:
+			c = Mix(p.Line, fill, .7*glow)
+		}
+		b.WriteString(Paint(G.Heavy, c, nil, false))
+	}
+	return b.String()
+}
+
 // all meter motion in one switch: the rippling surface, the gloss sweep and the grow-in
 const MeterMotion = true
 
