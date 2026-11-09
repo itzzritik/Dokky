@@ -102,6 +102,7 @@ next.exited.then((exitCode) => {
 const id = crypto.randomUUID();
 const warm: [string, string][] = [
   ["GET", "/api/v1/sync"],
+  ["GET", "/api/v1/vault"],
   ["POST", "/api/v1/cli/login/start"],
   ["POST", "/api/v1/cli/login/poll"],
   ["PUT", `/api/v1/services/${id}`],

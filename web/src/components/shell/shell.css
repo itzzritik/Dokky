@@ -698,6 +698,25 @@
     color: var(--destructive);
     background: color-mix(in srgb, var(--destructive) 12%, transparent);
   }
+  .setting[data-tone="success"] .setting-icon {
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
+  }
+  .setting[data-tone="warning"] .setting-icon {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+  }
+  .key-print {
+    flex-shrink: 0;
+    padding: 5px 9px;
+    font: 500 13px / 1 var(--font-mono);
+    color: var(--foreground);
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    background: var(--raise);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+  }
   .identity {
     display: flex;
     flex-wrap: wrap;

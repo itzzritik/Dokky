@@ -60,6 +60,9 @@ type StatusReply struct {
 	Pending      bool          `json:"pending"`
 	Offline      bool          `json:"offline"`
 	SignedOut    bool          `json:"signedOut"`
+	Vault        string        `json:"vault,omitempty"`     // setup, locked or unlocked
+	Locked       bool          `json:"locked,omitempty"`    // waiting for the master password; drives are not mounted
+	SyncWaits    string        `json:"syncWaits,omitempty"` // why a signed-in device is not syncing, in a sentence
 }
 
 type MountStatus struct {
@@ -78,7 +81,11 @@ type MountStatus struct {
 
 type Daemon struct {
 	eng          mountEngine
-	st           *store.Store
+	st           *store.Store // guarded by mu; nil after an erase until the next save opens a fresh one
+	vk           *keeper
+	lockReq      chan struct{} // vault.lock ends the unlocked phase
+	closed       atomic.Bool   // the phase ended; loops still running stop
+	keepVault    bool          // guarded by mu; the person left the account, so this device keeps its master password
 	home         string
 	cacheDir     string
 	log          *slog.Logger
@@ -158,10 +165,10 @@ func DefaultPaths() Paths {
 }
 
 func Run(ctx context.Context, p Paths) (err error) {
-	var watchdog *time.Timer
+	var watchdog atomic.Pointer[time.Timer]
 	defer func() {
-		if watchdog != nil {
-			watchdog.Stop()
+		if t := watchdog.Load(); t != nil {
+			t.Stop()
 		}
 	}()
 	if p.State == "" || p.Cache == "" {
@@ -185,9 +192,9 @@ func Run(ctx context.Context, p Paths) (err error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var d *Daemon
+	var cur atomic.Pointer[Daemon]
 	eng, err := engine.Start(p.Cache, func(serviceID, token string) {
-		if d != nil {
+		if d := cur.Load(); d != nil {
 			d.onToken(serviceID, token)
 		}
 	})
@@ -209,18 +216,81 @@ func Run(ctx context.Context, p Paths) (err error) {
 		log.Info("service file updated, restarting")
 		return ErrRestart
 	}
-	st, err := store.Open(p.State, store.SystemKeyring(p.State))
+	k := newKeeper(p.State, log)
+	if err := k.load(); err != nil {
+		return err
+	}
+	return runPhases(ctx, phaseEnv{p: p, eng: eng, ejected: eng.Ejected(), k: k, home: home, log: log, cur: &cur, watchdog: &watchdog})
+}
+
+// setup and unlocked run the drives; locked waits for the master password. a manual lock goes back to locked
+// without the login prompt. the engine and the process lock outlive every phase
+func runPhases(ctx context.Context, e phaseEnv) error {
+	// a restart moments ago handed its key over, so a device that unlocks with a prompt does not lock on an update
+	ak := e.k.takeHandoff()
+	if ak == nil {
+		_, ak = e.k.startPhase()
+	}
+	ask := true
+	for {
+		if ak == nil && e.k.state() == api.VaultLocked {
+			var err error
+			if ak, err = runLocked(ctx, e, ask); err != nil || ak == nil {
+				return err
+			}
+		}
+		err := runUnlocked(ctx, e, ak)
+		if !errors.Is(err, errLocking) {
+			return err
+		}
+		ak, ask = nil, false
+	}
+}
+
+// runUnlocked is the daemon as it always ran; ak is nil in setup, where the store still uses the old key
+func runUnlocked(ctx context.Context, e phaseEnv, ak []byte) (err error) {
+	p, k, log := e.p, e.k, e.log
+	// the process carries on after a lock, so its watchdog stands down once every step below is done
+	defer func() {
+		if errors.Is(err, errLocking) {
+			e.disarm()
+		}
+	}()
+	if ak != nil {
+		k.unlocked(ak)
+	}
+	st, err := k.openStore()
 	if err != nil {
+		k.lock()
 		return err
 	}
 	data, err := st.Load()
 	if err != nil {
+		st.Close()
+		k.lock()
 		return err
 	}
 
-	d = newDaemon(eng, st, data, home, p.Cache, log)
+	d := newDaemon(e.eng, st, data, e.home, p.Cache, log, k)
+	d.lockReq = make(chan struct{}, 1)
+	if e.adjust != nil {
+		e.adjust(d)
+	}
 	d.startUpdater(p)
 	d.loadServices()
+	e.cur.Store(d)
+	defer func() {
+		e.cur.Store(nil)
+		d.closed.Store(true)
+		if errors.Is(err, errLocking) {
+			d.lockDown()
+		}
+		d.mu.Lock()
+		if d.st != nil {
+			d.st.Close()
+		}
+		d.mu.Unlock()
+	}()
 	defer d.shutdown()
 
 	ln, err := platform.Listen(platform.SocketAddr(p.State))
@@ -241,33 +311,33 @@ func Run(ctx context.Context, p Paths) (err error) {
 	}()
 	// remounting can take a while; with the socket already up, a window opening now sees dokky starting, not stopped, and never starts or restarts it again
 	d.remountAtStart(p.State)
-	go d.syncLoop(ctx)
+	// a lock ends this phase but not the process, so its loops stop with it
+	pctx, pcancel := context.WithCancel(ctx)
+	syncDone := make(chan struct{})
+	go func() { d.syncLoop(pctx); close(syncDone) }()
+	defer func() { pcancel(); <-syncDone }()
 	d.resumeRemovals()
 	d.resumeLeaving()
-	sampleCtx, stopSample := context.WithCancel(ctx)
 	sampled := make(chan struct{})
-	go func() { d.sample(sampleCtx); close(sampled) }()
-	defer func() { stopSample(); <-sampled }()
-	log.Info("daemon started", "version", buildinfo.Version)
-	d.autoUpdate(ctx, time.Now())
+	go func() { d.sample(pctx); close(sampled) }()
+	defer func() { pcancel(); <-sampled }()
+	log.Info("daemon started", "version", buildinfo.Version, "vault", k.state())
+	d.autoUpdate(pctx, time.Now())
 	wipe := make(chan *InstallWatch)
-	go d.watchInstalls(ctx, wipe)
+	go d.watchInstalls(pctx, wipe)
 
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
 	// runs first of the deferred steps, so it watches every one of them
-	defer func() {
-		restart := errors.Is(err, ErrRestart)
-		watchdog = time.AfterFunc(shutdownLimit, func() {
-			log.Error("dokky took too long to stop, exiting anyway", "restart", restart)
-			StuckExit(restart)
-		})
-	}()
+	defer func() { e.arm(errors.Is(err, ErrRestart)) }()
 	for {
 		select {
 		case <-ctx.Done():
 			log.Info("daemon stopping")
 			return nil
+		case <-d.lockReq:
+			log.Info("dokky locking")
+			return errLocking
 		case w := <-wipe:
 			cancel()
 			<-served
@@ -275,7 +345,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 			// draining commands can take a while; a reinstall meanwhile wins
 			if d.checkInstalls(w, time.Now(), pathExists) != Wipe {
 				log.Info("dokky is installed again, not uninstalling")
-				d.noteResume(p.State)
+				d.restarting(p.State)
 				return ErrRestart
 			}
 			cleaned := make(chan struct{})
@@ -288,28 +358,50 @@ func Run(ctx context.Context, p Paths) (err error) {
 			return nil
 		case <-restart:
 			log.Info("daemon restarting")
-			d.noteResume(p.State)
+			d.restarting(p.State)
 			return ErrRestart
 		case serr := <-served:
 			serving = false
 			return fmt.Errorf("ipc server stopped: %v", serr)
-		case <-eng.Ejected():
+		case <-e.ejected:
 			_ = d.refresh()
 			d.publish()
 		case <-tick.C:
-			d.tick(ctx)
-			if d.autoUpdate(ctx, time.Now()) {
+			d.tick(pctx)
+			if d.autoUpdate(pctx, time.Now()) {
 				log.Info("daemon restarting onto the new dokky", "version", installedVersion(p.State))
-				d.noteResume(p.State)
+				d.restarting(p.State)
 				return ErrRestart
 			}
 		}
 	}
 }
 
-func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir string, log *slog.Logger) *Daemon {
+// lockDown runs once the drives are detached: services leave rclone's memory and the key is wiped. every sync
+// and change has finished first, so nothing seals with a wiped key
+func (d *Daemon) lockDown() {
+	d.vk.op.Lock()
+	defer d.vk.op.Unlock()
+	d.syncMu.Lock()
+	defer d.syncMu.Unlock()
+	d.opMu.Lock()
+	defer d.opMu.Unlock()
+	d.mu.Lock()
+	services := slices.Clone(d.data.Services)
+	d.flow = nil
+	d.mu.Unlock()
+	for _, s := range services {
+		d.eng.DeleteService(s.ID)
+	}
+	d.loop.Reset()
+	d.vk.lock()
+	logx.SetSecrets(nil)
+	d.log.Info("dokky locked")
+}
+
+func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir string, log *slog.Logger, k *keeper) *Daemon {
 	return &Daemon{
-		eng: eng, st: st, data: data, home: home, cacheDir: cacheDir, log: log, loop: dsync.Loop{Log: log},
+		eng: eng, st: st, vk: k, data: data, home: home, cacheDir: cacheDir, log: log, loop: dsync.Loop{Log: log},
 		isMounted: engine.IsMounted, forceUnmount: forceUnmount, openURL: platform.OpenURL,
 		unregister: unregisterService, stopService: StopService, removePath: platform.RemovePath, removeLater: deleteAfterExit, notify: platform.Notify,
 		unmountedAt: map[string]time.Time{}, cleaned: map[string]time.Time{}, states: map[string]*mountState{}, edits: map[string]string{},
@@ -371,7 +463,8 @@ func (d *Daemon) tick(ctx context.Context) {
 	d.publish()
 }
 
-// takes every drive down but keeps each one's mounted flag, so the next start, e.g. onto an update, mounts them again
+// takes every drive down but keeps each one's mounted flag, so the next start, e.g. onto an update or after an
+// unlock, mounts them again
 func (d *Daemon) shutdown() {
 	d.closing.Store(true)
 	d.opMu.Lock()
@@ -394,6 +487,21 @@ func (d *Daemon) shutdown() {
 			*cur = mountState{state: stateUnmounted}
 		}
 		d.mu.Unlock()
+	}
+}
+
+// restarting runs on every restart out of the unlocked phase: the drives to bring back, and the key handed to
+// the next start
+func (d *Daemon) restarting(state string) {
+	d.noteResume(state)
+	d.mu.Lock()
+	removed := d.data.Removal != nil
+	d.mu.Unlock()
+	if removed {
+		return
+	}
+	if err := d.vk.handOff(); err != nil {
+		d.log.Warn("hand the key to the next start", "err", err)
 	}
 }
 
@@ -555,6 +663,30 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			requestRestart(restart)
 			return nil, nil
 		},
+		api.MVaultSetup: decodeCtx(func(ctx context.Context, p api.PasswordParams) (api.RecoveryKeyReply, error) {
+			return d.vaultSetup(ctx, p.Password)
+		}),
+		api.MVaultUnlock: decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
+			return struct{}{}, d.vaultUnlockOpen(ctx, p)
+		}),
+		api.MVaultRecover: decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
+			return struct{}{}, d.vaultRecover(ctx, p)
+		}),
+		api.MVaultLock:      decode(func(struct{}) (struct{}, error) { return struct{}{}, d.vaultLock() }),
+		api.MVaultAuthorize: decodeCtx(d.vaultAuthorize),
+		api.MVaultSettings:  decode(func(p api.VaultSettingsParams) (struct{}, error) { return struct{}{}, d.vaultSettings(p) }),
+		api.MVaultChangePassword: decodeCtx(func(ctx context.Context, p api.ChangePasswordParams) (struct{}, error) {
+			return struct{}{}, d.changePassword(ctx, p)
+		}),
+		api.MVaultNewRecoveryKey: decodeCtx(func(ctx context.Context, p api.PasswordParams) (api.RecoveryKeyReply, error) {
+			return d.newRecoveryKey(ctx, p.Password)
+		}),
+		api.MVaultJoin: decodeCtx(func(ctx context.Context, p api.PasswordParams) (struct{}, error) {
+			return struct{}{}, d.vaultJoin(ctx, p.Password)
+		}),
+		api.MVaultJoinRecover: decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
+			return struct{}{}, d.vaultJoinRecover(ctx, p.RecoveryKey, p.NewPassword)
+		}),
 	}
 	for _, m := range kickAfter {
 		h[m] = d.kicked(h[m])
@@ -610,6 +742,10 @@ func (d *Daemon) status() StatusReply {
 	r.LoggedIn = d.data.Account != nil
 	r.Pending = r.LoggedIn && d.data.Account.Pending
 	r.Offline, r.SignedOut = d.offline, d.signedOut
+	r.Vault = d.vk.state()
+	if r.LoggedIn && !r.Pending {
+		r.SyncWaits = d.syncBlocked()
+	}
 	for _, m := range d.data.Mounts {
 		st := d.state(m.ID)
 		ms := MountStatus{ID: m.ID, Name: m.Name, ServiceID: m.ServiceID, State: st.state, Error: logx.Redact(st.err), MountPoint: d.mountPoint(m), CacheMaxAge: d.effective(m).VFS.CacheMaxAge}
@@ -874,8 +1010,13 @@ func (d *Daemon) dropMount(id string) {
 	delete(d.states, id)
 }
 
+// caller holds mu
 func (d *Daemon) save() error {
-	return d.st.Save(d.data)
+	st, err := d.stLocked()
+	if err != nil {
+		return err
+	}
+	return st.Save(d.data)
 }
 
 func (d *Daemon) setSecrets() {

@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
@@ -54,6 +55,10 @@ func (a *App) render() string {
 	case a.gate != nil:
 		passes = append(passes, ui.Pass{Layer: a.gate.View(a.st, w, h)})
 		left, right = a.gate.Actions(a.st), a.globals()
+		// a vault screen takes every key and lists its own way out
+		if a.capturing() && len(a.windows) == 0 {
+			right = nil
+		}
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
 			ui.Header(w, a.tabNames(), a.active, a.account()),
@@ -87,12 +92,16 @@ func (a *App) render() string {
 			}
 		}
 	}
+	if a.lock != nil && !a.updatingNow() {
+		passes = append(passes, ui.Pass{Layer: a.blank(w, h), Modal: true}, ui.Pass{Layer: a.lock.View(a.st, w, h), Modal: true})
+		left, right, more = a.lock.Actions(a.st), nil, nil
+	}
 	version := "v" + buildinfo.Version
 	if strings.Contains(buildinfo.Version, "dev") {
 		version = "vDev"
 	}
 	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, more, version).Y(h - 2)})
-	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) {
+	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) && a.lock == nil {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
 	out, hits, caret := ui.Compose(w, h, passes...)
@@ -101,6 +110,12 @@ func (a *App) render() string {
 }
 
 var moreKey = core.Action{Key: "?", Label: "more"}
+
+// the window lock hides everything under it
+func (a *App) blank(w, h int) *lipgloss.Layer {
+	row := ui.Paint(strings.Repeat(" ", w), nil, ui.P().Bg, false)
+	return lipgloss.NewLayer(strings.TrimSuffix(strings.Repeat(row+"\n", h), "\n"))
+}
 
 // actions on every tab, in the footer's right side and the menu
 func (a *App) globals() []core.Action {
@@ -125,6 +140,8 @@ func (a *App) account() string {
 	switch {
 	case acct.Pending:
 		return spin(ui.Paint("Signing in", p.Accent, nil, false))
+	case st.Snap.Vault.Need == api.NeedJoin && st.Snap.Vault.State == api.VaultUnlocked:
+		return ui.L(nil).B(ui.G.Bang, p.Buoy).Sp(1).T("Sync paused", p.Buoy).String()
 	case st.Updating == "Update ready":
 		return ui.L(nil).B(ui.G.Check, p.Accent).Sp(1).T("Update ready", p.Muted).String()
 	case st.Updating != "":

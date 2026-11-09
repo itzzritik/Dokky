@@ -186,7 +186,7 @@ func (d *Daemon) drain(id string) {
 	d.publish()
 	for {
 		m, ok := d.findMount(byID(id))
-		if !ok || !d.leaving(id) {
+		if !ok || !d.leaving(id) || d.closed.Load() {
 			return
 		}
 		wait := drainEvery

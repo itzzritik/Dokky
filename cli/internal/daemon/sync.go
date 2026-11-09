@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	dsync "github.com/itzzritik/dokky/cli/internal/sync"
@@ -24,21 +25,97 @@ type codedError struct{ code, msg string }
 func (e *codedError) Error() string { return e.msg }
 func (e *codedError) Code() string  { return e.code }
 
+// syncNow pulls, and pushes refreshed tokens, once the vault is unlocked and linked to the account
 func (d *Daemon) syncNow(ctx context.Context) error {
+	acct := d.acct()
+	if acct == nil || acct.Pending || d.closed.Load() {
+		return nil
+	}
+	if err := d.ready(ctx, acct); err != nil {
+		d.publish()
+		return err
+	}
+	if !d.canSync() {
+		d.publish()
+		return nil
+	}
+	ref, err := d.pull(ctx)
+	if err == nil {
+		d.follow(ctx, acct, ref)
+	}
+	return err
+}
+
+// ready links an unlinked vault, or in setup learns whether the account already has one
+func (d *Daemon) ready(ctx context.Context, acct *store.Account) error {
+	k := d.vk
+	f := k.current()
+	if k.isPaused() || k.state() == api.VaultLocked || (f != nil && f.Account) {
+		return nil
+	}
+	k.op.Lock()
+	defer k.op.Unlock()
+	need, err := d.link(ctx, acct)
+	if err != nil {
+		return d.checked(acct, err)
+	}
+	k.setNeed(need)
+	return nil
+}
+
+func (d *Daemon) canSync() bool {
+	k := d.vk
+	f := k.current()
+	return k.state() == api.VaultUnlocked && f != nil && f.Account && !k.isPaused()
+}
+
+// caller holds mu; why a signed-in device does not sync, "" when it does
+func (d *Daemon) syncBlocked() string {
+	k := d.vk
+	f := k.current()
+	switch {
+	case k.state() == api.VaultSetup:
+		return "Sync waits for a master password: open dokky to create one."
+	case k.state() == api.VaultLocked:
+		return "Sync waits for dokky to be unlocked."
+	case k.isPaused():
+		return "Sync waits for your account's master password: open dokky to enter it."
+	case !f.Account:
+		return "Sync waits to link this computer's master password to your account."
+	}
+	return ""
+}
+
+func (d *Daemon) pull(ctx context.Context) (*dsync.VaultRef, error) {
 	d.syncMu.Lock()
 	defer d.syncMu.Unlock()
 	d.mu.Lock()
 	acct, saves := d.data.Account, d.saves
 	d.mu.Unlock()
 	if acct == nil || acct.Pending {
-		return nil
+		return nil, nil
 	}
-	snap, err := d.loop.Tick(ctx, client(acct), acct.Rev)
+	c := d.client(acct)
+	if c.Sealer == nil {
+		return nil, nil
+	}
+	snap, err := d.loop.Tick(ctx, c, acct.Rev)
+	if d.vaultTrouble(err) {
+		d.note(nil)
+		d.publish()
+		return nil, nil
+	}
 	err = d.answer(acct, err)
+	var ref *dsync.VaultRef
 	if err == nil {
 		d.synced(ctx, acct)
 		if snap != nil {
+			ref = snap.Vault
+			d.vk.saw(snap.Vault, len(snap.Legacy))
 			d.apply(acct, saves, *snap)
+			if len(snap.Legacy) > 0 {
+				d.reseal(ctx, c, *snap)
+			}
 		}
 		if d.reportDue.Load() {
 			go d.reportDrives()
@@ -50,14 +127,102 @@ func (d *Daemon) syncNow(ctx context.Context) error {
 		}
 	}
 	d.publish()
-	return err
+	return ref, err
+}
+
+// vaultTrouble pauses sync on another key and relinks when the account lost its vault; true when it was one
+func (d *Daemon) vaultTrouble(err error) bool {
+	k := d.vk
+	switch {
+	case errors.Is(err, dsync.ErrKeyMismatch):
+		k.pause(err)
+		return true
+	case errors.Is(err, dsync.ErrNoVault):
+		// the next sync links it again; a vault change running now decides for itself
+		if k.op.TryLock() {
+			if f := k.current(); f != nil && f.Account {
+				f.Account = false
+				if serr := k.save(f); serr != nil {
+					d.log.Error("save vault.json", "err", serr)
+				}
+			}
+			k.op.Unlock()
+		}
+		d.log.Warn("the account has no vault, linking this computer's again", "err", err)
+		d.kick()
+		return true
+	case errors.Is(err, dsync.ErrUpdateRequired):
+		d.log.Error("the server asked a vault-aware dokky to update, which should not happen", "err", err)
+	}
+	return false
+}
+
+// reseal seals each service the server still holds with its own key and saves it back: the whole migration.
+// one that fails waits for the next pull
+func (d *Daemon) reseal(ctx context.Context, c *dsync.Client, snap dsync.Snapshot) {
+	left := 0
+	for _, id := range snap.Legacy {
+		i := slices.IndexFunc(snap.Services, func(s store.Service) bool { return s.ID == id })
+		if i < 0 {
+			continue
+		}
+		s := snap.Services[i]
+		d.opMu.Lock()
+		saved, err := dsync.SaveService(ctx, c, s)
+		if err == nil {
+			d.mu.Lock()
+			if j := slices.IndexFunc(d.data.Services, func(x store.Service) bool { return x.ID == id }); j >= 0 && d.data.Services[j].Version == s.Version {
+				d.data.Services = slices.Clone(d.data.Services)
+				d.data.Services[j] = saved
+				err = d.save()
+			}
+			d.mu.Unlock()
+		}
+		d.opMu.Unlock()
+		if err != nil {
+			left++
+			d.vaultTrouble(err)
+			d.log.Warn("seal a drive login for the account", "service", s.Name, "err", err)
+		}
+	}
+	d.vk.setLegacy(left)
+	if left < len(snap.Legacy) {
+		d.log.Info("sealed drive logins with the account key", "count", len(snap.Legacy)-left)
+	}
+}
+
+// follow takes the account's new wraps when its vault changed: the master password changed on another device
+func (d *Daemon) follow(ctx context.Context, acct *store.Account, ref *dsync.VaultRef) {
+	k := d.vk
+	if !k.versionChanged(ref) || !k.op.TryLock() {
+		return
+	}
+	defer k.op.Unlock()
+	remote, err := d.client(acct).GetVault(ctx)
+	if err != nil {
+		d.log.Warn("read the account's vault", "err", err)
+		return
+	}
+	f := k.current()
+	if f == nil || remote.KeyID != f.KeyID {
+		return
+	}
+	if nf, changed := followRemote(f, remote.Remote); changed {
+		if err := k.save(nf); err != nil {
+			d.log.Error("save vault.json", "err", err)
+			return
+		}
+		d.log.Info("the master password changed on another device")
+		d.publish()
+	}
+	k.setServerVersion(remote.Version)
 }
 
 func (d *Daemon) synced(ctx context.Context, acct *store.Account) {
 	var me dsync.Me
 	if acct.Name == "" && acct.Email == "" {
 		var err error
-		if me, err = client(acct).Me(ctx); err != nil {
+		if me, err = d.client(acct).Me(ctx); err != nil {
 			d.log.Warn("read account details", "err", err)
 		}
 	}
@@ -94,7 +259,7 @@ func (d *Daemon) reportDrives() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	err := client(acct).ReportDrives(ctx, ids)
+	err := d.client(acct).ReportDrives(ctx, ids)
 	d.reportDue.Store(err != nil)
 	if err == nil {
 		d.mu.Lock()
@@ -199,10 +364,22 @@ func (d *Daemon) serverFirst(save func(*dsync.Client) error) error {
 	if acct.Pending {
 		return &codedError{"login_pending", "finish logging in first: run dokky login"}
 	}
-	return d.checked(acct, save(client(acct)))
+	d.mu.Lock()
+	why := d.syncBlocked()
+	d.mu.Unlock()
+	if why != "" {
+		d.kick()
+		return &codedError{"vault", why}
+	}
+	return d.checked(acct, save(d.client(acct)))
 }
 
 func (d *Daemon) checked(acct *store.Account, err error) error {
+	if d.vaultTrouble(err) {
+		d.note(nil)
+		d.publish()
+		return coded(err)
+	}
 	if d.note(err) {
 		d.removedBy(acct, err)
 	}
@@ -241,6 +418,10 @@ func coded(err error) error {
 		return &codedError{"signed_out", "signed out on the server: run dokky logout, then dokky login"}
 	case errors.Is(err, dsync.ErrNameTaken):
 		return &codedError{"name_taken", "that name is already used in your dokky account"}
+	case errors.Is(err, dsync.ErrKeyMismatch):
+		return &codedError{"key_mismatch", "This computer's key is not your account's. Enter your account's master password in dokky."}
+	case errors.Is(err, dsync.ErrNoVault):
+		return &codedError{"no_vault", "Your dokky account has no master password yet; dokky links this computer's when it next syncs."}
 	case dsync.Offline(err):
 		return &codedError{"offline", "could not reach the dokky server, nothing was changed; try again when online: " + err.Error()}
 	}
@@ -297,11 +478,30 @@ func (d *Daemon) clearCache() error {
 	return errors.Join(errs...)
 }
 
-// caller holds opMu; leaves the device like a fresh install
+// caller holds opMu; leaves the device like a fresh install. a device the person signed out keeps its master
+// password, unlinked; a removed one, or an uninstall, forgets the vault, the device key and the store
 func (d *Daemon) forget() error {
 	d.mu.Lock()
 	services := d.data.Services
-	err := errors.Join(d.st.Delete(), writePin(d.upd.paths.State, ""))
+	keep := d.keepVault && d.vk.current() != nil
+	d.keepVault = false
+	var err error
+	if d.st != nil {
+		err = d.st.Delete()
+	}
+	err = errors.Join(err, writePin(d.upd.paths.State, ""))
+	if keep {
+		f := d.vk.current()
+		f.Account = false
+		err = errors.Join(err, d.vk.save(f))
+		d.vk.linked(dsync.RemoteVault{})
+	} else if d.vk.current() != nil {
+		err = errors.Join(err, d.vk.erase())
+		if d.st != nil {
+			d.st.Close()
+			d.st = nil
+		}
+	}
 	d.data = store.Fresh()
 	d.states, d.edits = map[string]*mountState{}, map[string]string{}
 	d.flow, d.clashes = nil, nil
@@ -321,7 +521,7 @@ func (d *Daemon) devices(ctx context.Context) ([]dsync.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	list, err := client(acct).Devices(ctx)
+	list, err := d.client(acct).Devices(ctx)
 	if err == nil {
 		d.mu.Lock()
 		d.peers = list
@@ -338,9 +538,13 @@ func (d *Daemon) revokeDevice(ctx context.Context, id string) error {
 	if id == acct.DeviceID {
 		id = "self"
 	}
-	err = client(acct).Revoke(ctx, id, "remove")
+	err = d.client(acct).Revoke(ctx, id, "remove")
 	// already removed, or signed out on the server: this device still leaves
 	if id == "self" && (err == nil || errors.Is(err, dsync.ErrRevoked) || errors.Is(err, dsync.ErrUnauthorized)) {
+		// the person removed this computer themselves, so it keeps its master password
+		d.mu.Lock()
+		d.keepVault = true
+		d.mu.Unlock()
 		mode := "remove"
 		if errors.Is(err, dsync.ErrRevoked) {
 			mode = dsync.RevokedMode(err)
@@ -362,7 +566,7 @@ func (d *Daemon) renameDevice(ctx context.Context, id, name string) error {
 	if id == "" || id == acct.DeviceID {
 		id = "self"
 	}
-	return d.answer(acct, client(acct).RenameDevice(ctx, id, name))
+	return d.answer(acct, d.client(acct).RenameDevice(ctx, id, name))
 }
 
 func (d *Daemon) account() (*store.Account, error) {

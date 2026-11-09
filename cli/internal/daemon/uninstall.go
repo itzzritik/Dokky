@@ -220,7 +220,6 @@ func writeInstalls(state string, records []string, w *InstallWatch) error {
 }
 
 func DeepClean(d *Daemon) {
-	p := d.upd.paths
 	d.log.Warn("dokky was removed with npm, uninstalling it")
 
 	d.opMu.Lock()
@@ -266,9 +265,9 @@ func DeepClean(d *Daemon) {
 	if acct != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), revokeTimeout)
 		// uninstall already erased everything here, so the server hears both at once
-		if err := client(acct).Revoke(ctx, "self", "erase"); err != nil {
+		if err := d.client(acct).Revoke(ctx, "self", "erase"); err != nil {
 			d.log.Warn("revoke device", "err", err)
-		} else if err := client(acct).Erased(ctx); err != nil {
+		} else if err := d.client(acct).Erased(ctx); err != nil {
 			d.log.Warn("report device erased", "err", err)
 		}
 		cancel()
@@ -288,7 +287,12 @@ func DeepClean(d *Daemon) {
 		}
 	}
 	d.opMu.Unlock()
+	d.removeInstall(stopped)
+}
 
+// removeInstall takes away the service, PATH entry and dokky's own files, then stops the service
+func (d *Daemon) removeInstall(stopped []engine.QueueItem) {
+	p := d.upd.paths
 	if err := d.unregister(); err != nil {
 		d.log.Warn("unregister the dokky service", "err", err)
 	}

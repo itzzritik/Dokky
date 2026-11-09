@@ -4,6 +4,7 @@ import {
   caller,
   changed,
   type IdContext,
+  legacyGate,
   mounts,
   mountWire,
   notFound,
@@ -20,6 +21,11 @@ export async function PUT(
   const c = await caller(req, params);
   if (c instanceof Response) {
     return c;
+  }
+  // mounts hold no secrets, but old dokky can't see the sealed services they point to
+  const blocked = await legacyGate(req, c.userId);
+  if (blocked) {
+    return blocked;
   }
   const body = await readBody(req, mountBody);
   if (body instanceof Response) {
@@ -48,6 +54,10 @@ export async function DELETE(
   const c = await caller(req, params);
   if (c instanceof Response) {
     return c;
+  }
+  const blocked = await legacyGate(req, c.userId);
+  if (blocked) {
+    return blocked;
   }
   const { deletedCount } = await mounts().deleteOne({
     _id: c.id,

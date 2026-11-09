@@ -8,7 +8,9 @@ export type AuditAction =
   | "mount.delete"
   | "token.writeback"
   | "device.revoke"
-  | "device.rename";
+  | "device.rename"
+  | "vault.create"
+  | "vault.rekey";
 
 export const clientIp = (req: Request): string =>
   req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||

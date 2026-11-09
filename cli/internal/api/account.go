@@ -22,6 +22,7 @@ type State struct {
 	CacheDir   string   `json:"cacheDir"`
 	Settings   Settings `json:"settings"`
 	Removed    *Removed `json:"removed,omitempty"`
+	Vault      Vault    `json:"vault"`
 }
 
 // this device was removed from the account and is leaving

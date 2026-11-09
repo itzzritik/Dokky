@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/doctor"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/platform"
+	"github.com/itzzritik/dokky/cli/internal/store"
 	"github.com/itzzritik/dokky/cli/internal/tui"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 )
@@ -39,7 +41,7 @@ func doctorChecks(ctx context.Context) []tui.Check {
 	}
 	<-looked
 	out := []tui.Check{serviceCheck(env, by), updatesCheck(s, env.Version, rel, relErr, by["github.com"]),
-		cacheCheck(env, s, by["disk space"]), keychainCheck(by["keychain"])}
+		cacheCheck(env, s, by["disk space"]), keychainCheck(by["keychain"], env)}
 	if runtime.GOOS != "darwin" {
 		return append(out, driverCheck(by))
 	}
@@ -116,13 +118,28 @@ func cacheCheck(env doctor.Env, s api.State, disk doctor.Check) tui.Check {
 	return c
 }
 
-func keychainCheck(k doctor.Check) tui.Check {
+// before a master password the keychain key opens the drive passwords; after, the device key opens the vault at
+// startup, and in password mode nothing is kept here
+func keychainCheck(k doctor.Check, env doctor.Env) tui.Check {
 	where := map[string]string{"darwin": "macOS keychain", "windows": "Windows Credential Manager"}[runtime.GOOS]
 	where = cmp.Or(where, "system keyring")
-	c := tui.Check{Name: "Keychain", Status: "Key saved", Detail: "Your drive passwords are stored encrypted. The key that opens them lives in the " + where + ".", Tone: tui.Good}
 	state, _ := platform.StateDir()
-	c.Facts = [][2]string{{"Key in", where}, {"Passwords", core.Home(filepath.Join(state, "store.enc"))}}
+	passwords := core.Home(filepath.Join(state, "store.enc"))
+	c := tui.Check{Name: "Keychain", Status: "Key saved", Tone: tui.Good, Facts: [][2]string{{"Key in", where}, {"Passwords", passwords}}}
+	switch env.Unlock {
+	case "":
+		c.Detail = "Your drive passwords are stored encrypted. The key that opens them lives in the " + where + "."
+	case "password":
+		c.Status, c.Detail = "No key saved", "Your drive passwords are encrypted with your master password. dokky asks for it at startup, so no key is kept on this computer."
+		c.Facts[0] = [2]string{"Opens with", "Master password"}
+		return c
+	default:
+		c.Detail = "Your drive passwords are encrypted with your master password. A device key in the " + where + " opens them at startup without asking."
+	}
 	switch {
+	case errors.Is(env.KeyringErr, store.ErrNotFound) && env.Unlock != "":
+		c.Status, c.Tone, c.Fix = "Key missing", tui.Warn, upper(k.Fix)+"."
+		c.Facts[0][1] = "Missing, dokky asks for the master password"
 	case k.Warn:
 		c.Status, c.Tone, c.Fix = "Key in a file", tui.Warn, upper(k.Fix)+"."
 		c.Facts[0][1] = "A file, no keyring found"

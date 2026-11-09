@@ -31,9 +31,15 @@ func newStatusCmd() *cobra.Command {
 func formatStatus(st daemon.StatusReply) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "dokky daemon %s\n\n", st.Version)
-	if len(st.Mounts) == 0 {
+	if st.SyncWaits != "" {
+		b.WriteString(st.SyncWaits + "\n\n")
+	}
+	switch {
+	case st.Locked:
+		b.WriteString("dokky is locked. Run dokky to unlock your drives.\n")
+	case len(st.Mounts) == 0:
 		b.WriteString("No mounts yet. Run dokky to add one.\n")
-	} else {
+	default:
 		rows := [][]string{{"NAME", "STATE", "MOUNT POINT", "CACHE", "UPLOADS"}}
 		for _, m := range st.Mounts {
 			rows = append(rows, []string{m.Name, m.State, m.MountPoint, fs.SizeSuffix(m.CacheBytes).ByteUnit(),

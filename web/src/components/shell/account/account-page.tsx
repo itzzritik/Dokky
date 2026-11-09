@@ -3,7 +3,6 @@
 import {
   CircleUserIcon,
   LogOutIcon,
-  type LucideIcon,
   MonitorIcon,
   SunMoonIcon,
   TrashIcon,
@@ -23,6 +22,8 @@ import { Panel } from "../kit/panel";
 import { logout } from "../session";
 import type { Me } from "../types";
 import { DeleteAccountDialog } from "./delete-account-dialog";
+import { SecurityPanel } from "./security-panel";
+import { Setting } from "./setting";
 
 const WORD_BREAK = /[\s._-]+/u;
 
@@ -33,31 +34,6 @@ const initials = (name: string) => {
     .join("")
     .toUpperCase();
 };
-
-function Setting({
-  action,
-  icon: Icon,
-  note,
-  title,
-}: {
-  action: ReactNode;
-  icon: LucideIcon;
-  note: string;
-  title: string;
-}) {
-  return (
-    <div className="setting">
-      <span aria-hidden className="setting-icon">
-        <Icon />
-      </span>
-      <p>
-        {title}
-        <small>{note}</small>
-      </p>
-      {action}
-    </div>
-  );
-}
 
 function Stat({
   children,
@@ -175,9 +151,10 @@ export function AccountPage() {
           </div>
         </div>
       </Panel>
+      <SecurityPanel delay={80} />
       <Panel
         className="account-wide"
-        delay={80}
+        delay={120}
         icon={MonitorIcon}
         title="This browser"
       >
@@ -204,7 +181,7 @@ export function AccountPage() {
       </Panel>
       <Panel
         className="account-wide"
-        delay={120}
+        delay={160}
         icon={TriangleAlertIcon}
         title="Danger zone"
         tone="danger"

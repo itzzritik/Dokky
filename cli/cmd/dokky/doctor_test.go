@@ -17,12 +17,19 @@ func (emptyKeyring) Delete() error        { return nil }
 
 func TestKeyringStateDetectsMissingKey(t *testing.T) {
 	state := t.TempDir()
-	_, err := keyringState(emptyKeyring{}, state)
+	_, err := keyringState(emptyKeyring{}, state, false)
 	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(filepath.Join(state, "store.enc"), []byte("x"), 0o600))
-	_, err = keyringState(emptyKeyring{}, state)
+	_, err = keyringState(emptyKeyring{}, state, false)
 	require.ErrorIs(t, err, store.ErrKeyMissing)
+
+	require.NoError(t, os.WriteFile(filepath.Join(state, "store.enc"), []byte("DKY2 locked with the master password"), 0o600))
+	_, err = keyringState(emptyKeyring{}, state, false)
+	require.NoError(t, err, "a v2 store does not need a keychain key")
+
+	_, err = keyringState(emptyKeyring{}, state, true)
+	require.ErrorIs(t, err, store.ErrNotFound, "a vault without its device key waits for the password at startup")
 }
 
 func TestDoctorLeavesTheMachineAlone(t *testing.T) {

@@ -4,6 +4,7 @@ import {
   MongoServerError,
   ObjectId,
   type OptionalUnlessRequiredId,
+  type UpdateFilter,
 } from "mongodb";
 import type { z } from "zod";
 import { type AuditAction, audit, clientIp } from "@/lib/audit";
@@ -12,6 +13,7 @@ import { authDevice } from "@/lib/device-auth";
 import { apiError } from "@/lib/errors";
 import { entityId, type mountBody } from "@/lib/schemas";
 import { aadFor, type Box, decrypt, encrypt } from "@/lib/secrets";
+import { vaults } from "@/lib/vault";
 
 interface Item {
   _id: string;
@@ -22,10 +24,14 @@ interface Item {
   version: number;
 }
 
+// options and secrets are the server-encrypted shape from before the account had a vault
 interface ServiceDoc extends Item {
+  keyId?: string;
   name: string;
-  options: Record<string, string>;
-  secrets: Record<string, Box>;
+  options?: Record<string, string>;
+  sealed?: string;
+  sealedToken?: string | null;
+  secrets?: Record<string, Box>;
   tokenExpiry?: Record<string, Date>;
   type: string;
 }
@@ -37,7 +43,7 @@ interface MountDoc extends Item {
   vfs: z.infer<typeof mountBody>["vfs"];
 }
 
-interface Caller {
+export interface Caller {
   deviceId: string;
   id: string;
   userId: string;
@@ -65,19 +71,41 @@ export const seal = (c: Caller, secrets: Record<string, string>) =>
     ])
   );
 
+const opened = (doc: ServiceDoc) =>
+  Object.fromEntries(
+    Object.entries(doc.secrets ?? {}).map(([field, box]) => [
+      field,
+      decrypt(box, aadFor(doc.userId, doc._id, field)),
+    ])
+  );
+
 export const serviceWire = (doc: ServiceDoc) => ({
   id: doc._id,
   name: doc.name,
   type: doc.type,
-  options: doc.options,
-  secrets: Object.fromEntries(
-    Object.entries(doc.secrets).map(([field, box]) => [
-      field,
-      decrypt(box, aadFor(doc.userId, doc._id, field)),
-    ])
-  ),
+  options: doc.options ?? {},
+  secrets: opened(doc),
   version: doc.version,
   updatedAt: doc.updatedAt.toISOString(),
+});
+
+const isLegacy = (doc: ServiceDoc) =>
+  doc.options !== undefined || doc.secrets !== undefined;
+
+// sealed on a device; legacy rides along until a device seals it, so the server stops decrypting
+export const sealedWire = (doc: ServiceDoc) => ({
+  id: doc._id,
+  name: doc.name,
+  type: doc.type,
+  version: doc.version,
+  updatedAt: doc.updatedAt.toISOString(),
+  keyId: doc.keyId ?? null,
+  sealed: doc.sealed ?? null,
+  sealedToken: doc.sealedToken ?? null,
+  tokenExpiry: doc.tokenExpiry?.token?.toISOString() ?? null,
+  ...(isLegacy(doc)
+    ? { legacy: { options: doc.options ?? {}, secrets: opened(doc) } }
+    : {}),
 });
 
 export const mountWire = (doc: MountDoc) => ({
@@ -90,6 +118,28 @@ export const mountWire = (doc: MountDoc) => ({
   createdAt: doc.createdAt?.toISOString(),
   updatedAt: doc.updatedAt.toISOString(),
 });
+
+export const vaultAware = (req: Request) =>
+  req.headers.get("x-dokky-vault") === "1";
+
+export const updateRequired = () =>
+  apiError(
+    426,
+    "update_required",
+    "Update dokky to keep syncing: npm i -g dokky"
+  );
+
+// dokky from before vaults syncs as it always did until the account has a vault
+export async function legacyGate(
+  req: Request,
+  userId: string
+): Promise<Response | null> {
+  if (vaultAware(req)) {
+    return null;
+  }
+  const locked = await vaults().countDocuments({ _id: userId }, { limit: 1 });
+  return locked ? updateRequired() : null;
+}
 
 export async function caller(
   req: Request,
@@ -128,7 +178,8 @@ export async function save<T extends Item>(
   kind: string,
   baseVersion: number,
   fields: Omit<T, keyof Item>,
-  wire: (doc: T) => unknown
+  wire: (doc: T) => unknown,
+  unset: readonly Exclude<keyof T, keyof Item>[] = []
 ): Promise<T | Response> {
   const set = { ...fields, updatedAt: new Date(), updatedBy: c.deviceId };
   const own = { _id: c.id, userId: c.userId } as Filter<T>;
@@ -144,9 +195,15 @@ export async function save<T extends Item>(
       await coll.insertOne(doc as OptionalUnlessRequiredId<T>);
       return doc;
     }
+    const update = {
+      $set: { ...set, version: baseVersion + 1 },
+      ...(unset.length > 0
+        ? { $unset: Object.fromEntries(unset.map((field) => [field, ""])) }
+        : {}),
+    } as UpdateFilter<T>;
     const doc = await coll.findOneAndUpdate(
       { ...own, version: baseVersion },
-      { $set: { ...set, version: baseVersion + 1 } as Partial<T> },
+      update,
       { returnDocument: "after" }
     );
     if (doc) {

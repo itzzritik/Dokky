@@ -20,6 +20,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/overview"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/settings"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/transfers"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -47,7 +48,13 @@ type App struct {
 	deps           core.Deps
 	tabs           []core.Screen
 	active         int
-	gate           core.Screen
+	gate           core.Screen // the first-run choice or a vault screen, over the tabs
+	covered        coverKind   // which one gate is
+	lock           core.Screen // the window lock, over everything
+	lastInput      time.Time
+	idleArmed      time.Duration // the limit the pending idle check was set for
+	idleGen        int
+	stepClosed     time.Time // the sign in's master password step just finished
 	windows        []core.Screen
 	toast          *ui.Toast
 	pending        []core.Toast
@@ -73,11 +80,12 @@ func (a *App) Reopening() bool { return a.reopen }
 func New(deps core.Deps) *App {
 	now := time.Now()
 	a := &App{
-		st:    &core.State{Deps: deps, Now: now},
-		deps:  deps,
-		tabs:  []core.Screen{overview.New(), drives.New(), transfers.New(), activity.New(), health.New(), settings.New()},
-		start: now,
-		veil:  true,
+		st:        &core.State{Deps: deps, Now: now},
+		deps:      deps,
+		tabs:      []core.Screen{overview.New(), drives.New(), transfers.New(), activity.New(), health.New(), settings.New()},
+		start:     now,
+		lastInput: now,
+		veil:      true,
 	}
 	if deps.Reopened {
 		a.carry = carried()
@@ -100,6 +108,10 @@ func (a *App) Init() tea.Cmd {
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.st.Now = time.Now()
 	a.st.T = a.st.Now.Sub(a.start).Seconds()
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.PasteMsg:
+		a.lastInput = a.st.Now
+	}
 	cmd := a.update(msg)
 	if !a.ticking && a.animating() {
 		a.ticking = true
@@ -195,6 +207,14 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case core.Reopen:
 		a.reopen = true
 		return tea.Quit
+	case core.Quit:
+		return a.quit()
+	case vault.Settled:
+		return tea.Batch(a.route(), a.refresh())
+	case vault.Released:
+		return a.released()
+	case idleCheck:
+		return a.onIdle(m)
 	case core.NeedDriver:
 		return offerDriver()
 	case driverDone:
@@ -209,8 +229,14 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		if _, ok := m.Screen.(*gate.Clashes); ok && a.hasClashWindow() {
 			return nil
 		}
+		if f, ok := m.Screen.(*vault.Flow); ok && f.SignInStep() && a.has(signInOpen) {
+			return nil
+		}
 		a.windows = append(a.windows, m.Screen)
 	case core.CloseWindow:
+		if f, ok := m.Screen.(*vault.Flow); ok && f.SignInStep() {
+			a.stepClosed = a.st.Now
+		}
 		if i := slices.Index(a.windows, m.Screen); i >= 0 {
 			a.windows = slices.Delete(a.windows, i, i+1)
 		}
@@ -240,19 +266,15 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 }
 
 func (a *App) setSnap(s api.State) tea.Cmd {
+	was := a.st.Snap.Vault.State
 	a.st.Snap = s
-	if wantGate(a.st) {
-		if a.gate == nil {
-			a.gate = gate.New(a.st.Now)
-		}
-	} else {
-		a.gate = nil
-	}
+	locked := a.onVault(was)
+	cover := a.route()
 	if len(s.Clashes) > 0 && s.Account.Pending && !a.hasClashWindow() {
 		a.windows = append(a.windows, gate.NewClashes(s.Clashes))
 	}
 	a.followService()
-	return tea.Batch(a.arrived(), a.nextToast(), a.checkUpdate(), a.restartWhenIdle())
+	return tea.Batch(locked, cover, a.arrived(), a.nextToast(), a.checkUpdate(), a.restartWhenIdle(), a.armIdle())
 }
 
 func wantGate(st *core.State) bool {
@@ -268,8 +290,11 @@ func (a *App) hasClashWindow() bool {
 	return false
 }
 
-// the window on top, else the gate, else the tab
+// the window lock, else the window on top, else the gate, else the tab
 func (a *App) top() core.Screen {
+	if a.lock != nil {
+		return a.lock
+	}
 	if n := len(a.windows); n > 0 {
 		return a.windows[n-1]
 	}
@@ -282,6 +307,8 @@ func (a *App) top() core.Screen {
 func (a *App) updateTop(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch n := len(a.windows); {
+	case a.lock != nil:
+		a.lock, cmd = a.lock.Update(msg, a.st)
 	case n > 0:
 		a.windows[n-1], cmd = a.windows[n-1].Update(msg, a.st)
 	case a.gate != nil:
@@ -295,6 +322,10 @@ func (a *App) updateTop(msg tea.Msg) tea.Cmd {
 func (a *App) broadcast(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
+	if a.lock != nil {
+		a.lock, cmd = a.lock.Update(msg, a.st)
+		cmds = append(cmds, cmd)
+	}
 	for i := range a.windows {
 		a.windows[i], cmd = a.windows[i].Update(msg, a.st)
 		cmds = append(cmds, cmd)
@@ -313,7 +344,7 @@ func (a *App) broadcast(msg tea.Msg) tea.Cmd {
 func (a *App) setTab(i int) tea.Cmd { return a.switchTab(core.SwitchTab{Tab: i}) }
 
 func (a *App) switchTab(m core.SwitchTab) tea.Cmd {
-	if m.Tab < 0 || m.Tab >= len(a.tabs) || len(a.windows) > 0 || a.gate != nil {
+	if m.Tab < 0 || m.Tab >= len(a.tabs) || len(a.windows) > 0 || a.gate != nil || a.lock != nil {
 		return nil
 	}
 	a.active = m.Tab
@@ -395,6 +426,10 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 			return a.quit()
 		}
 		return nil
+	case a.lock != nil:
+		return a.updateTop(k)
+	case s == "ctrl+l" && a.canLock():
+		return a.lockWindow()
 	case a.removedNow():
 		if s == "q" || s == "esc" {
 			return a.quit()
@@ -501,7 +536,13 @@ func (a *App) animating() bool {
 	if a.toast != nil && a.toast.Moving(a.st.Now) {
 		return true
 	}
-	if a.updatingNow() || !a.st.Connected || a.removedNow() {
+	if a.updatingNow() {
+		return !a.veil && !ui.Reduced()
+	}
+	if a.lock != nil {
+		return a.lock.Animating(a.st)
+	}
+	if !a.st.Connected || a.removedNow() {
 		return !a.veil && !ui.Reduced()
 	}
 	if a.busy() && !ui.Reduced() {

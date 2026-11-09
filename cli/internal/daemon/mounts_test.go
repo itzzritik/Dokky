@@ -205,15 +205,33 @@ func sample(flagged ...string) store.Data {
 	return d
 }
 
+// newTestDaemon is unlocked with the shared test vault, linked to the account when data has a finished one
 func newTestDaemon(t *testing.T, data store.Data) (*Daemon, *fakeEngine, *store.Store) {
+	t.Helper()
+	t.Setenv("DOKKY_KEYRING", "file")
+	dir := t.TempDir()
+	k := unlockedKeeper(t, dir, data.Account != nil && !data.Account.Pending)
+	st, err := store.OpenWithKey(dir, testVault().ak)
+	require.NoError(t, err)
+	require.NoError(t, st.Save(data))
+	return testDaemon(t, dir, k, st, data)
+}
+
+// newSetupDaemon has no master password yet: the store uses the old keychain key, as before vaults
+func newSetupDaemon(t *testing.T, data store.Data) (*Daemon, *fakeEngine, *store.Store) {
 	t.Helper()
 	t.Setenv("DOKKY_KEYRING", "file")
 	dir := t.TempDir()
 	st, err := store.Open(dir, store.SystemKeyring(dir))
 	require.NoError(t, err)
 	require.NoError(t, st.Save(data))
+	return testDaemon(t, dir, testKeeper(dir), st, data)
+}
+
+func testDaemon(t *testing.T, dir string, k *keeper, st *store.Store, data store.Data) (*Daemon, *fakeEngine, *store.Store) {
+	t.Helper()
 	f := newFakeEngine()
-	d := newDaemon(f, st, data, t.TempDir(), dir, slog.New(slog.DiscardHandler))
+	d := newDaemon(f, st, data, t.TempDir(), dir, slog.New(slog.DiscardHandler), k)
 	d.isMounted, d.forceUnmount = f.isMounted, f.forceUnmount
 	d.notify = func(_, body string) error {
 		f.mu.Lock()

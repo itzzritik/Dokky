@@ -924,7 +924,7 @@ export function TopologyVisualizer() {
           </div>
           <p className="mb-6 flex-1 text-sm leading-relaxed text-[#a1a1aa]">
             Keeps your drive list and sign-ins the same on every device.
-            Everything is encrypted on your computer first, so the server only
+            Sign-ins are encrypted on your computer first, so the server only
             passes along blobs it can't read. It never sees your files.
           </p>
           <div className="mt-auto flex h-16 w-full shrink-0 items-center justify-between overflow-hidden border border-[#18181b] bg-black px-4">
@@ -1046,8 +1046,9 @@ export function TopologyVisualizer() {
           </div>
 
           <p className="mb-6 flex-1 text-sm leading-relaxed text-[#a1a1aa]">
-            Saved sign-ins are sealed with your master password and only opened
-            on your own devices, in memory, when a drive mounts.
+            Saved sign-ins are sealed on your devices with a key only your
+            master password or recovery key can open. Unlock with Touch ID,
+            Windows Hello or your system password.
           </p>
 
           <div className="mt-auto flex h-16 w-full shrink-0 items-center justify-between overflow-hidden border border-[#18181b] bg-black px-4">

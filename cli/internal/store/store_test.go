@@ -13,8 +13,9 @@ import (
 )
 
 type fakeKeyring struct {
-	key  []byte
-	fail error
+	key        []byte
+	fail       error
+	deleteFail error
 }
 
 func (f *fakeKeyring) Get() ([]byte, error) {
@@ -36,6 +37,9 @@ func (f *fakeKeyring) Set(k []byte) error {
 }
 
 func (f *fakeKeyring) Delete() error {
+	if f.deleteFail != nil {
+		return f.deleteFail
+	}
 	f.key = nil
 	return nil
 }
@@ -152,7 +156,7 @@ func TestSaveAfterDeleteStartsNewKey(t *testing.T) {
 
 func TestFallbackKeyFileMode0600(t *testing.T) {
 	dir := t.TempDir()
-	kr := newKeyring(&fakeKeyring{fail: errors.New("no secret service")}, dir, true)
+	kr := newKeyring(&fakeKeyring{fail: errors.New("no secret service")}, filepath.Join(dir, "store.key"), true)
 	s, err := Open(dir, kr)
 	require.NoError(t, err)
 	require.NoError(t, s.Save(sample()))
@@ -165,7 +169,7 @@ func TestFallbackKeyFileMode0600(t *testing.T) {
 		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
 
-	s2, err := Open(dir, newKeyring(&fakeKeyring{fail: errors.New("no secret service")}, dir, true))
+	s2, err := Open(dir, newKeyring(&fakeKeyring{fail: errors.New("no secret service")}, filepath.Join(dir, "store.key"), true))
 	require.NoError(t, err)
 	got, err := s2.Load()
 	require.NoError(t, err)
@@ -177,7 +181,7 @@ func TestFallbackKeyFileMode0600(t *testing.T) {
 
 func TestNoFallbackWhenDisallowed(t *testing.T) {
 	dir := t.TempDir()
-	_, err := Open(dir, newKeyring(&fakeKeyring{fail: errors.New("boom")}, dir, false))
+	_, err := Open(dir, newKeyring(&fakeKeyring{fail: errors.New("boom")}, filepath.Join(dir, "store.key"), false))
 	require.Error(t, err)
 	require.NoFileExists(t, filepath.Join(dir, "store.key"))
 }

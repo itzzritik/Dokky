@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +23,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/logx"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	dsync "github.com/itzzritik/dokky/cli/internal/sync"
+	"github.com/itzzritik/dokky/cli/internal/vault"
 	"github.com/rclone/rclone/fs"
 	"github.com/stretchr/testify/require"
 )
@@ -46,11 +50,21 @@ type fakeAPI struct {
 	devices  []dsync.Device
 	revokes  []string
 	expiry   map[string]time.Time
+
+	// the account's vault, nil when it has none; ak is its key, which only a test double knows, so it keeps
+	// services plain for assertions and seals them on the wire
+	vault     *dsync.RemoteVault
+	ak        []byte
+	legacy    map[string]bool // services still held with the server's key
+	vaultReqs []string
+	bodies    []string // every request body, to check nothing plain leaves the device
 }
 
 func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 	t.Helper()
-	f := &fakeAPI{polls: polls, services: map[string]store.Service{}, mounts: map[string]store.Mount{}, fail: map[string]string{}, expiry: map[string]time.Time{}}
+	fx := testVault()
+	f := &fakeAPI{polls: polls, services: map[string]store.Service{}, mounts: map[string]store.Mount{}, fail: map[string]string{}, expiry: map[string]time.Time{},
+		vault: remoteOf(fx.file, 1), ak: fx.ak, legacy: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/cli/login/start", func(w http.ResponseWriter, r *http.Request) {
 		var info dsync.DeviceInfo
@@ -90,9 +104,25 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 				writeJSON(w, http.StatusUnauthorized, apiError("unauthorized"))
 				return
 			}
-			f.reqs = append(f.reqs, r.Method+" "+r.URL.Path)
+			if r.Body != nil {
+				raw, _ := io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(raw))
+				if len(raw) > 0 {
+					f.bodies = append(f.bodies, r.Method+" "+r.URL.Path+" "+string(raw))
+				}
+			}
+			if strings.HasPrefix(r.URL.Path, "/api/v1/vault") {
+				f.vaultReqs = append(f.vaultReqs, r.Method+" "+r.URL.Path)
+			} else {
+				f.reqs = append(f.reqs, r.Method+" "+r.URL.Path)
+			}
 			if f.hook != nil {
 				f.hook()
+			}
+			// mirrors the server: an old dokky stops syncing once the account has a vault
+			if f.vault != nil && !aware(r) && gated(r) {
+				writeJSON(w, http.StatusUpgradeRequired, apiError("update_required"))
+				return
 			}
 			h(w, r)
 		}
@@ -105,14 +135,30 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"rev": f.rev,
-			"services": sortedBy(f.services, func(s store.Service) string { return s.Name }),
-			"mounts":   sortedBy(f.mounts, func(m store.Mount) string { return m.Name })})
+		services := sortedBy(f.services, func(s store.Service) string { return s.Name })
+		mounts := sortedBy(f.mounts, func(m store.Mount) string { return m.Name })
+		if !aware(r) {
+			writeJSON(w, http.StatusOK, map[string]any{"rev": f.rev, "services": services, "mounts": mounts})
+			return
+		}
+		wire := []any{}
+		for _, s := range services {
+			wire = append(wire, f.wire(s))
+		}
+		var v any
+		if f.vault != nil {
+			v = map[string]any{"keyId": f.vault.KeyID, "version": f.vault.Version}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rev": f.rev, "vault": v, "services": wire, "mounts": mounts})
 	}))
 	mux.HandleFunc("PUT /api/v1/services/{id}", device(func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
 			store.Service
-			BaseVersion int64 `json:"baseVersion"`
+			BaseVersion int64      `json:"baseVersion"`
+			KeyID       string     `json:"keyId"`
+			Sealed      string     `json:"sealed"`
+			SealedToken *string    `json:"sealedToken"`
+			TokenExpiry *time.Time `json:"tokenExpiry"`
 		}
 		if json.NewDecoder(r.Body).Decode(&b) != nil {
 			writeJSON(w, http.StatusBadRequest, apiError("bad_request"))
@@ -120,6 +166,16 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 		}
 		s := b.Service
 		s.ID = r.PathValue("id")
+		if aware(r) {
+			if !f.sameKey(w, b.KeyID) {
+				return
+			}
+			var err error
+			if s.Options, s.Secrets, err = vault.OpenService(f.ak, s.ID, b.Sealed, b.SealedToken); err != nil {
+				writeJSON(w, http.StatusBadRequest, apiError("bad_request"))
+				return
+			}
+		}
 		f.puts = append(f.puts, fmt.Sprintf("service %s %d", s.Name, b.BaseVersion))
 		if msg, ok := f.fail[s.Name]; ok {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"code": "internal", "message": msg}})
@@ -127,11 +183,23 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 		}
 		cur, exists := f.services[s.ID]
 		taken := slices.ContainsFunc(slices.Collect(maps.Values(f.services)), func(x store.Service) bool { return x.Name == s.Name && x.ID != s.ID })
-		if save(w, exists, cur.Version, b.BaseVersion, taken, cur) {
+		var current any = cur
+		if aware(r) && exists {
+			current = f.wire(cur)
+		}
+		if save(w, exists, cur.Version, b.BaseVersion, taken, current) {
 			s.Version, s.UpdatedAt = b.BaseVersion+1, time.Now().UTC()
 			f.services[s.ID] = s
 			f.rev++
-			writeJSON(w, http.StatusOK, s)
+			if !aware(r) {
+				writeJSON(w, http.StatusOK, s)
+				return
+			}
+			delete(f.legacy, s.ID)
+			if b.TokenExpiry != nil {
+				f.expiry[s.ID] = *b.TokenExpiry
+			}
+			writeJSON(w, http.StatusOK, f.wire(s))
 		}
 	}))
 	mux.HandleFunc("PUT /api/v1/mounts/{id}", device(func(w http.ResponseWriter, r *http.Request) {
@@ -198,11 +266,21 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 		var b struct {
 			Field, Value string
 			Expiry       time.Time
+			KeyID        string `json:"keyId"`
+			SealedToken  string `json:"sealedToken"`
 		}
 		id := r.PathValue("id")
 		s, ok := f.services[id]
+		bad := json.NewDecoder(r.Body).Decode(&b) != nil
+		if !bad && aware(r) {
+			if !f.sameKey(w, b.KeyID) {
+				return
+			}
+			tok, err := vault.Open(f.ak, b.SealedToken, vault.AADServiceToken(id))
+			b.Field, b.Value, bad = "token", string(tok), err != nil
+		}
 		switch {
-		case json.NewDecoder(r.Body).Decode(&b) != nil:
+		case bad:
 			writeJSON(w, http.StatusBadRequest, apiError("bad_request"))
 		case !ok:
 			writeJSON(w, http.StatusNotFound, apiError("not_found"))
@@ -217,10 +295,104 @@ func newFakeAPI(t *testing.T, polls ...string) *fakeAPI {
 			writeJSON(w, http.StatusOK, map[string]string{"kept": "new"})
 		}
 	}))
+	mux.HandleFunc("GET /api/v1/vault", device(func(w http.ResponseWriter, _ *http.Request) {
+		if f.vault == nil {
+			writeJSON(w, http.StatusNotFound, apiError("no_vault"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"vault": f.vault})
+	}))
+	mux.HandleFunc("POST /api/v1/vault", device(func(w http.ResponseWriter, r *http.Request) {
+		var b vault.Remote
+		switch {
+		case json.NewDecoder(r.Body).Decode(&b) != nil || b.Validate() != nil:
+			writeJSON(w, http.StatusBadRequest, apiError("bad_request"))
+		case f.vault != nil:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "vault_exists", "message": "exists"}, "current": f.vault})
+		default:
+			now := time.Now().UTC()
+			f.vault = &dsync.RemoteVault{Remote: b, Version: 1, CreatedAt: now, PasswordChangedAt: now}
+			f.rev++
+			writeJSON(w, http.StatusCreated, map[string]any{"vault": f.vault})
+		}
+	}))
+	mux.HandleFunc("PUT /api/v1/vault", device(func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			vault.Remote
+			BaseVersion int `json:"baseVersion"`
+		}
+		switch {
+		case json.NewDecoder(r.Body).Decode(&b) != nil || b.Validate() != nil:
+			writeJSON(w, http.StatusBadRequest, apiError("bad_request"))
+		case f.vault == nil:
+			writeJSON(w, http.StatusNotFound, apiError("no_vault"))
+		case f.vault.KeyID != b.KeyID:
+			writeJSON(w, http.StatusConflict, apiError("key_mismatch"))
+		case f.vault.Version != b.BaseVersion:
+			writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "conflict", "message": "moved"}, "current": f.vault})
+		default:
+			v := *f.vault
+			v.Remote, v.Version = b.Remote, v.Version+1
+			f.vault = &v
+			f.rev++
+			writeJSON(w, http.StatusOK, map[string]any{"vault": f.vault})
+		}
+	}))
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	t.Setenv("DOKKY_API_BASE", f.srv.URL)
 	return f
+}
+
+func aware(r *http.Request) bool { return r.Header.Get("X-Dokky-Vault") == "1" }
+
+// the calls the server refuses an old dokky once the account has a vault
+func gated(r *http.Request) bool {
+	p := r.URL.Path
+	return p == "/api/v1/sync" || strings.HasPrefix(p, "/api/v1/services/") || strings.HasPrefix(p, "/api/v1/mounts/")
+}
+
+func remoteOf(f *vault.File, version int) *dsync.RemoteVault {
+	return &dsync.RemoteVault{Remote: f.Remote(), Version: version, CreatedAt: f.CreatedAt, PasswordChangedAt: f.PasswordAt}
+}
+
+// caller holds f.mu
+func (f *fakeAPI) sameKey(w http.ResponseWriter, keyID string) bool {
+	switch {
+	case f.vault == nil:
+		writeJSON(w, http.StatusConflict, apiError("no_vault"))
+	case f.vault.KeyID != keyID:
+		writeJSON(w, http.StatusConflict, apiError("key_mismatch"))
+	default:
+		return true
+	}
+	return false
+}
+
+// the vault-aware shape: sealed with the account key, or legacy while the server still holds it; caller holds f.mu
+func (f *fakeAPI) wire(s store.Service) map[string]any {
+	w := map[string]any{"id": s.ID, "name": s.Name, "type": s.Type, "version": s.Version, "updatedAt": s.UpdatedAt,
+		"keyId": nil, "sealed": nil, "sealedToken": nil, "tokenExpiry": nil}
+	if f.vault == nil || f.legacy[s.ID] {
+		w["legacy"] = map[string]any{"options": nonNilMap(s.Options), "secrets": nonNilMap(s.Secrets)}
+		return w
+	}
+	sealed, tok, err := vault.SealService(f.ak, s.ID, s.Options, s.Secrets)
+	if err != nil {
+		panic(err)
+	}
+	w["keyId"], w["sealed"], w["sealedToken"] = f.vault.KeyID, sealed, tok
+	if exp, ok := f.expiry[s.ID]; ok && tok != nil {
+		w["tokenExpiry"] = exp
+	}
+	return w
+}
+
+func nonNilMap(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // mirrors the server's save()
@@ -726,10 +898,7 @@ func requireWiped(t *testing.T, d *Daemon, f *fakeEngine, dir string) {
 	require.False(t, st.LoggedIn)
 	require.Empty(t, st.Mounts)
 	require.NoError(t, call(t, d, "service.put", store.Service{ID: "n1", Name: "fresh", Type: "webdav", Options: map[string]string{"url": "http://x"}}, nil))
-	reopened, err := store.Open(dir, store.SystemKeyring(dir))
-	require.NoError(t, err)
-	got, err := reopened.Load()
-	require.NoError(t, err)
+	got := reopen(t, dir)
 	require.Nil(t, got.Account)
 	require.Len(t, got.Services, 1)
 	require.Equal(t, "n1", got.Services[0].ID)

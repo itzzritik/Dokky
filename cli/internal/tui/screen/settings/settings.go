@@ -15,6 +15,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/devices"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -32,6 +33,7 @@ const slide = 180 * time.Millisecond
 
 type row struct {
 	group, label, value string
+	note                string // painted on the group's heading line, right side
 	kind                kind
 	tone                color.Color
 	frac                float64 // a switch's knob, 0 off to 1 on
@@ -80,6 +82,7 @@ func (s *Settings) rows(st *core.State) []row {
 		rows = append([]row{{label: "Update dokky", value: st.Snap.Version + " " + ui.G.Arrow + " " + st.Latest, kind: update, tone: p.Accent,
 			run: func(*core.State) tea.Cmd { return core.Send(core.OfferUpdate{}) }}}, rows...)
 	}
+	rows = append(rows, s.security(st)...)
 	if acct.LoggedIn {
 		rows = append(rows,
 			row{group: "Account", label: "Your devices", kind: action, run: devices.Open},
@@ -154,6 +157,10 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			if st.Snap.Account.SignedOut {
 				return s, devices.RemoveSelf()
 			}
+		case "L":
+			if st.Snap.Vault.State == api.VaultUnlocked {
+				return s, vault.LockNow(st)
+			}
 		}
 	}
 	return s, nil
@@ -179,6 +186,9 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 	}
 	if st.Snap.Account.SignedOut {
 		acts = append(acts, core.Action{Key: "s", Label: "remove this device"})
+	}
+	if st.Snap.Vault.State == api.VaultUnlocked {
+		acts = append(acts, core.Action{Key: "L", Label: "lock dokky"})
 	}
 	return acts
 }
@@ -251,7 +261,12 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 			lines = append(lines, ui.ListLine{Item: -1})
 		}
 		if r.group != "" {
-			lines = append(lines, ui.ListLine{Text: ui.L(nil).Sp(2).T(r.group, p.Faint).String(), Item: -1})
+			head := ui.L(nil).Sp(2).T(r.group, p.Faint)
+			if r.note != "" {
+				lines = append(lines, ui.ListLine{Text: head.Right(cw-1, ui.L(nil).Raw(r.note)), Item: -1})
+			} else {
+				lines = append(lines, ui.ListLine{Text: head.String(), Item: -1})
+			}
 		}
 		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + strconv.Itoa(i)})
 	}

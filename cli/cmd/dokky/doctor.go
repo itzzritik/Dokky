@@ -19,6 +19,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/doctor"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
+	"github.com/itzzritik/dokky/cli/internal/vault"
 	"github.com/rclone/rclone/lib/diskusage"
 	"github.com/spf13/cobra"
 )
@@ -109,7 +110,13 @@ func realDoctorEnv() doctor.Env {
 	} else {
 		env.FreeBytes = freeBytesNear(cache)
 	}
-	env.KeyringFallback, env.KeyringErr = keyringState(store.SystemKeyring(state), state)
+	kr := store.SystemKeyring(state)
+	if f, err := vault.Load(state); err == nil {
+		env.Unlock, kr = f.Unlock, store.DeviceKeyring(state)
+	}
+	if env.Unlock != vault.UnlockPassword {
+		env.KeyringFallback, env.KeyringErr = keyringState(kr, state, env.Unlock != "")
+	}
 	return env
 }
 
@@ -124,9 +131,14 @@ func freeBytesNear(dir string) uint64 {
 	}
 }
 
-func keyringState(kr store.Keyring, state string) (fallback bool, err error) {
+// only a v1 store is lost without its key; a vault without the device key still opens with the master password,
+// so that is store.ErrNotFound, a warning
+func keyringState(kr store.Keyring, state string, device bool) (fallback bool, err error) {
 	if _, err := kr.Get(); errors.Is(err, store.ErrNotFound) {
-		if _, statErr := os.Stat(filepath.Join(state, "store.enc")); statErr == nil {
+		if device {
+			return false, store.ErrNotFound
+		}
+		if v, _ := store.FormatOf(state); v == 1 {
 			return false, store.ErrKeyMissing
 		}
 	} else if err != nil {

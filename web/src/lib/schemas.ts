@@ -2,6 +2,12 @@ import { z } from "zod";
 import { apiError } from "@/lib/errors";
 
 const MAX_BODY = 65_536;
+// format byte, 24-byte nonce and 16-byte tag around an empty plaintext
+const ENVELOPE_MIN = 41;
+const ENVELOPE_VERSION = 0x01;
+const BASE64 =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const SALT_32 = /^[A-Za-z0-9+/]{43}=$/u;
 
 const fieldName = z
   .string()
@@ -35,6 +41,31 @@ const mountName = z
   .regex(/^[^/:\p{Cc}]+$/u)
   .refine((s) => [...s].length <= 40, "at most 40 characters");
 const serviceName = z.string().min(1).max(64);
+const serviceType = z
+  .string()
+  .max(64)
+  .regex(/^[a-z0-9]+(?: [a-z0-9]+)*$/u);
+const isoDate = z.iso.datetime({ offset: true }).pipe(z.coerce.date());
+
+// an XChaCha20-Poly1305 envelope sealed on a device: 0x01, nonce, ciphertext and tag, base64
+const envelope = (maxBytes: number) =>
+  z
+    .string()
+    .max(Math.ceil(maxBytes / 3) * 4)
+    .regex(BASE64, "must be base64")
+    .refine((value) => {
+      const bytes = Buffer.from(value, "base64");
+      return (
+        bytes.length >= ENVELOPE_MIN &&
+        bytes.length <= maxBytes &&
+        bytes[0] === ENVELOPE_VERSION
+      );
+    }, `must be a version 1 envelope of ${ENVELOPE_MIN} to ${maxBytes} bytes`);
+
+export const keyId = z.string().regex(/^[0-9a-f]{16}$/u);
+const wrap = envelope(512);
+const sealedConfig = envelope(32_768 + ENVELOPE_MIN);
+const sealedToken = envelope(16_384 + ENVELOPE_MIN);
 
 export const loginStartBody = z.object({
   deviceName: z.string().trim().min(1).max(64),
@@ -69,10 +100,7 @@ const vfsBody = z.object({
 
 export const serviceBody = z.object({
   name: serviceName,
-  type: z
-    .string()
-    .max(64)
-    .regex(/^[a-z0-9]+(?: [a-z0-9]+)*$/u),
+  type: serviceType,
   options,
   secrets,
   baseVersion,
@@ -89,7 +117,47 @@ export const mountBody = z.object({
 export const tokenBody = z.object({
   field: fieldName,
   value: secretValue.min(1),
-  expiry: z.iso.datetime({ offset: true }).pipe(z.coerce.date()),
+  expiry: isoDate,
+});
+
+export const sealedServiceBody = z
+  .object({
+    name: serviceName,
+    type: serviceType,
+    keyId,
+    sealed: sealedConfig,
+    sealedToken: sealedToken.nullable().default(null),
+    tokenExpiry: isoDate.nullable().default(null),
+    baseVersion,
+  })
+  .refine((body) => body.sealedToken !== null || body.tokenExpiry === null, {
+    path: ["tokenExpiry"],
+    message: "must be null without a sealedToken",
+  });
+
+export const sealedTokenBody = z.object({
+  keyId,
+  sealedToken,
+  expiry: isoDate,
+});
+
+const kdf = z.object({
+  alg: z.literal("argon2id"),
+  salt: z.string().regex(SALT_32, "must be base64 of 32 bytes"),
+  t: z.int().min(1).max(10),
+  m: z.int().min(19_456).max(262_144),
+  p: z.int().min(1).max(16),
+});
+
+export const vaultBody = z.object({
+  keyId,
+  kdf,
+  wrappedKey: wrap,
+  recoveryWrappedKey: wrap,
+});
+
+export const vaultUpdateBody = vaultBody.extend({
+  baseVersion: z.int().min(1),
 });
 
 const eventIn = z.object({

@@ -15,12 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	"github.com/stretchr/testify/require"
 )
+
+const e2ePassword = "Orchard-Signal-Ferry-62"
 
 type device struct {
 	state string
@@ -38,6 +41,8 @@ func TestTwoDevicesSync(t *testing.T) {
 	a, b := startDevice(t), startDevice(t)
 	a.login(t, helper)
 	b.login(t, helper)
+	require.NotEmpty(t, a.keyID(t))
+	require.Equal(t, a.keyID(t), b.keyID(t), "both devices use the account's key")
 
 	var svc, mnt idReply
 	a.call(t, "service.put", store.Service{Name: "media", Type: "webdav", Options: map[string]string{"url": url, "vendor": "other", "user": "me", "pass": "s3cret"}}, &svc)
@@ -51,7 +56,7 @@ func TestTwoDevicesSync(t *testing.T) {
 	b.call(t, "sync.now", nil, nil)
 	got := b.only(t)
 	require.Equal(t, mnt.ID, got.ID)
-	require.Equal(t, "media", got.Name)
+	require.Equal(t, "Media", got.Name, "names are saved capitalized")
 	require.Equal(t, svc.ID, got.ServiceID)
 	require.Equal(t, "unmounted", got.State)
 	var info struct {
@@ -67,17 +72,10 @@ func TestTwoDevicesSync(t *testing.T) {
 	require.Empty(t, b.mounts(t))
 	readable(t, mp, "hello.txt", "hello")
 
+	// a drive removed on another device leaves this one too, once nothing on it is moving
 	a.call(t, "sync.now", nil, nil)
-	got = a.only(t)
-	require.Equal(t, "removed", got.State)
-	require.Equal(t, mp, got.MountPoint)
-	require.True(t, isMounted(mp))
-	readable(t, mp, "hello.txt", "hello")
-
-	a.call(t, "unmount", map[string]string{"name": "media"}, nil)
+	waitFor(t, func() bool { return len(a.mounts(t)) == 0 })
 	require.False(t, isMounted(mp))
-	a.call(t, "sync.now", nil, nil)
-	require.Empty(t, a.mounts(t))
 	var services []idReply
 	a.call(t, "service.list", nil, &services)
 	require.Equal(t, []idReply{svc}, services)
@@ -192,12 +190,35 @@ func (d device) login(t *testing.T, helper string) {
 		Clashes []any  `json:"clashes"`
 	}
 	d.call(t, "login.poll", nil, &poll)
+	if poll.Status == "vault" {
+		// a device syncs only with a master password: the first one becomes the account's, the next device joins it
+		var s api.State
+		d.call(t, api.MState, nil, &s)
+		switch s.Vault.Need {
+		case api.NeedCreate:
+			d.call(t, api.MVaultSetup, api.PasswordParams{Password: e2ePassword}, nil)
+		case api.NeedJoin:
+			d.call(t, api.MVaultJoin, api.PasswordParams{Password: e2ePassword}, nil)
+		default:
+			t.Fatalf("sign in waits for the vault but needs %q", s.Vault.Need)
+		}
+		d.call(t, "login.poll", nil, &poll)
+	}
 	require.Equal(t, "approved", poll.Status)
 	require.Empty(t, poll.Clashes)
 	var st daemon.StatusReply
 	d.call(t, "status", nil, &st)
 	require.True(t, st.LoggedIn)
 	require.False(t, st.Pending)
+	require.Equal(t, api.VaultUnlocked, st.Vault)
+	require.Empty(t, st.SyncWaits)
+}
+
+func (d device) keyID(t *testing.T) string {
+	t.Helper()
+	var s api.State
+	d.call(t, api.MState, nil, &s)
+	return s.Vault.KeyID
 }
 
 func (d device) mounts(t *testing.T) []daemon.MountStatus {

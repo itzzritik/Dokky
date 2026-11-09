@@ -423,25 +423,37 @@ function ZeroKnowledge() {
       id: "01",
       title: "Encryption",
       value: "XChaCha20",
-      desc: "Every saved sign-in is sealed with XChaCha20-Poly1305 on your device. The server only ever sees ciphertext.",
+      desc: "Saved sign-ins and connection details are sealed with XChaCha20-Poly1305 on your device. The server only stores ciphertext.",
     },
     {
       id: "02",
       title: "Derivation",
       value: "Argon2id",
-      desc: "Your master password becomes a key through Argon2id. It never leaves your computer and can't be reset by us.",
+      desc: "Your master password is stretched with Argon2id on your computer. It is never sent to us, so we can't see it or reset it.",
     },
     {
       id: "03",
+      title: "Unlock",
+      value: "Touch ID",
+      desc: "Unlock with Touch ID, Windows Hello or your system password. By default dokky unlocks by itself, so drives still mount at login.",
+    },
+    {
+      id: "04",
+      title: "Recovery",
+      value: "Recovery key",
+      desc: "Forgot your master password? Your recovery key opens your sign-ins too. Only you have it, so keep it somewhere safe.",
+    },
+    {
+      id: "05",
       title: "Files",
       value: "Direct",
       desc: "Uploads and downloads go straight between your computer and your storage. Nothing is copied to dokky.",
     },
     {
-      id: "04",
+      id: "06",
       title: "Auditability",
       value: "Open Source",
-      desc: "The app, the mounting layer and the server are public on GitHub. No hidden telemetry, nothing to take on trust.",
+      desc: "The app, the mounting layer and the server are public on GitHub. Nothing to take on trust.",
     },
   ];
 
@@ -471,14 +483,14 @@ function ZeroKnowledge() {
             Zero Knowledge.
           </h2>
           <p className="mb-16 max-w-2xl text-base leading-relaxed text-[#a1a1aa] lg:text-lg">
-            Your sign-ins are locked with your master password on your own
-            computer before they ever leave it. dokky's server only stores
-            encrypted blobs it can't open, and your files never pass through it
-            at all.
+            Your sign-ins are sealed on your own computer before they leave it,
+            with a key that only your master password or recovery key can open.
+            dokky's server stores ciphertext it can't read, and your files never
+            pass through it at all.
           </p>
         </ScrollReveal>
 
-        <div className="grid grid-cols-1 gap-px bg-[#27272a] md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-px bg-[#27272a] md:grid-cols-2 lg:grid-cols-3">
           {specs.map((spec, i) => (
             <ScrollReveal
               className="group relative flex flex-col overflow-hidden bg-black p-8"
