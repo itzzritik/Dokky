@@ -32,16 +32,19 @@ func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		switch m.String() {
 		case "esc":
 			return c, core.Close(c)
-		case "left", "right":
+		// two buttons, so every move lands on the other one
+		case "left", "right", "tab", "shift+tab":
 			c.active = 1 - c.active
-		case "enter":
+		case "enter", "space":
 			return c, c.press(st, c.active)
 		}
 	case core.Click:
 		switch m.ID {
 		case "btn:cancel":
+			c.active = 0
 			return c, c.press(st, 0)
 		case "btn:do":
+			c.active = 1
 			return c, c.press(st, 1)
 		}
 	}
@@ -55,9 +58,13 @@ func (c *Confirm) press(st *core.State, i int) tea.Cmd {
 	return tea.Batch(core.Close(c), c.Run(st))
 }
 
-func (c *Confirm) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
-	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active,
-		Buttons: []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "do", Label: c.Do, Danger: !c.Positive, Primary: c.Positive}}}
+// the bar, also listed by the actions menu
+func (c *Confirm) Buttons(*core.State) []ui.Btn {
+	return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "do", Label: c.Do, Danger: !c.Positive, Primary: c.Positive}}
+}
+
+func (c *Confirm) window(st *core.State, maxW, maxH int) *ui.Window {
+	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active, Buttons: c.Buttons(st)}
 	p, cw := ui.P(), win.Inner()
 	body, y := ui.NewBox(), 0
 	for _, l := range c.Lines {
@@ -70,11 +77,20 @@ func (c *Confirm) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	if y > 0 {
 		win.Body = body
 	}
-	return win.Layer()
+	return win
 }
 
+func (c *Confirm) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+	return c.window(st, maxW, maxH).Layer()
+}
+
+// enter names the focused button, so the footer says what it does now
 func (c *Confirm) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}, {Key: "esc", Label: "cancel"}}
+	enter := core.Action{Key: "enter", Label: "cancel"}
+	if c.active == 1 {
+		enter = core.Action{Key: "enter", Label: strings.ToLower(c.Do), Danger: !c.Positive, Accent: c.Positive}
+	}
+	return []core.Action{enter, {Key: "← →", Label: "choose"}, {Key: "esc", Label: "cancel"}}
 }
 
 func (c *Confirm) Animating(*core.State) bool { return false }

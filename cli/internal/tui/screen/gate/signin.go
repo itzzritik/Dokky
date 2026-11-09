@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,17 +24,22 @@ type polled struct {
 }
 
 type SignIn struct {
-	btn    int
+	at     string // the focused button
 	req    core.Req
 	start  client.LoginStart
 	status string // waiting, denied, expired, failed
 	err    string
 }
 
+// opens the browser; tests swap it so none opens
+var openURL = platform.OpenURL
+
 // opens the sign-in window and starts the device code flow
 func Open(st *core.State) tea.Cmd {
-	s := &SignIn{btn: 2}
-	return tea.Sequence(core.Open(s), s.begin(st))
+	s := &SignIn{}
+	cmd := s.begin(st)
+	s.at = s.primary()
+	return tea.Sequence(core.Open(s), cmd)
 }
 
 func (s *SignIn) begin(st *core.State) tea.Cmd {
@@ -57,7 +63,8 @@ func (s *SignIn) poll(st *core.State) tea.Cmd {
 
 // after the master password step: the sign in that waited for it uploads, then settles clashes as usual
 func Resume(st *core.State) tea.Cmd {
-	s := &SignIn{btn: 2, req: core.NextReq(), status: "waiting"}
+	s := &SignIn{req: core.NextReq(), status: "waiting"}
+	s.at = s.primary()
 	return tea.Sequence(core.Open(s), s.poll(st))
 }
 
@@ -67,66 +74,83 @@ func (s *SignIn) wait() tea.Cmd {
 }
 
 func (s *SignIn) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
+	was := s.set()
+	cmd := s.update(msg, st)
+	// a new set of buttons focuses its primary, so enter does what the window now asks
+	if s.set() != was {
+		s.at = s.primary()
+	}
+	return s, cmd
+}
+
+func (s *SignIn) update(msg tea.Msg, st *core.State) tea.Cmd {
 	switch m := msg.(type) {
 	case pollTick:
 		if m.req == s.req && s.status == "waiting" {
-			return s, s.poll(st)
+			return s.poll(st)
 		}
 	case core.Reply:
 		if m.Req != s.req {
-			return s, nil
+			return nil
 		}
 		if m.Err != nil {
 			s.status, s.err = "failed", core.Report(m.Err)
-			return s, nil
+			return nil
 		}
 		switch v := m.Val.(type) {
 		case client.LoginStart:
 			s.start = v
 			if v.Resume {
-				return s, s.poll(st)
+				return s.poll(st)
 			}
-			return s, s.wait()
+			return s.wait()
 		case polled:
 			if v.need != "" {
 				s.req = 0
-				return s, tea.Sequence(core.Close(s), core.Open(vault.SignIn(st, v.need, Resume)))
+				return tea.Sequence(core.Close(s), core.Open(vault.SignIn(st, v.need, Resume)))
 			}
 			switch v.Status {
 			case "pending":
-				return s, s.wait()
+				return s.wait()
 			case "denied", "expired":
 				s.status = v.Status
 			case "approved":
 				if len(v.Clashes) > 0 {
-					return s, tea.Sequence(core.Close(s), core.Open(NewClashes(v.Clashes)))
+					return tea.Sequence(core.Close(s), core.Open(NewClashes(v.Clashes)))
 				}
-				return s, tea.Batch(core.Close(s), Choose(st, core.NextReq()), core.Say("Signed in"))
+				return tea.Batch(core.Close(s), Choose(st, core.NextReq()), core.Say("Signed in"))
 			}
 		}
 	case core.Click:
-		if id, ok := strings.CutPrefix(m.ID, "btn:"); ok {
-			return s, s.press(id, st)
+		if slices.Contains(s.stops(), m.ID) {
+			s.at = m.ID
+			return s.press(m.ID, st)
 		}
 	case tea.KeyPressMsg:
-		btns := s.buttons()
-		s.btn = max(0, min(s.btn, len(btns)-1))
-		switch m.String() {
-		case "esc":
-			return s, s.press("cancel", st)
-		case "c":
-			return s, s.press("copy", st)
-		case "o":
-			return s, s.press("open", st)
-		case "left":
-			s.btn = max(0, s.btn-1)
-		case "right":
-			s.btn = min(len(btns)-1, s.btn+1)
-		case "enter":
-			return s, s.press(btns[s.btn].ID, st)
+		switch k := m.String(); {
+		case k == "esc":
+			return s.press("btn:cancel", st)
+		case k == "c" || k == "o":
+			return s.letter(k, st)
+		case ui.Pressed(k, s.at):
+			return s.press(s.at, st)
+		case ui.Walk(s.stops(), &s.at, k):
 		}
 	}
-	return s, nil
+	return nil
+}
+
+// c and o press the link buttons while they show
+func (s *SignIn) letter(k string, st *core.State) tea.Cmd {
+	id := "btn:copy"
+	if k == "o" {
+		id = "btn:open"
+	}
+	if !slices.Contains(s.stops(), id) {
+		return nil
+	}
+	s.at = id
+	return s.press(id, st)
 }
 
 func (s *SignIn) buttons() []ui.Btn {
@@ -139,19 +163,44 @@ func (s *SignIn) buttons() []ui.Btn {
 	return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "copy", Label: "Copy link"}, {ID: "open", Label: "Open browser", Primary: true}}
 }
 
+// the bar, also listed by the actions menu
+func (s *SignIn) Buttons(*core.State) []ui.Btn { return s.buttons() }
+
+func (s *SignIn) stops() []string {
+	var ids []string
+	for _, b := range s.buttons() {
+		ids = append(ids, "btn:"+b.ID)
+	}
+	return ids
+}
+
+// which buttons show, to see when they change
+func (s *SignIn) set() string { return strings.Join(s.stops(), " ") }
+
+// the primary button, else the only one
+func (s *SignIn) primary() string {
+	btns := s.buttons()
+	for _, b := range btns {
+		if b.Primary {
+			return "btn:" + b.ID
+		}
+	}
+	return "btn:" + btns[len(btns)-1].ID
+}
+
 func (s *SignIn) press(id string, st *core.State) tea.Cmd {
 	u := s.start.VerifyURL
 	switch {
-	case id == "cancel":
+	case id == "btn:cancel":
 		s.req = 0
 		return core.Close(s)
-	case id == "retry":
+	case id == "btn:retry":
 		return s.begin(st)
-	case id == "copy" && u != "":
+	case id == "btn:copy" && u != "":
 		return tea.Batch(tea.SetClipboard(u), core.Say("Link copied"))
-	case id == "open" && u != "":
+	case id == "btn:open" && u != "":
 		return func() tea.Msg {
-			if err := platform.OpenURL(u); err != nil {
+			if err := openURL(u); err != nil {
 				return core.Toast{Text: "Could not open the browser. Copy the link instead.", Bad: true}
 			}
 			return nil
@@ -160,11 +209,13 @@ func (s *SignIn) press(id string, st *core.State) tea.Cmd {
 	return nil
 }
 
-func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+func (s *SignIn) window(st *core.State, maxW, maxH int) *ui.Window {
 	p := ui.P()
-	btns := s.buttons()
-	s.btn = max(0, min(s.btn, len(btns)-1))
-	win := &ui.Window{W: min(68, maxW), Title: "Finish in your browser", Sub: "Check that it shows this code.", Buttons: btns, Active: s.btn}
+	win := &ui.Window{W: min(68, maxW), Title: "Finish in your browser", Sub: "Check that it shows this code.", Buttons: s.buttons()}
+	win.Active = win.Index(s.at)
+	if win.Active < 0 {
+		win.Active = win.Index(s.primary())
+	}
 	body := ui.NewBox()
 	rows := 0
 	switch {
@@ -195,11 +246,29 @@ func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	}
 	win.Fit(rows, maxH)
 	win.Body = body
-	return win.Layer()
+	return win
 }
 
+func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+	return s.window(st, maxW, maxH).Layer()
+}
+
+// enter names the focused button; the letters show while their buttons do
 func (s *SignIn) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}, {Key: "esc", Label: "cancel"}}
+	enter := core.Action{Key: "enter", Label: "cancel"}
+	for _, b := range s.buttons() {
+		if "btn:"+b.ID == s.at {
+			enter = core.Action{Key: "enter", Label: strings.ToLower(b.Label), Accent: b.Primary}
+		}
+	}
+	acts := []core.Action{enter}
+	if len(s.buttons()) > 1 {
+		acts = append(acts, core.Action{Key: "← →", Label: "choose"})
+	}
+	if slices.Contains(s.stops(), "btn:open") {
+		acts = append(acts, core.Action{Key: "c", Label: "copy link"}, core.Action{Key: "o", Label: "open browser"})
+	}
+	return append(acts, core.Action{Key: "esc", Label: "cancel"})
 }
 
 func (s *SignIn) Animating(*core.State) bool { return s.status == "waiting" && !ui.Reduced() }
