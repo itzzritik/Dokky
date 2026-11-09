@@ -2,7 +2,6 @@ package vault
 
 import (
 	"image/color"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
@@ -39,15 +38,6 @@ func busyLabel(st *core.State, busy bool, idle, doing string) string {
 		return ui.Spin(st.T) + " " + doing
 	}
 	return idle
-}
-
-// wrapped muted lines for a window's body
-func para(win *ui.Window, s string, fg color.Color) []string {
-	var out []string
-	for _, l := range strings.Split(lipgloss.NewStyle().Width(win.Inner()).Render(s), "\n") {
-		out = append(out, win.Text(strings.TrimRight(l, " "), fg))
-	}
-	return out
 }
 
 func revealAction(on bool) core.Action {

@@ -60,7 +60,7 @@ AAD strings (bind every ciphertext to its role, so a server cannot swap blobs):
 
 Zero every key and password byte slice after use where Go allows it. Passwords arrive as strings over IPC; convert to `[]byte` once and zero that.
 
-Password rules (`vault.CheckPassword`): 10 to 128 characters, no leading or trailing spaces, not all one character class unless 16+ long, not in a small built-in common-password list, and a simple strength score 0..4 (length, classes, repeats, sequences) that must be at least 2. The TUI shows the score live as a meter with a short hint.
+Password rules (`vault.CheckPassword`): 8 to 128 characters, no leading or trailing spaces, not all one character class unless 16+ long, not in a small built-in common-password list, and a simple strength score 0..4 (length, classes, repeats, sequences) that must be at least 2. The TUI shows the score live as a meter with a short hint.
 
 ## Files on a device
 

@@ -58,7 +58,7 @@ func TestNewPasswordRules(t *testing.T) {
 		msg       string
 	}{
 		"empty":    {"", "", 0, "Type a master password."},
-		"short":    {"abc", "", 0, "Use at least 10 characters."},
+		"short":    {"abc", "", 0, "Use at least 8 characters."},
 		"common":   {"password123", "password123", 0, "This is a common password, pick something less guessable."},
 		"no again": {goodPassword, "", 1, "Type it again to confirm."},
 		"mismatch": {goodPassword, goodPassword + "x", 1, "The two passwords don't match."},
@@ -277,4 +277,25 @@ func TestPick(t *testing.T) {
 
 	key(f, st, "up")
 	require.Equal(t, []tea.Msg{core.CloseWindow{Screen: f}}, sent(key(f, st, "enter")), "the current choice changes nothing")
+}
+
+func TestMeterWords(t *testing.T) {
+	for pw, want := range map[string]string{
+		"":                 "",
+		"abc12":            "Too short",
+		"password123":      "Too common",
+		" Kx9#mP2$vL":      "Trim spaces",
+		"abcdefghijkl":     "Weak",
+		"Kx9#mP2$":         "Okay",
+		"Kx9#mP2$vL":       "Good",
+		"G7#kq!Vz2@pLw9$e": "Strong",
+	} {
+		n := makeNew("Password")
+		for _, r := range pw {
+			n.pw.Type(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		n.rescore()
+		got, _ := n.status()
+		require.Equal(t, want, got, pw)
+	}
 }

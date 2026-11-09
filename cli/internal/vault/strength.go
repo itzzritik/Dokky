@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	MinPassword  = 10
+	MinPassword  = 8
 	MaxPassword  = 128
 	longPassword = 16 // long enough to be one character class
 	okScore      = 2
@@ -35,7 +35,7 @@ func CheckPassword(pw string) (score int, ok bool, hint string) {
 	score, patterned := strength(runes)
 	switch {
 	case n < MinPassword:
-		return min(score, 1), false, "use at least 10 characters"
+		return min(score, 1), false, "use at least 8 characters"
 	case n > MaxPassword:
 		return min(score, 1), false, "use at most 128 characters"
 	case strings.TrimSpace(pw) != pw:

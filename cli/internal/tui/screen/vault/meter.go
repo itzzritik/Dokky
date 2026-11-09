@@ -3,6 +3,7 @@ package vault
 import (
 	"image/color"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
@@ -11,7 +12,7 @@ import (
 
 const pwLimit = vault.MaxPassword + 1 // one over, so the meter can say it is too long
 
-var strengthWords = [5]string{"Very weak", "Weak", "Okay", "Good", "Strong"}
+var strengthWords = [5]string{"Weak", "Weak", "Okay", "Good", "Strong"}
 
 // a new master password typed twice and scored as it is typed
 type newPassword struct {
@@ -22,7 +23,7 @@ type newPassword struct {
 }
 
 func makeNew(label string) newPassword {
-	n := newPassword{pw: ui.NewSecret(label, "", pwLimit), again: ui.NewSecret("Confirm", "", pwLimit)}
+	n := newPassword{pw: ui.NewSecret(label, "At least "+strconv.Itoa(vault.MinPassword)+" characters", pwLimit), again: ui.NewSecret("Confirm", "Type it again", pwLimit)}
 	n.rescore()
 	return n
 }
@@ -62,34 +63,67 @@ func (n *newPassword) problem() (int, string) {
 	return -1, ""
 }
 
-// strength meter, its hint, then the three rules with ticks; the ticks give way first when room is short
-func (n *newPassword) rows(w int, bg color.Color, room int) []string {
-	p := ui.P()
-	tone := strengthTone(n.score)
-	word, hint := "", "Use at least 10 characters."
-	if n.pw.Len() > 0 {
-		word, hint = strengthWords[n.score], sentence(n.hint)
+// the password, its meter right below, then Confirm with a mark at its end; a blank row before Confirm when there is room
+func (n *newPassword) place(body *ui.Box, y, w, room int, ids [2]string, focus int, bg color.Color) int {
+	g := 1
+	if room >= 4 {
+		g = 2
 	}
-	// "good" and "strong" only repeat the meter's word
-	if strings.EqualFold(strings.TrimSuffix(hint, "."), word) {
-		hint = ""
+	body.Add(0, y, n.pw.View(ids[0], w, focus == 0, bg))
+	body.Put(0, y+1, n.meter(w, bg))
+	body.Add(0, y+1+g, n.again.View(ids[1], w, focus == 1, bg))
+	if m := n.mark(focus == 1); m != "" {
+		body.Put(w-2, y+1+g, m)
 	}
-	bw := max(8, w-ui.LabelW-len(strengthWords[0])-2)
-	meter := ui.L(bg).T("Strength", p.Muted).Pad(ui.LabelW) + ui.L(bg).Raw(segments(bw, n.filled(), tone, bg)).Sp(2).B(word, tone).Pad(w-ui.LabelW)
-	hc := p.Muted
-	if n.pw.Len() > 0 && !n.ok {
-		hc = tone
-	}
-	out := []string{meter, ui.L(bg).Sp(ui.LabelW).T(hint, hc).Pad(w), n.checks(w, bg)}
-	return out[:max(0, min(len(out), room))]
+	return 2 + g
 }
 
-// a blank row between fields when the window has room for every row, none when it is tight
-func gap(room, fields, after int) int {
-	if 2*fields+after <= room {
-		return 2
+// four bars under the field and one word flush with its right edge; empty until the first key
+func (n *newPassword) meter(w int, bg color.Color) string {
+	word, tone := n.status()
+	bw := max(8, w-ui.LabelW-wordW-2)
+	return ui.L(bg).Sp(ui.LabelW).Raw(segments(bw, n.filled(), tone, bg)).Sp(max(1, w-ui.LabelW-bw-len(word))).B(word, tone).Pad(w)
+}
+
+const wordW = 11 // the longest status word
+
+// the meter's word: how strong, or the one thing to fix in two words
+func (n *newPassword) status() (string, color.Color) {
+	p := ui.P()
+	tone := strengthTone(n.score)
+	switch {
+	case n.pw.Len() == 0:
+		return "", p.Faint
+	case n.ok:
+		return strengthWords[n.score], tone
+	case strings.HasPrefix(n.hint, "use at least"):
+		return "Too short", p.Coral
+	case strings.HasPrefix(n.hint, "use at most"):
+		return "Too long", p.Coral
+	case strings.Contains(n.hint, "spaces"):
+		return "Trim spaces", p.Coral
+	case strings.Contains(n.hint, "common"):
+		return "Too common", p.Coral
 	}
-	return 1
+	return "Weak", p.Coral
+}
+
+// a tick once Confirm matches, a cross once it is as long and does not; drawn inside the field's right end
+func (n *newPassword) mark(focused bool) string {
+	p := ui.P()
+	fb := p.Field
+	if focused {
+		fb = p.Sel
+	}
+	switch k := n.again.Len(); {
+	case k == 0:
+		return ""
+	case n.same():
+		return ui.L(fb).B(ui.G.Check, p.Kelp).Sp(1).String()
+	case k >= n.pw.Len():
+		return ui.L(fb).B(ui.G.Cross, p.Coral).Sp(1).String()
+	}
+	return ""
 }
 
 // one segment shows even for a very weak password, so the meter answers the first key
@@ -127,28 +161,4 @@ func segments(w, n int, tone, bg color.Color) string {
 		l.T(strings.Repeat(ui.G.Heavy, each), c)
 	}
 	return l.Pad(w)
-}
-
-// the rules as ticks, shorter words when the row is narrow
-func (n *newPassword) checks(w int, bg color.Color) string {
-	p := ui.P()
-	k := n.pw.Len()
-	met := []bool{k >= vault.MinPassword && k <= vault.MaxPassword, n.ok, n.again.Len() > 0 && n.same()}
-	for _, set := range [][]string{{"10 or more characters", "Hard to guess", "Both match"}, {"10+ characters", "Strong enough", "Match"}} {
-		l := ui.L(bg)
-		for i, label := range set {
-			if i > 0 {
-				l.Sp(3)
-			}
-			if met[i] {
-				l.B(ui.G.Check, p.Kelp).Sp(1).T(label, p.Text)
-			} else {
-				l.T(ui.G.Ring, p.Faint).Sp(1).T(label, p.Muted)
-			}
-		}
-		if l.Width() <= w {
-			return l.Pad(w)
-		}
-	}
-	return ui.L(bg).Pad(w)
 }

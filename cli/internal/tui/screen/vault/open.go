@@ -20,17 +20,14 @@ func WindowLock(st *core.State) *Flow {
 	return f
 }
 
+const (
+	createTitle = "Create a master password"
+	createSub   = "Encrypts your drive logins. Only you know it."
+)
+
 // every dokky needs a master password before its dashboard: after the first-run choice, or once for an older install
 func Setup(st *core.State) *Flow {
-	s := st.Snap
-	title, sub := "Create a master password", "It locks your drive logins on this computer."
-	if len(s.Drives) > 0 || s.Account.LoggedIn {
-		title = "Protect dokky with a master password"
-	}
-	if s.Account.LoggedIn {
-		sub = "It locks your drive logins here and in sync."
-	}
-	return newFlow(st, newCreate(title, sub, encrypted), false, exitQuit)
+	return newFlow(st, newCreate(createTitle, createSub, encrypted), false, exitQuit)
 }
 
 // a signed-in dokky whose account set its master password on another device
@@ -40,7 +37,7 @@ func Join(st *core.State) *Flow {
 
 // the step a sign in waits for (need): a master password for an account without one, or the one it has; resume finishes the sign in
 func SignIn(st *core.State, need string, resume func(*core.State) tea.Cmd) *Flow {
-	var first form = newCreate("Create a master password", "It locks your drive logins here and in sync.", "Master password set")
+	var first form = newCreate(createTitle, createSub, "Master password set")
 	if need == api.NeedJoin {
 		first = newJoin("")
 	}
