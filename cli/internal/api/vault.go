@@ -107,10 +107,3 @@ type RecoveryKeyReply struct {
 type GrantReply struct {
 	Grant string `json:"grant"`
 }
-
-// a live password check for the create screen; mirrors vault.CheckPassword
-type Strength struct {
-	Score int    `json:"score"` // 0..4
-	OK    bool   `json:"ok"`
-	Hint  string `json:"hint,omitempty"`
-}

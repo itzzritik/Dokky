@@ -23,7 +23,7 @@ type change struct {
 }
 
 func newChange() *change {
-	return &change{cur: ui.NewSecret("Current", "", vault.MaxPassword), np: makeNew("New")}
+	return &change{cur: ui.NewSecret("Current", "", vault.MaxPassword), np: makeNew("New", "Confirm")}
 }
 
 func (c *change) fields() []*ui.Secret { return []*ui.Secret{c.cur, c.np.pw, c.np.again} }
@@ -84,7 +84,7 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		case move(k, &c.focus, 3):
 		case fs[c.focus].Type(msg):
 			c.err = ""
-			c.np.rescore()
+			c.np.recheck()
 		}
 	}
 	return nil
@@ -128,7 +128,7 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	idle := c.req == 0
 	room := win.Room(maxH)
 	g := 1
-	if room >= 6 {
+	if room >= 5 {
 		g = 2
 	}
 	focus := c.focus - 1
@@ -137,7 +137,7 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	}
 	body := ui.NewBox()
 	body.Add(0, 0, c.cur.View("field:0", cw, c.focus == 0 && idle, bg))
-	rows := g + c.np.place(body, g, cw, room-g, [2]string{"field:1", "field:2"}, focus, bg)
+	rows := g + c.np.place(body, g, cw, room-g, [2]string{"field:1", "field:2"}, focus)
 	win.Body = body
 	return rows
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -518,8 +519,8 @@ func (k *keeper) useGrant(g string) error {
 }
 
 func weak(pw string) error {
-	if _, ok, hint := vault.CheckPassword(pw); !ok {
-		return &codedError{api.ErrWeakPassword, "Choose a stronger master password: " + hint + "."}
+	if !vault.CheckPassword(pw) {
+		return &codedError{api.ErrWeakPassword, "Use at least " + strconv.Itoa(vault.MinPassword) + " characters."}
 	}
 	return nil
 }

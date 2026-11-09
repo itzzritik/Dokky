@@ -123,15 +123,3 @@ func upper(s string) string {
 	}
 	return string(unicode.ToUpper(r)) + s[n:]
 }
-
-// a hint from vault.CheckPassword as a sentence
-func sentence(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if !strings.ContainsAny(s[len(s)-1:], ".!?") {
-		s += "."
-	}
-	return upper(s)
-}
