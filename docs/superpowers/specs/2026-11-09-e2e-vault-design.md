@@ -60,7 +60,7 @@ AAD strings (bind every ciphertext to its role, so a server cannot swap blobs):
 
 Zero every key and password byte slice after use where Go allows it. Passwords arrive as strings over IPC; convert to `[]byte` once and zero that.
 
-Password rules (`vault.CheckPassword`): 8 to 128 characters, no leading or trailing spaces, not all one character class unless 16+ long, not in a small built-in common-password list, and a simple strength score 0..4 (length, classes, repeats, sequences) that must be at least 2. The TUI shows the score live as a meter with a short hint.
+Password rule (`vault.CheckPassword`): at least 8 characters, nothing else. The TUI shows a small count inside the field until it is long enough, then a tick.
 
 ## Files on a device
 
@@ -211,7 +211,7 @@ Fresh install gate: "Sign in with browser" or "Use on this computer only".
 
 ## TUI
 
-New screens under `cli/internal/tui/screen/vault/`: create password (password, confirm, live strength meter and hint), recovery key (shown once, copy with `c`, must confirm), unlock (big system auth button when available plus password field, "forgot password" → recovery flow, cooldown message), join (account email shown), recover (recovery key + new password). Settings gains a Security section: unlock at startup (Automatically, Touch ID/Windows Hello/system, Master password), ask for password every (7, 14, 30 days, never), lock window after (5, 10, 30, 60 min, never), change master password, new recovery key, lock now. Changing security settings asks for system auth or password first (`vault.authorize`). Window idle lock covers the whole TUI with the unlock screen (view lock; the daemon stays unlocked). A key `ctrl+l` locks the window; `L` in Settings locks dokky (unmounts). Over SSH the TUI never offers system auth.
+New screens under `cli/internal/tui/screen/vault/`: create password (password and confirm, no labels, a count then a tick inside the field, a tick or cross on confirm), recovery key (shown once, copy with `c`, must confirm), unlock (big system auth button when available plus password field, "forgot password" → recovery flow, cooldown message), join (account email shown), recover (recovery key + new password). Settings gains a Security section: unlock at startup (Automatically, Touch ID/Windows Hello/system, Master password), ask for password every (7, 14, 30 days, never), lock window after (5, 10, 30, 60 min, never), change master password, new recovery key, lock now. Changing security settings asks for system auth or password first (`vault.authorize`). Window idle lock covers the whole TUI with the unlock screen (view lock; the daemon stays unlocked). A key `ctrl+l` locks the window; `L` in Settings locks dokky (unmounts). Over SSH the TUI never offers system auth.
 
 ## Calls made
 

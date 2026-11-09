@@ -2,7 +2,6 @@ package vault
 
 import (
 	"slices"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -38,15 +37,11 @@ type Flow struct {
 	exit   exit
 	signin bool // the master password step of a sign in
 	mark   *brand.Mark
-	opened time.Time
 	done   func(*core.State) tea.Cmd
 }
 
-// the mark fills and settles in this long; a lock screen left up all day doesn't redraw all day
-const markFor = 4 * time.Second
-
 func newFlow(st *core.State, first form, window bool, ex exit) *Flow {
-	f := &Flow{forms: []form{first}, window: window, exit: ex, opened: st.Now}
+	f := &Flow{forms: []form{first}, window: window, exit: ex}
 	if !window {
 		f.mark = brand.NewMark(st.Now)
 	}
@@ -185,7 +180,7 @@ func (f *Flow) Actions(st *core.State) []core.Action {
 }
 
 func (f *Flow) Animating(st *core.State) bool {
-	return f.top().animating(st) || f.mark != nil && f.mark.Animating(st.Now) && st.Now.Sub(f.opened) < markFor
+	return f.top().animating(st) || f.mark != nil && f.mark.Animating(st.Now)
 }
 
 // a vault step finished; the app checks again what covers the screen

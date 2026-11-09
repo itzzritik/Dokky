@@ -22,7 +22,7 @@ type create struct {
 }
 
 func newCreate(title, sub, toast string) *create {
-	return &create{np: makeNew("Password"), title: title, sub: sub, toast: toast}
+	return &create{np: makeNew("", ""), title: title, sub: sub, toast: toast}
 }
 
 func (c *create) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
@@ -84,7 +84,7 @@ func (c *create) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		if field.Type(msg) {
 			c.err = ""
-			c.np.rescore()
+			c.np.recheck()
 		}
 	}
 	return nil
@@ -101,18 +101,17 @@ func (c *create) submit(st *core.State) tea.Cmd {
 }
 
 func (c *create) view(st *core.State, win *ui.Window, maxH int) int {
-	p := ui.P()
 	win.Title = c.title
 	sub(win, c.sub, c.err)
 	win.Buttons = []ui.Btn{{ID: "create", Label: busyLabel(st, c.req != 0, "Create password", "Creating"), Primary: true}}
 	win.Active = 0
-	cw, bg := win.Inner(), p.Surface
+	cw := win.Inner()
 	focus := c.focus
 	if c.req != 0 {
 		focus = -1
 	}
 	body := ui.NewBox()
-	rows := c.np.place(body, 0, cw, win.Room(maxH), [2]string{"field:0", "field:1"}, focus, bg)
+	rows := c.np.place(body, 0, cw, win.Room(maxH), [2]string{"field:0", "field:1"}, focus)
 	win.Body = body
 	return rows
 }

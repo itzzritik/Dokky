@@ -32,7 +32,7 @@ type recoverForm struct {
 func newRecover(join bool) *recoverForm {
 	k := ui.NewSecret("Recovery key", "DK1-XXXX-XXXX-"+ui.G.Ellipsis, 96)
 	k.Reveal, k.Show = true, groupKey
-	return &recoverForm{key: k, np: makeNew("New password"), join: join}
+	return &recoverForm{key: k, np: makeNew("New password", "Confirm"), join: join}
 }
 
 // checked on each change, not each frame
@@ -186,7 +186,7 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		default:
 			if r.field().Type(msg) {
 				r.err = ""
-				r.np.rescore()
+				r.np.recheck()
 				r.rekey()
 			}
 		}
@@ -245,7 +245,7 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	idle := r.req == 0
 	room := win.Room(maxH)
 	g := 1
-	if room >= 7 {
+	if room >= 6 {
 		g = 2
 	}
 	focus := r.focus - 1
@@ -255,7 +255,7 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	body := ui.NewBox()
 	body.Add(0, 0, r.key.View("field:0", cw, r.focus == 0 && idle, bg))
 	body.Put(0, 1, keyLine(r.ks, r.kn, cw, bg))
-	rows := 1 + g + r.np.place(body, 1+g, cw, room-1-g, [2]string{"field:1", "field:2"}, focus, bg)
+	rows := 1 + g + r.np.place(body, 1+g, cw, room-1-g, [2]string{"field:1", "field:2"}, focus)
 	win.Body = body
 	return rows
 }
