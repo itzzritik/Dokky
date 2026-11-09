@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"runtime"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -20,6 +21,7 @@ type runner struct {
 	cancel   context.CancelFunc
 	done     *api.Drive
 	failed   string
+	at       string // the focused button
 }
 
 func (r *runner) working() bool { return r.req != 0 }
@@ -67,16 +69,30 @@ func (a *Add) updateConnect(msg tea.Msg, st *core.State) tea.Cmd {
 		r.done = &d
 		return core.Send(core.Recheck{})
 	case tea.KeyPressMsg:
-		if m.String() == "enter" {
-			switch {
-			case r.failed != "":
-				return a.press("retry", st)
-			case r.done != nil:
-				return a.finish(r.done.State == api.Connected)
-			}
+		if r.working() {
+			return nil
 		}
+		r.at = a.focused(st)
+		k := m.String()
+		if ui.Pressed(k, r.at) {
+			return a.press(strings.TrimPrefix(r.at, "btn:"), st)
+		}
+		ui.Walk(a.stops(st), &r.at, k)
 	}
 	return nil
+}
+
+// Cancel while it mounts; then Try again, or Done with a way to open the drive
+func (a *Add) connectBar(st *core.State) []ui.Btn {
+	switch r := &a.run; {
+	case r.working():
+		return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "add", Label: ui.Spin(st.T) + " Adding", Primary: true}}
+	case r.failed != "":
+		return []ui.Btn{{ID: "back", Label: "Back"}, {ID: "retry", Label: "Try again", Primary: true}}
+	case r.done != nil && r.done.State == api.Connected:
+		return []ui.Btn{{ID: "done", Label: "Done"}, {ID: "finder", Label: "Open in " + core.FileManager(), Primary: true}}
+	}
+	return []ui.Btn{{ID: "done", Label: "Done", Primary: true}}
 }
 
 func (a *Add) finish(open bool) tea.Cmd {

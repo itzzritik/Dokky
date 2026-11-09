@@ -2,80 +2,117 @@ package vault
 
 import (
 	"image/color"
+	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-// the recovery key, shown once in big groups; it goes on only after the person says it is saved
+var keyStops = []string{"btn:download", "btn:continue"}
+
+// the recovery key, shown once in big groups, with a button that saves it as a file
 type showKey struct {
-	key   []rune // wiped once saved; never logged or put in a toast
-	saved bool
-	done  bool
-	err   string
-	toast string
+	key    []rune // wiped once done; never logged or put in a toast
+	at     string // the focused button
+	saved  string // where the file went, "" until it is downloaded
+	warned bool   // Continue was pressed once without a download
+	done   bool
+	err    string
+	toast  string
 }
 
-func newShowKey(key, toast string) *showKey { return &showKey{key: []rune(key), toast: toast} }
+// the file is written; the screen that asked for it takes the reply
+type keySaved struct {
+	from *showKey
+	path string
+	err  error
+}
+
+func newShowKey(key, toast string) *showKey {
+	return &showKey{key: []rune(key), at: "btn:download", toast: toast}
+}
 
 func (k *showKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
-	id := ""
 	switch m := msg.(type) {
-	case core.Click:
-		id = map[string]string{"btn:copy": "c", "btn:continue": "enter", "saved": "space"}[m.ID]
-	case tea.KeyPressMsg:
-		id = m.String()
-	}
-	switch id {
-	case "c":
-		// shown at once, even over the full screen setup
-		return tea.Batch(tea.SetClipboard(string(k.key)), core.Send(core.Toast{Text: "Recovery key copied", Now: true}))
-	case "space":
-		k.saved, k.err = !k.saved, ""
-	case "enter":
-		if !k.saved {
-			k.err = "Press space once your key is saved."
+	case keySaved:
+		if m.from != k {
 			return nil
 		}
-		k.done = true
-		var said tea.Cmd
-		if k.toast != "" {
-			said = core.Say(k.toast)
+		if m.err != nil {
+			k.err = "Couldn't save the file: " + core.Report(m.err)
+			return nil
 		}
-		return tea.Batch(said, f.finish(st))
+		k.saved, k.err, k.at = m.path, "", "btn:continue"
+	case core.Click:
+		if slices.Contains(keyStops, m.ID) {
+			k.at = m.ID
+			return k.press(st, f)
+		}
+	case tea.KeyPressMsg:
+		switch s := m.String(); {
+		case ui.Pressed(s, k.at):
+			return k.press(st, f)
+		case s == "d":
+			k.at = "btn:download"
+			return k.press(st, f)
+		case ui.Walk(keyStops, &k.at, s):
+		}
 	}
 	return nil
+}
+
+func (k *showKey) press(st *core.State, f *Flow) tea.Cmd {
+	if k.at == "btn:download" {
+		return k.download(st)
+	}
+	// a key written down on paper is fine too: a second Continue goes on without the file
+	if k.saved == "" && !k.warned {
+		k.warned, k.err = true, "Not downloaded yet. Press Continue again to skip."
+		return nil
+	}
+	k.done = true
+	var said tea.Cmd
+	if k.toast != "" {
+		said = core.Say(k.toast)
+	}
+	return tea.Batch(said, f.finish(st))
+}
+
+// written off the update loop; a second download replaces the first file rather than adding another
+func (k *showKey) download(st *core.State) tea.Cmd {
+	key, email, again, from := string(k.key), st.Snap.Account.Email, k.saved, k
+	return func() tea.Msg {
+		path, err := saveKey(again, key, email, time.Now())
+		return keySaved{from: from, path: path, err: err}
+	}
 }
 
 func (k *showKey) view(_ *core.State, win *ui.Window, maxH int) int {
 	p := ui.P()
 	win.Title = "Save your recovery key"
-	sub(win, "It gets you back in if you forget your password.", k.err)
-	win.Buttons = []ui.Btn{{ID: "copy", Label: "Copy"}, {ID: "continue", Label: "Continue", Primary: true}}
-	if k.saved {
-		win.Active = 1
-	}
+	sub(win, "Use it if you forget your master password.", k.err)
+	win.Buttons = []ui.Btn{{ID: "download", Label: "Download", Primary: k.saved == ""}, {ID: "continue", Label: "Continue", Primary: k.saved != ""}}
+	win.Active = win.Index(k.at)
 	cw, bg := win.Inner(), p.Surface
 	body := ui.NewBox()
 	chips := keyChips(string(k.key), cw, bg)
 	body.Lines(0, 0, chips)
 	y := len(chips)
-	switch room := win.Room(maxH); {
-	case room >= y+4:
-		body.Put(0, y+1, win.Text("dokky shows it only once. Keep it somewhere safe.", p.Faint))
-		y += 3
-	case room >= y+2:
-		y++
+	if win.Room(maxH) >= y+2 {
+		l := ui.L(bg)
+		if k.saved != "" {
+			l.B(ui.G.Check, p.Kelp).Sp(1).T("Saved to "+core.Fit(tidy(k.saved), cw-10), p.Kelp)
+		} else {
+			l.T("dokky shows it only once.", p.Faint)
+		}
+		body.Put(0, y+1, l.Pad(cw))
+		y += 2
 	}
-	box := ui.Paint("   ", nil, p.Cap, false)
-	if k.saved {
-		box = ui.Paint(" "+ui.G.Check+" ", p.OnAccent, p.Accent, true)
-	}
-	body.Hit(0, y, "saved", ui.L(bg).Raw(box).Sp(2).T("I saved my recovery key", p.Text).Pad(cw))
 	win.Body = body
-	return min(y+1, win.Room(maxH))
+	return min(y, win.Room(maxH))
 }
 
 // DK1 and the groups after it as raised chips in two rows, letters spaced out when they fit
@@ -132,7 +169,11 @@ func rim(g string, n int, fill, under color.Color) string {
 }
 
 func (k *showKey) actions(*core.State) []core.Action {
-	return []core.Action{{Key: "c", Label: "copy"}, {Key: "space", Label: "I saved it"}, {Key: "enter", Label: "continue", Accent: k.saved}}
+	enter := core.Action{Key: "enter", Label: "download", Accent: k.saved == ""}
+	if k.at == "btn:continue" {
+		enter = core.Action{Key: "enter", Label: "continue", Accent: k.saved != ""}
+	}
+	return []core.Action{enter, {Key: "← →", Label: "switch"}}
 }
 
 func (k *showKey) typing() bool               { return false }

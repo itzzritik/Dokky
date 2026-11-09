@@ -19,7 +19,11 @@ type picker struct {
 	accounts []api.AccountRef
 	req      core.Req
 	sel, top int
+	at       string // the search, or a button
 }
+
+// the search and its list act as one combobox: typing filters, up and down move the list
+const searchID = "field:search"
 
 type option struct {
 	name, desc string
@@ -57,30 +61,52 @@ func (p *picker) options(st *core.State) []option {
 	return out
 }
 
+func (p *picker) clear() {
+	p.search.Input.SetValue("")
+	p.sel, p.top = 0, 0
+}
+
+// the highlighted service, or the account already signed in
+func (p *picker) chosen(a *Add, st *core.State) tea.Cmd {
+	if opts := p.options(st); p.sel >= 0 && p.sel < len(opts) {
+		return a.choose(st, opts[p.sel].prov, opts[p.sel].acct)
+	}
+	return nil
+}
+
 func (a *Add) updateChoose(msg tea.Msg, st *core.State) tea.Cmd {
 	p := &a.pick
 	opts := p.options(st)
 	switch m := msg.(type) {
 	case core.Click:
 		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "row:")); err == nil && i < len(opts) {
-			p.sel = i
+			p.at, p.sel = searchID, i
 			return a.choose(st, opts[i].prov, opts[i].acct)
+		}
+		if m.ID == searchID {
+			p.at = searchID
 		}
 		return nil
 	case tea.KeyPressMsg:
-		switch m.String() {
-		case "up":
+		k := m.String()
+		switch {
+		case ui.Pressed(k, p.at):
+			return a.press(strings.TrimPrefix(p.at, "btn:"), st)
+		case p.at == searchID && k == "enter":
+			return p.chosen(a, st)
+		case p.at == searchID && k == "up":
 			p.sel = max(0, p.sel-1)
 			return nil
-		case "down":
-			p.sel = min(len(opts)-1, p.sel+1)
+		case p.at == searchID && k == "down":
+			p.sel = max(0, min(len(opts)-1, p.sel+1))
 			return nil
-		case "enter":
-			if p.sel < len(opts) {
-				return a.choose(st, opts[p.sel].prov, opts[p.sel].acct)
-			}
+		case ui.Walk(a.stops(st), &p.at, k):
 			return nil
 		}
+	}
+	// typing only reaches the search while it has focus
+	if p.at != searchID {
+		return nil
 	}
 	before := p.search.Value()
 	cmd, _ := p.search.Type(msg)
@@ -116,13 +142,15 @@ func grouped(opts []option) []line {
 // rows under the list: a gap, a rule, a gap and one line of description
 const descRows = 4
 
-func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
+func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int, focus string) int {
 	pal := ui.P()
 	p := &a.pick
 	win.Title, win.Sub = "Add drive", "Where do your files live?"
 	cw := win.Inner()
 	body := ui.NewBox()
-	body.Add(0, 0, p.search.View("search", cw, true, pal.Surface))
+	// with a button focused, the chosen service stays bold but drops the focus bar
+	searching := focus == searchID
+	body.Add(0, 0, p.search.View(searchID, cw, searching, pal.Surface))
 	opts := p.options(st)
 	if len(opts) == 0 {
 		body.Put(0, 2, win.Text("Nothing matches. Try another word.", pal.Faint))
@@ -161,7 +189,7 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int) int {
 			continue
 		}
 		i, o := l.opt, opts[l.opt]
-		body.Add(0, 2+rows, ui.Row("row:"+strconv.Itoa(i), cw, i == p.sel, pal.Surface, func(bg color.Color, iw int) string {
+		body.Add(0, 2+rows, ui.Row("row:"+strconv.Itoa(i), cw, i == p.sel && searching, pal.Surface, func(bg color.Color, iw int) string {
 			if i == p.sel {
 				return ui.L(bg).B(o.name, pal.Text).Pad(iw)
 			}

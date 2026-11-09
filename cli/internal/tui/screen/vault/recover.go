@@ -20,7 +20,7 @@ const keyChars = 34 // after DK1-, 32 for the key and 2 for its check
 type recoverForm struct {
 	key    *ui.Secret
 	np     newPassword
-	focus  int // 0 key, 1 password, 2 again
+	at     string // the focused stop
 	reveal bool
 	err    string
 	req    core.Req
@@ -32,7 +32,7 @@ type recoverForm struct {
 func newRecover(join bool) *recoverForm {
 	k := ui.NewSecret("Recovery key", "DK1-XXXX-XXXX-"+ui.G.Ellipsis, 96)
 	k.Reveal, k.Show = true, groupKey
-	return &recoverForm{key: k, np: makeNew("New password", "Confirm"), join: join}
+	return &recoverForm{key: k, np: makeNew("New password", "Confirm"), at: "field:0", join: join}
 }
 
 // checked on each change, not each frame
@@ -147,9 +147,9 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 			r.err = Explain(m.Err, st)
 			switch code(m.Err) {
 			case api.ErrBadRecoveryKey:
-				r.focus = 0
+				r.at = "field:0"
 			case api.ErrWeakPassword:
-				r.focus = 1
+				r.at = "field:1"
 			}
 			return nil
 		}
@@ -160,8 +160,9 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		switch m.ID {
 		case "field:0", "field:1", "field:2":
-			r.focus = int(m.ID[6] - '0')
+			r.at = m.ID
 		case "btn:recover":
+			r.at = m.ID
 			return r.submit(st)
 		}
 	case tea.KeyPressMsg, tea.PasteMsg:
@@ -178,13 +179,15 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		case k == "ctrl+r":
 			r.reveal = !r.reveal
 			r.np.reveal(r.reveal)
-		case k == "enter" && r.focus < 2 && r.filled(r.focus):
-			r.focus++
+		case ui.Pressed(k, r.at):
+			return r.submit(st)
+		case k == "enter" && r.filled(fieldAt(r.at)):
+			r.at = fieldID(fieldAt(r.at) + 1)
 		case k == "enter":
 			return r.submit(st)
-		case move(k, &r.focus, 3):
+		case ui.Walk(recoverStops, &r.at, k):
 		default:
-			if r.field().Type(msg) {
+			if fl := r.field(); fl != nil && fl.Type(msg) {
 				r.err = ""
 				r.np.recheck()
 				r.rekey()
@@ -194,14 +197,22 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	return nil
 }
 
+var recoverStops = []string{"field:0", "field:1", "field:2", "btn:recover"}
+
+func (r *recoverForm) fields() []*ui.Secret { return []*ui.Secret{r.key, r.np.pw, r.np.again} }
+
+// the focused field, nil while the button has focus
 func (r *recoverForm) field() *ui.Secret {
-	return []*ui.Secret{r.key, r.np.pw, r.np.again}[r.focus]
+	if i := fieldAt(r.at); i >= 0 {
+		return r.fields()[i]
+	}
+	return nil
 }
 
 // enter moves on from a field that has something and the next one empty
 func (r *recoverForm) filled(i int) bool {
-	next := []*ui.Secret{r.key, r.np.pw, r.np.again}
-	return next[i].Len() > 0 && next[i+1].Len() == 0
+	fs := r.fields()
+	return i >= 0 && i < 2 && fs[i].Len() > 0 && fs[i+1].Len() == 0
 }
 
 // the key first, then the new password's rules; -1 when both can go
@@ -222,7 +233,7 @@ func (r *recoverForm) problem() (int, string) {
 
 func (r *recoverForm) submit(st *core.State) tea.Cmd {
 	if at, msg := r.problem(); at >= 0 {
-		r.focus, r.err = at, msg
+		r.at, r.err = fieldID(at), msg
 		return nil
 	}
 	key, pw, join := r.key.String(), r.np.pw.String(), r.join
@@ -248,12 +259,12 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	if room >= 6 {
 		g = 2
 	}
-	focus := r.focus - 1
+	focus := fieldAt(r.at) - 1
 	if !idle {
 		focus = -1
 	}
 	body := ui.NewBox()
-	body.Add(0, 0, r.key.View("field:0", cw, r.focus == 0 && idle, bg))
+	body.Add(0, 0, r.key.View("field:0", cw, r.at == "field:0" && idle, bg))
 	body.Put(0, 1, keyLine(r.ks, r.kn, cw, bg))
 	rows := 1 + g + r.np.place(body, 1+g, cw, room-1-g, [2]string{"field:1", "field:2"}, focus)
 	win.Body = body
@@ -265,13 +276,13 @@ func (r *recoverForm) actions(*core.State) []core.Action {
 		return nil
 	}
 	enter := core.Action{Key: "enter", Label: "reset"}
-	if r.focus < 2 && r.filled(r.focus) {
+	if r.filled(fieldAt(r.at)) {
 		enter.Label = "next"
 	}
-	return []core.Action{enter, {Key: "tab", Label: "switch"}, revealAction(r.reveal)}
+	return []core.Action{enter, moveAction, revealAction(r.reveal)}
 }
 
-func (r *recoverForm) typing() bool               { return true }
+func (r *recoverForm) typing() bool               { return fieldAt(r.at) >= 0 }
 func (r *recoverForm) holding() bool              { return r.req != 0 }
 func (r *recoverForm) animating(*core.State) bool { return r.req != 0 && !ui.Reduced() }
 

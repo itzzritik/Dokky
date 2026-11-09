@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -28,13 +29,27 @@ type Placer interface {
 }
 
 var named = map[string]rune{
-	"enter": tea.KeyEnter, "esc": tea.KeyEscape, "space": tea.KeySpace,
+	"enter": tea.KeyEnter, "esc": tea.KeyEscape, "space": tea.KeySpace, "tab": tea.KeyTab,
 	"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight, "backspace": tea.KeyBackspace,
+	"home": tea.KeyHome, "end": tea.KeyEnd, "pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown, "delete": tea.KeyDelete,
 }
 
 func Press(k string) tea.KeyPressMsg {
 	if code, ok := named[k]; ok {
 		return tea.KeyPressMsg{Code: code}
+	}
+	for prefix, mod := range map[string]tea.KeyMod{"ctrl+": tea.ModCtrl, "shift+": tea.ModShift, "alt+": tea.ModAlt} {
+		if rest, ok := strings.CutPrefix(k, prefix); ok {
+			m := Press(rest)
+			if m.Code == 0 {
+				return tea.KeyPressMsg{}
+			}
+			m.Mod |= mod
+			if mod != tea.ModShift {
+				m.Text = ""
+			}
+			return m
+		}
 	}
 	if utf8.RuneCountInString(k) != 1 {
 		return tea.KeyPressMsg{}

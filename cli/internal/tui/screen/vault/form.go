@@ -2,23 +2,29 @@ package vault
 
 import (
 	"image/color"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-// tab and the arrows move between n items; reports whether k was one of them
-func move(k string, focus *int, n int) bool {
-	switch k {
-	case "tab", "down":
-		*focus = (*focus + 1) % n
-	case "shift+tab", "up":
-		*focus = (*focus + n - 1) % n
-	default:
-		return false
+// the bar's lit button: the focused one, else def, the one enter reaches from where focus is ("" for none)
+func lit(win *ui.Window, at, def string) int {
+	if i := win.Index(at); i >= 0 {
+		return i
 	}
-	return true
+	return win.Index(def)
+}
+
+func fieldID(i int) string { return "field:" + string(rune('0'+i)) }
+
+// which numbered field has focus, -1 for none
+func fieldAt(at string) int {
+	if len(at) == 7 && strings.HasPrefix(at, "field:") {
+		return int(at[6] - '0')
+	}
+	return -1
 }
 
 // a line of text that acts, like "Forgot password?", with the list's selection look when focused
@@ -46,6 +52,8 @@ func revealAction(on bool) core.Action {
 	}
 	return core.Action{Key: "ctrl+r", Label: "show"}
 }
+
+var moveAction = core.Action{Key: "tab", Label: "move"}
 
 // a short error in the sub line, else the usual words
 func sub(win *ui.Window, usual, err string) {

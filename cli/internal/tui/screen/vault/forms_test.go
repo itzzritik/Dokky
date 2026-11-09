@@ -1,13 +1,15 @@
 package vault
 
 import (
-	"github.com/itzzritik/dokky/cli/internal/tui/ui"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
+	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,14 +21,7 @@ func newState() *core.State {
 }
 
 func key(f *Flow, st *core.State, k string) tea.Cmd {
-	msg := core.Press(k)
-	switch k {
-	case "tab":
-		msg = tea.KeyPressMsg{Code: tea.KeyTab}
-	case "ctrl+r":
-		msg = tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
-	}
-	_, cmd := f.Update(msg, st)
+	_, cmd := f.Update(core.Press(k), st)
 	return cmd
 }
 
@@ -81,7 +76,7 @@ func TestCreateThenKey(t *testing.T) {
 
 	typed(f, st, goodPassword)
 	key(f, st, "enter")
-	require.Equal(t, 1, c.focus, "enter moves to the confirm field")
+	require.Equal(t, "field:1", c.at, "enter moves to the confirm field")
 	typed(f, st, "Correct-Horse-8")
 	key(f, st, "enter")
 	require.Equal(t, "The two passwords don't match.", c.err)
@@ -97,7 +92,7 @@ func TestCreateThenKey(t *testing.T) {
 
 	f.Update(core.Reply{Req: c.req, Err: coded(api.ErrWeakPassword, "pick something less guessable")}, st)
 	require.Equal(t, "Pick something less guessable.", c.err)
-	require.Equal(t, 0, c.focus)
+	require.Equal(t, "field:0", c.at)
 	require.Equal(t, len(goodPassword), c.np.pw.Len(), "a failed call keeps what was typed")
 
 	key(f, st, "enter")
@@ -107,17 +102,56 @@ func TestCreateThenKey(t *testing.T) {
 	require.Zero(t, c.np.pw.Len(), "the password is wiped once set")
 	require.True(t, f.Holding())
 
+	require.Equal(t, "btn:download", k.at, "focus starts on Download")
 	key(f, st, "q")
-	key(f, st, "enter")
-	require.Equal(t, "Press space once your key is saved.", k.err)
-	require.True(t, f.Holding(), "neither q nor enter leaves an unsaved key")
+	require.True(t, f.Holding(), "q never leaves a key on screen behind")
 
-	key(f, st, "space")
+	key(f, st, "right")
+	require.Equal(t, "btn:continue", k.at)
+	key(f, st, "enter")
+	require.Equal(t, "Not downloaded yet. Press Continue again to skip.", k.err)
+	require.True(t, f.Holding(), "the first Continue without a download only warns")
+
+	key(f, st, "left")
+	require.Equal(t, "btn:download", k.at)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	require.NoError(t, os.Mkdir(filepath.Join(home, "Downloads"), 0o700))
+	saved := sent(key(f, st, "enter"))
+	require.Len(t, saved, 1)
+	f.Update(saved[0], st)
+	path := filepath.Join(home, "Downloads", "dokky-recovery-key.txt")
+	require.Equal(t, path, k.saved)
+	require.Equal(t, "btn:continue", k.at, "focus moves on to Continue once saved")
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "DK1-ABCD-EFGH-JKMN-PQRS-TVWX-YZ01-2345-6789-AB")
+
 	msgs := sent(key(f, st, "enter"))
 	require.False(t, f.Holding())
 	require.Contains(t, msgs, tea.Msg(Settled{}))
 	require.Contains(t, msgs, tea.Msg(core.Toast{Text: encrypted}))
-	require.Empty(t, k.key, "the key is wiped once saved")
+	require.Empty(t, k.key, "the key is wiped once done")
+}
+
+func TestKeyContinueTwiceSkipsTheDownload(t *testing.T) {
+	st := newState()
+	f := newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay)
+	key(f, st, "tab")
+	key(f, st, "enter")
+	require.True(t, f.Holding())
+	sent(key(f, st, "space"))
+	require.False(t, f.Holding(), "a key written down on paper is fine too")
+}
+
+func TestKeyButtonsByMouse(t *testing.T) {
+	st := newState()
+	f := newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay)
+	k := f.top().(*showKey)
+	f.Update(core.Click{ID: "btn:continue"}, st)
+	require.Equal(t, "btn:continue", k.at, "a click moves focus to what it hit")
+	require.NotEmpty(t, k.err)
 }
 
 func TestRevealShowsBothFields(t *testing.T) {
@@ -196,7 +230,7 @@ func TestForgotPassword(t *testing.T) {
 
 	w := WindowLock(st)
 	key(w, st, "tab")
-	require.Equal(t, 0, w.top().(*unlock).focus, "the window lock has no forgot link")
+	require.Equal(t, "btn:unlock", w.top().(*unlock).at, "the window lock has no forgot link")
 }
 
 func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
@@ -260,7 +294,76 @@ func TestChangeRules(t *testing.T) {
 	typed(f, st, goodPassword)
 	key(f, st, "enter")
 	require.Equal(t, "That is the password you have now.", c.err)
-	require.Equal(t, 1, c.focus)
+	require.Equal(t, "field:1", c.at)
+}
+
+func TestFormsWalkToEveryButton(t *testing.T) {
+	st := newState()
+	st.Snap.Vault.State = api.VaultUnlocked
+	for name, c := range map[string]struct {
+		f     *Flow
+		stops []string
+	}{
+		"change":   {newFlow(st, newChange(), true, exitClose), changeStops},
+		"new key":  {newFlow(st, newAskKey(), true, exitClose), askKeyStops},
+		"create":   {Setup(st), createStops},
+		"recover":  {newFlow(st, newRecover(false), true, exitClose), recoverStops},
+		"join":     {newFlow(st, newJoin(""), true, exitClose), joinStops},
+		"show key": {newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay), keyStops},
+	} {
+		var seen []string
+		for range c.stops {
+			seen = append(seen, focusOf(c.f.top()))
+			key(c.f, st, "tab")
+		}
+		require.ElementsMatch(t, c.stops, seen, name+": tab reaches every stop")
+		require.Equal(t, c.stops[0], focusOf(c.f.top()), name+": and wraps")
+		key(c.f, st, "shift+tab")
+		require.Equal(t, c.stops[len(c.stops)-1], focusOf(c.f.top()), name+": shift+tab goes back")
+	}
+}
+
+func TestCancelButtonsByKeyboard(t *testing.T) {
+	st := newState()
+	st.Snap.Vault.State = api.VaultUnlocked
+	for name, fm := range map[string]form{"change": newChange(), "new key": newAskKey()} {
+		f := newFlow(st, fm, true, exitClose)
+		for focusOf(f.top()) != "btn:cancel" {
+			key(f, st, "tab")
+		}
+		require.Equal(t, []tea.Msg{core.CloseWindow{Screen: f}}, sent(key(f, st, "enter")), name)
+	}
+}
+
+func TestUnlockTileIsAStop(t *testing.T) {
+	st := newState()
+	st.Snap.Vault.State = api.VaultUnlocked
+	f := WindowLock(st)
+	u := f.top().(*unlock)
+	key(f, st, "shift+tab")
+	require.Equal(t, "tile:system", u.at, "Touch ID is reachable by keyboard")
+	require.NotNil(t, key(f, st, "enter"))
+	require.True(t, u.system, "enter on the tile asks Touch ID")
+}
+
+func focusOf(fm form) string {
+	switch v := fm.(type) {
+	case *create:
+		return v.at
+	case *change:
+		return v.at
+	case *askKey:
+		return v.at
+	case *recoverForm:
+		return v.at
+	case *join:
+		return v.at
+	case *showKey:
+		return v.at
+	case *unlock:
+		return v.at
+	}
+	return ""
 }
 
 func TestPick(t *testing.T) {

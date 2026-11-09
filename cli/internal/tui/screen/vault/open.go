@@ -15,7 +15,7 @@ func Unlock(st *core.State) *Flow {
 
 // covers dokky until the person proves it is them; the daemon and the drives carry on
 func WindowLock(st *core.State) *Flow {
-	f := newFlow(st, newUnlock(onWindow, "Unlock dokky", "dokky locked this window. Your drives keep working."), false, exitQuit)
+	f := newFlow(st, newUnlock(onWindow, "Unlock dokky", "dokky is locked. Your drives keep working."), false, exitQuit)
 	f.done = func(*core.State) tea.Cmd { return core.Send(Released{}) }
 	return f
 }

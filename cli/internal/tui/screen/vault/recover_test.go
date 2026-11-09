@@ -59,7 +59,7 @@ func TestRecoverChecksKeyFirst(t *testing.T) {
 	key(f, st, "tab")
 	key(f, st, "enter")
 	require.Equal(t, "The recovery key is too short.", r.err)
-	require.Equal(t, 0, r.focus)
+	require.Equal(t, "field:0", r.at)
 
 	raw, text := vault.NewRecoveryKey()
 	clear(raw)
@@ -69,7 +69,7 @@ func TestRecoverChecksKeyFirst(t *testing.T) {
 	typed(f, st, text)
 	require.Equal(t, keyGood, r.ks)
 	key(f, st, "enter")
-	require.Equal(t, 1, r.focus, "enter moves on from a good key")
+	require.Equal(t, "field:1", r.at, "enter moves on from a good key")
 	typed(f, st, goodPassword)
 	key(f, st, "enter")
 	typed(f, st, goodPassword)
@@ -79,5 +79,5 @@ func TestRecoverChecksKeyFirst(t *testing.T) {
 
 	f.Update(core.Reply{Req: r.req, Err: coded(api.ErrBadRecoveryKey, "no")}, st)
 	require.Equal(t, "That recovery key is not right.", r.err)
-	require.Equal(t, 0, r.focus)
+	require.Equal(t, "field:0", r.at)
 }

@@ -199,7 +199,9 @@ func TestSetupKeepsTheKeyUpThenSaysSo(t *testing.T) {
 
 	a.press(core.Press("q"))
 	require.NotNil(t, a.gate, "q doesn't leave an unsaved key")
-	a.press(core.Press("space"))
+	a.press(core.Press("right"))
+	a.press(core.Press("enter"))
+	require.NotNil(t, a.gate, "Continue without a download asks once more")
 	deliver(a, a.press(core.Press("enter")))
 	require.Nil(t, a.gate)
 	require.NotNil(t, a.toast)

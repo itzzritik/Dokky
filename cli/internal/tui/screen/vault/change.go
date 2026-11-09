@@ -12,18 +12,20 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
+var changeStops = []string{"field:0", "field:1", "field:2", "btn:cancel", "btn:change"}
+
 // the current master password, then a new one typed twice; the key and recovery key stay
 type change struct {
 	cur    *ui.Secret
 	np     newPassword
-	focus  int // 0 current, 1 new, 2 again
+	at     string // the focused stop
 	reveal bool
 	err    string
 	req    core.Req
 }
 
 func newChange() *change {
-	return &change{cur: ui.NewSecret("Current", "", vault.MaxPassword), np: makeNew("New", "Confirm")}
+	return &change{cur: ui.NewSecret("Current", "", vault.MaxPassword), np: makeNew("New", "Confirm"), at: "field:0"}
 }
 
 func (c *change) fields() []*ui.Secret { return []*ui.Secret{c.cur, c.np.pw, c.np.again} }
@@ -41,10 +43,10 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 			c.err = Explain(m.Err, st)
 			switch code(m.Err) {
 			case api.ErrWrongPassword:
-				c.focus = 0
+				c.at = "field:0"
 				c.cur.Wipe()
 			case api.ErrWeakPassword:
-				c.focus = 1
+				c.at = "field:1"
 			}
 			return nil
 		}
@@ -53,14 +55,10 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		if c.req != 0 {
 			return nil
 		}
-		switch m.ID {
-		case "field:0", "field:1", "field:2":
-			c.focus = int(m.ID[6] - '0')
-		case "btn:change":
-			return c.submit(st)
-		case "btn:cancel":
-			return f.back()
+		if slices.Contains(changeStops, m.ID) {
+			c.at = m.ID
 		}
+		return c.press(m.ID, f, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
 		if c.req != 0 {
 			return nil
@@ -69,7 +67,7 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		if km, ok := msg.(tea.KeyPressMsg); ok {
 			k = km.String()
 		}
-		fs := c.fields()
+		fs, i := c.fields(), fieldAt(c.at)
 		switch {
 		case k == "esc":
 			return f.back()
@@ -77,15 +75,27 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 			c.reveal = !c.reveal
 			c.cur.Reveal = c.reveal
 			c.np.reveal(c.reveal)
-		case k == "enter" && c.focus < 2 && fs[c.focus].Len() > 0 && fs[c.focus+1].Len() == 0:
-			c.focus++
+		case ui.Pressed(k, c.at):
+			return c.press(c.at, f, st)
+		case k == "enter" && i >= 0 && i < 2 && fs[i].Len() > 0 && fs[i+1].Len() == 0:
+			c.at = fieldID(i + 1)
 		case k == "enter":
 			return c.submit(st)
-		case move(k, &c.focus, 3):
-		case fs[c.focus].Type(msg):
+		case ui.Walk(changeStops, &c.at, k):
+		case i >= 0 && fs[i].Type(msg):
 			c.err = ""
 			c.np.recheck()
 		}
+	}
+	return nil
+}
+
+func (c *change) press(id string, f *Flow, st *core.State) tea.Cmd {
+	switch id {
+	case "btn:change":
+		return c.submit(st)
+	case "btn:cancel":
+		return f.back()
 	}
 	return nil
 }
@@ -108,7 +118,7 @@ func (c *change) problem() (int, string) {
 
 func (c *change) submit(st *core.State) tea.Cmd {
 	if at, msg := c.problem(); at >= 0 {
-		c.focus, c.err = at, msg
+		c.at, c.err = fieldID(at), msg
 		return nil
 	}
 	cur, next := c.cur.String(), c.np.pw.String()
@@ -123,7 +133,7 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Title = "Change master password"
 	sub(win, "Your recovery key stays the same.", c.err)
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "change", Label: busyLabel(st, c.req != 0, "Change password", "Changing"), Primary: true}}
-	win.Active = 1
+	win.Active = lit(win, c.at, "btn:change")
 	cw, bg := win.Inner(), p.Surface
 	idle := c.req == 0
 	room := win.Room(maxH)
@@ -131,12 +141,12 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	if room >= 5 {
 		g = 2
 	}
-	focus := c.focus - 1
+	focus := fieldAt(c.at) - 1
 	if !idle {
 		focus = -1
 	}
 	body := ui.NewBox()
-	body.Add(0, 0, c.cur.View("field:0", cw, c.focus == 0 && idle, bg))
+	body.Add(0, 0, c.cur.View("field:0", cw, c.at == "field:0" && idle, bg))
 	rows := g + c.np.place(body, g, cw, room-g, [2]string{"field:1", "field:2"}, focus)
 	win.Body = body
 	return rows
@@ -146,10 +156,14 @@ func (c *change) actions(*core.State) []core.Action {
 	if c.req != 0 {
 		return nil
 	}
-	return []core.Action{{Key: "enter", Label: "change"}, {Key: "tab", Label: "switch"}, revealAction(c.reveal)}
+	enter := core.Action{Key: "enter", Label: "change"}
+	if c.at == "btn:cancel" {
+		enter.Label = "cancel"
+	}
+	return []core.Action{enter, moveAction, revealAction(c.reveal)}
 }
 
-func (c *change) typing() bool               { return true }
+func (c *change) typing() bool               { return fieldAt(c.at) >= 0 }
 func (c *change) holding() bool              { return c.req != 0 }
 func (c *change) animating(*core.State) bool { return c.req != 0 && !ui.Reduced() }
 

@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -43,14 +42,12 @@ func IdleLabel(n int) string {
 	return strconv.Itoa(n) + " min"
 }
 
-// the Security heading's note: encrypted, and what still waits for it in the account
+// the Security heading's note: only drives in the account still waiting to be encrypted
 func Status(st *core.State) string {
-	p := ui.P()
-	l := ui.L(nil).B(ui.G.Check, p.Kelp).Sp(1).T("End-to-end encrypted", p.Muted)
 	if n := st.Snap.Vault.Legacy; n > 0 && st.Snap.Account.LoggedIn {
-		l.T(" · ", p.Faint).T(core.Count(n, "drive")+" still finishing encryption", p.Buoy)
+		return ui.L(nil).T(core.Count(n, "drive")+" still finishing encryption", ui.P().Buoy).String()
 	}
-	return l.String()
+	return ""
 }
 
 func PickUnlock(st *core.State) tea.Cmd {
@@ -90,11 +87,11 @@ func PickIdle(st *core.State) tea.Cmd {
 	for _, n := range api.IdleLockChoices {
 		opts = append(opts, choice{label: IdleLabel(n)})
 	}
-	return openPick(st, &pick{title: "Lock window after", sub: "Hides this window when you're away. Drives keep working.", opts: opts,
+	return openPick(st, &pick{title: "Lock dokky after", sub: "When you're away. Drives keep working.", opts: opts,
 		cur: max(0, slices.Index(api.IdleLockChoices, st.Snap.Vault.IdleLockMinutes)),
 		save: func(st *core.State, i int) tea.Cmd {
 			n := api.IdleLockChoices[i]
-			return save(st, "To change when this window locks.", api.VaultSettingsParams{IdleLockMinutes: &n})
+			return save(st, "To change when dokky locks.", api.VaultSettingsParams{IdleLockMinutes: &n})
 		}})
 }
 
@@ -117,20 +114,7 @@ func save(st *core.State, reason string, p api.VaultSettingsParams) tea.Cmd {
 	})
 }
 
-// the drives unmount and dokky waits for the master password or Touch ID
-func LockNow(*core.State) tea.Cmd {
-	return confirm.Open(&confirm.Confirm{
-		Question: "Lock dokky now?",
-		Line:     "Your drives unmount until you unlock dokky again.",
-		Do:       "Lock",
-		Run: func(st *core.State) tea.Cmd {
-			c, v := st.C, st.Snap.Vault
-			return func() tea.Msg {
-				if err := c.VaultLock(context.Background()); err != nil {
-					return core.Toast{Text: explain(err, v, time.Now()), Bad: true}
-				}
-				return nil
-			}
-		},
-	})
-}
+// LockWindow asks the app to lock dokky like a lock screen; drives and syncing carry on
+type LockWindow struct{}
+
+func LockNow(*core.State) tea.Cmd { return core.Send(LockWindow{}) }

@@ -18,6 +18,7 @@ const listW = 38
 // every change on every device: a list on the left, the chosen entry on the right
 type Activity struct {
 	sel, top int
+	page     int // rows on screen, for pgup and pgdown
 	selID    string
 	open     bool
 }
@@ -41,21 +42,36 @@ func (s *Activity) current(st *core.State) (api.Event, bool) {
 
 func (s *Activity) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	items := st.Log.Items
+	e, ok := s.current(st)
 	switch m := msg.(type) {
+	case core.SwitchTab:
+		s.open = false
 	case core.Click:
-		for i, e := range items {
-			if m.ID == "row:"+e.ID {
-				s.sel, s.selID, s.open = i, e.ID, !st.Wide
+		for i, x := range items {
+			if m.ID == "row:"+x.ID {
+				s.sel, s.selID, s.open = i, x.ID, !st.Wide
 			}
 		}
 	case tea.KeyPressMsg:
-		switch m.String() {
-		case "up":
-			s.move(items, -1)
-		case "down":
-			s.move(items, 1)
+		k := m.String()
+		if i, moved := ui.Move(k, s.sel, len(items), s.page); moved {
+			if len(items) > 0 {
+				s.sel, s.selID = i, items[i].ID
+			}
+			return s, nil
+		}
+		switch k {
 		case "enter":
-			s.open = !st.Wide && len(items) > 0
+			if !ok {
+				return s, nil
+			}
+			if !st.Wide && !s.open {
+				s.open = true
+				return s, nil
+			}
+			if id := driveOf(st, e); id != "" {
+				return s, core.Send(core.SwitchTab{Tab: core.DrivesTab, Drive: id})
+			}
 		case "esc":
 			s.open = false
 		}
@@ -63,24 +79,38 @@ func (s *Activity) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s *Activity) move(items []api.Event, by int) {
-	if len(items) == 0 {
-		return
+// the drive an event is about, while this computer still has it
+func driveOf(st *core.State, e api.Event) string {
+	if !strings.HasPrefix(e.Kind, "drive.") {
+		return ""
 	}
-	s.sel = max(0, min(len(items)-1, s.sel+by))
-	s.selID = items[s.sel].ID
+	if _, ok := st.Drive(e.Target); !ok {
+		return ""
+	}
+	return e.Target
 }
 
 func (s *Activity) Actions(st *core.State) []core.Action {
-	if len(st.Log.Items) == 0 {
+	e, ok := s.current(st)
+	if !ok {
 		return nil
 	}
-	if !st.Wide && s.open {
-		return []core.Action{{Key: "esc", Label: "back"}}
+	n := len(st.Log.Items)
+	var acts []core.Action
+	switch {
+	case !st.Wide && s.open:
+		acts = append(acts, core.Action{Key: "esc", Label: "back"})
+		if n > 1 {
+			acts = append(acts, core.Action{Key: "↑↓", Label: "next"})
+		}
+	case n > 1:
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
 	}
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
-	if !st.Wide {
+	switch {
+	case !st.Wide && !s.open:
 		acts = append(acts, core.Action{Key: "enter", Label: "details"})
+	case driveOf(st, e) != "":
+		acts = append(acts, core.Action{Key: "enter", Label: "show drive"})
 	}
 	return acts
 }
@@ -161,6 +191,7 @@ func (s *Activity) View(st *core.State, w, h int) *lipgloss.Layer {
 	b.Put(2, 0, head.String())
 	b.Put(2, 1, ui.Paint(strings.Repeat(ui.G.H, max(0, lw-3)), ui.Mix(p.Bg, p.Text, .12), nil, false))
 	room := h - 3
+	s.page = room
 	if s.sel < s.top {
 		s.top = s.sel
 	}

@@ -27,7 +27,8 @@ const (
 type Devices struct {
 	list   []api.Device
 	req    core.Req
-	sel    int
+	sel    int    // the device the buttons act on
+	at     string // the focused stop: a device's card, then the buttons
 	rename *ui.Field
 }
 
@@ -42,6 +43,42 @@ func (s *Devices) load(st *core.State) tea.Cmd {
 	}
 	s.req = core.NextReq()
 	return core.Do(st, s.req, func(ctx context.Context, c *client.Client) (any, error) { return c.Devices(ctx) })
+}
+
+func rowID(d api.Device) string { return "row:" + d.ID }
+
+// every device's card, then the buttons
+func (s *Devices) stops() []string {
+	stops := make([]string, 0, len(s.list)+2)
+	for _, d := range s.list {
+		stops = append(stops, rowID(d))
+	}
+	if len(s.list) > 0 {
+		stops = append(stops, "btn:rename", "btn:remove")
+	}
+	return stops
+}
+
+// focus on a card selects that device; on a button the last one stays selected
+func (s *Devices) focus(id string) {
+	s.at = id
+	for i, d := range s.list {
+		if rowID(d) == id {
+			s.sel = i
+		}
+	}
+}
+
+// a fresh list keeps focus on the same device where it can, else on the selected card
+func (s *Devices) settle() {
+	if len(s.list) == 0 {
+		return
+	}
+	s.sel = max(0, min(s.sel, len(s.list)-1))
+	if !slices.Contains(s.stops(), s.at) {
+		s.at = rowID(s.list[s.sel])
+	}
+	s.focus(s.at)
 }
 
 func (s *Devices) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
@@ -69,17 +106,31 @@ func (s *Devices) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				return y.LastSeenAt.Compare(x.LastSeenAt)
 			})
 			s.list = list
+			s.settle()
 		}
 	case core.Click:
-		for i, d := range s.list {
-			if m.ID == "row:"+d.ID && s.rename == nil {
-				s.sel = i
-			}
-		}
+		return s, s.click(m.ID, st)
 	case tea.KeyPressMsg:
 		return s, s.key(m, st)
 	}
 	return s, nil
+}
+
+func (s *Devices) click(id string, st *core.State) tea.Cmd {
+	if s.rename != nil {
+		switch id {
+		case "btn:cancel":
+			s.rename = nil
+		case "btn:save":
+			return s.save(st)
+		}
+		return nil
+	}
+	if !slices.Contains(s.stops(), id) {
+		return nil
+	}
+	s.focus(id)
+	return s.press(id, st)
 }
 
 func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
@@ -101,21 +152,50 @@ func (s *Devices) key(m tea.KeyPressMsg, st *core.State) tea.Cmd {
 	if len(s.list) == 0 {
 		return nil
 	}
-	s.sel = max(0, min(s.sel, len(s.list)-1))
+	s.settle()
+	switch {
+	case k == "r" || k == "d":
+		// the letters press the buttons, focus and all
+		id := map[string]string{"r": "btn:rename", "d": "btn:remove"}[k]
+		s.focus(id)
+		return s.press(id, st)
+	case k == "enter" && !ui.IsBtn(s.at):
+		// enter on a card renames it, the first of its actions
+		return s.press("btn:rename", st)
+	case ui.Pressed(k, s.at):
+		return s.press(s.at, st)
+	case ui.Walk(s.stops(), &s.at, k):
+		s.focus(s.at)
+	}
+	return nil
+}
+
+// Rename and Remove act on the selected device
+func (s *Devices) press(id string, st *core.State) tea.Cmd {
+	if s.sel >= len(s.list) {
+		return nil
+	}
 	d := s.list[s.sel]
-	switch k {
-	case "up":
-		s.sel = max(0, s.sel-1)
-	case "down":
-		s.sel = min(len(s.list)-1, s.sel+1)
-	case "r":
+	switch id {
+	case "btn:rename":
 		s.rename = ui.NewField("", shown(d.Name), "Device name", false)
 		s.rename.Bare = true
-	case "d":
+	case "btn:remove":
 		if d.Current {
-			return tea.Batch(core.Close(s), RemoveSelf())
+			return removeSelf(s)
 		}
 		return s.remove(st, d)
+	}
+	return nil
+}
+
+// the bar, also listed by the actions menu: Cancel and Save while renaming
+func (s *Devices) Buttons(*core.State) []ui.Btn {
+	switch {
+	case s.rename != nil:
+		return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "save", Label: "Save", Primary: true}}
+	case len(s.list) > 0:
+		return []ui.Btn{{ID: "rename", Label: "Rename"}, {ID: "remove", Label: "Remove", Danger: true}}
 	}
 	return nil
 }
@@ -139,8 +219,11 @@ func (s *Devices) save(st *core.State) tea.Cmd {
 
 const removeLine = "It signs out and erases its dokky data once its transfers finish."
 
-// removing this device, from here or from Settings
-func RemoveSelf() tea.Cmd {
+// removing this device, from Settings
+func RemoveSelf() tea.Cmd { return removeSelf(nil) }
+
+// from, when set, is the Devices window: it stays open under the question and closes only once Remove is pressed
+func removeSelf(from core.Screen) tea.Cmd {
 	return confirm.Open(&confirm.Confirm{
 		Question: "Remove this device?",
 		Line:     "Your files stay in your storage.",
@@ -148,12 +231,16 @@ func RemoveSelf() tea.Cmd {
 		Do:       "Remove",
 		Run: func(st *core.State) tea.Cmd {
 			c := st.C
-			return func() tea.Msg {
+			revoke := func() tea.Msg {
 				if err := c.RevokeDevice(context.Background(), "self"); err != nil {
 					return core.Toast{Text: core.Report(err), Bad: true}
 				}
 				return nil
 			}
+			if from == nil {
+				return revoke
+			}
+			return tea.Batch(core.Close(from), revoke)
 		},
 	})
 }
@@ -203,18 +290,27 @@ func (s *Devices) remove(st *core.State, d api.Device) tea.Cmd {
 	}
 }
 
-func (s *Devices) Actions(st *core.State) []core.Action {
+// enter names what it does on the focused stop; r and d stay as quiet shortcuts
+func (s *Devices) Actions(*core.State) []core.Action {
 	switch {
 	case s.rename != nil:
 		return []core.Action{{Key: "enter", Label: "save"}, {Key: "esc", Label: "cancel"}}
 	case len(s.list) == 0:
 		return []core.Action{{Key: "esc", Label: "close"}}
 	}
-	var acts []core.Action
-	if len(s.list) > 1 {
-		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
+	enter := core.Action{Key: "enter", Label: "rename"}
+	if s.at == "btn:remove" {
+		enter = core.Action{Key: "enter", Label: "remove", Danger: true}
 	}
-	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "d", Label: "remove", Danger: true}, core.Action{Key: "esc", Label: "close"})
+	move := core.Action{Key: "tab", Label: "move"}
+	if len(s.list) > 1 {
+		move.Key = "↑↓"
+	}
+	acts := []core.Action{enter, move}
+	if ui.IsBtn(s.at) {
+		acts = append(acts, core.Action{Key: "← →", Label: "choose"})
+	}
+	return append(acts, core.Action{Key: "esc", Label: "close"})
 }
 
 func (s *Devices) Animating(*core.State) bool { return s.req != 0 && s.list == nil && !ui.Reduced() }
@@ -236,9 +332,16 @@ const cardH = 5
 // hostnames end in .local on macOS; the name people know doesn't
 func shown(name string) string { return strings.TrimSuffix(name, ".local") }
 
-func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+func (s *Devices) window(st *core.State, maxW, maxH int) *ui.Window {
 	p := ui.P()
-	win := &ui.Window{W: min(76, maxW), Title: "Your devices"}
+	win := &ui.Window{W: min(76, maxW), Title: "Your devices", Buttons: s.Buttons(st), Active: -1}
+	switch {
+	case s.rename != nil:
+		// the name field has focus, so the button enter reaches is lit
+		win.Active = win.Index("btn:save")
+	case ui.IsBtn(s.at):
+		win.Active = win.Index(s.at)
+	}
 	if e := st.Snap.Account.Email; e != "" {
 		win.Sub = "Signed in as " + e
 	}
@@ -251,18 +354,24 @@ func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	case s.list == nil:
 		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Loading", p.Muted).Pad(cw))
 	default:
-		s.sel = max(0, min(s.sel, len(s.list)-1))
+		sel := max(0, min(s.sel, len(s.list)-1))
 		fit := max(1, (win.Room(maxH)+1)/cardH)
-		top := max(0, s.sel-fit+1)
+		top := max(0, sel-fit+1)
+		// the selected card keeps a soft fill while a button has focus, so it's clear what the buttons act on
+		focused := s.rename != nil || !ui.IsBtn(s.at)
 		for i := top; i < len(s.list) && i < top+fit; i++ {
 			y := (i - top) * cardH
-			body.Add(0, y, s.card(st, s.list[i], cw, i == s.sel))
+			body.Add(0, y, s.card(st, s.list[i], cw, i == sel, i == sel && focused))
 			rows = y + cardH
 		}
 	}
 	win.Fit(rows, maxH)
 	win.Body = body
-	return win.Layer()
+	return win
+}
+
+func (s *Devices) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+	return s.window(st, maxW, maxH).Layer()
 }
 
 // "Apple Silicon" or "Intel" on a Mac, the chip's usual name elsewhere
@@ -281,11 +390,15 @@ func chip(d api.Device) string {
 }
 
 // a device as a soft card: its name and where it stands, then what it runs and its dokky version
-func (s *Devices) card(st *core.State, d api.Device, w int, on bool) *lipgloss.Layer {
+func (s *Devices) card(st *core.State, d api.Device, w int, chosen, focused bool) *lipgloss.Layer {
 	p := ui.P()
-	return ui.Card("row:"+d.ID, w, on, ui.Mix(p.Surface, p.Text, .045), p.Surface, func(bg color.Color, iw int) []string {
+	fill := ui.Mix(p.Surface, p.Text, .045)
+	if chosen && !focused {
+		fill = ui.Mix(fill, p.Sel, .5)
+	}
+	return ui.Card(rowID(d), w, focused, fill, p.Surface, func(bg color.Color, iw int) []string {
 		name := ui.L(bg)
-		if on && s.rename != nil {
+		if chosen && s.rename != nil {
 			name.Raw(ui.L(bg).Raw(s.rename.View("rename", iw-18, true, bg).GetContent()).Pad(iw - 18))
 		} else {
 			name.B(core.Fit(shown(d.Name), iw-18), p.Text)

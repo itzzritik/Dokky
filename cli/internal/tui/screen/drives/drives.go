@@ -18,6 +18,7 @@ const listW = 34
 
 type Drives struct {
 	sel, top int
+	page     int // rows on screen, for pgup and pgdown
 	open     bool
 	find     *ui.Field
 	finding  bool
@@ -59,12 +60,14 @@ func (s *Drives) Capturing() bool { return s.finding }
 
 func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	d, ok := s.current(st)
-	n := len(s.list(st))
+	list := s.list(st)
 	switch m := msg.(type) {
 	case core.SwitchTab:
 		if m.Tab == core.DrivesTab {
 			s.meterID = ""
 		}
+		// a pane left open would still be there on the way back
+		s.open = false
 		if m.Drive != "" {
 			s.finding = false
 			s.find.Input.SetValue("")
@@ -75,7 +78,10 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			}
 		}
 	case core.Click:
-		for i, x := range s.list(st) {
+		if m.ID == "find" {
+			s.finding, s.open = true, false
+		}
+		for i, x := range list {
 			if m.ID == "row:"+x.ID {
 				s.sel, s.selID = i, x.ID
 				s.open = !st.Wide
@@ -100,17 +106,26 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				return s, cmd
 			}
 		}
+		if i, moved := ui.Move(k, s.sel, len(list), s.page); moved {
+			if len(list) > 0 {
+				s.sel, s.selID = i, list[i].ID
+			}
+			return s, nil
+		}
 		switch k {
-		case "up":
-			s.move(st, -1, n)
-		case "down":
-			s.move(st, 1, n)
 		case "/":
 			s.finding, s.open = true, false
 		case "a":
 			return s, add.Open(st, "")
 		case "esc":
+			// back out of the pane first, then out of the filter
+			if !st.Wide && s.open {
+				s.open = false
+				return s, nil
+			}
 			s.open = false
+			s.find.Input.SetValue("")
+			return s, nil
 		}
 		if !ok {
 			return s, nil
@@ -140,33 +155,45 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s *Drives) move(st *core.State, by, n int) {
-	if n == 0 {
-		return
-	}
-	s.sel = max(0, min(n-1, s.sel+by))
-	s.selID = s.list(st)[s.sel].ID
-}
-
 func (s *Drives) Actions(st *core.State) []core.Action {
 	d, ok := s.current(st)
+	n := len(s.list(st))
 	if s.finding {
 		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "done"}, {Key: "esc", Label: "clear"}}
 	}
-	if !ok {
-		return []core.Action{{Key: "a", Label: "add"}}
+	pane := ok && !st.Wide && s.open
+	var acts []core.Action
+	switch {
+	case pane:
+		acts = append(acts, core.Action{Key: "esc", Label: "back"})
+		if n > 1 {
+			acts = append(acts, core.Action{Key: "↑↓", Label: "next"})
+		}
+	case n > 1:
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
 	}
-	if !st.Wide && !s.open {
-		return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "details"}, {Key: "a", Label: "add"}, {Key: "/", Label: "find"}}
+	if ok {
+		acts = append(acts, s.driveActions(st, d)...)
 	}
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
-	if s.open && !st.Wide {
-		acts = []core.Action{{Key: "esc", Label: "back"}}
+	acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})
+	if !pane && s.find.Value() != "" {
+		acts = append(acts, core.Action{Key: "esc", Label: "clear"})
+	}
+	return acts
+}
+
+// what the selected drive can do; the narrow list opens its details first
+func (s *Drives) driveActions(st *core.State, d api.Drive) []core.Action {
+	var acts []core.Action
+	switch {
+	case !st.Wide && !s.open:
+		acts = append(acts, core.Action{Key: "enter", Label: "details"})
+	case !leaving(d):
+		acts = append(acts, core.Action{Key: "enter", Label: "edit"})
 	}
 	if leaving(d) {
 		return acts
 	}
-	acts = append(acts, core.Action{Key: "enter", Label: "edit"})
 	login := ui.LoginFailed(d)
 	if login {
 		acts = append(acts, core.Action{Key: "s", Label: "sign in", Accent: true})
@@ -176,9 +203,6 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 	}
 	if d.State == api.Connected {
 		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel()})
-	}
-	if st.Wide {
-		acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})
 	}
 	return acts
 }
@@ -228,6 +252,7 @@ func (s *Drives) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	b.Put(2, 1, ui.Paint(strings.Repeat(ui.G.H, max(0, lw-3)), ui.Mix(p.Bg, p.Text, .12), nil, false))
 	room := h - 3
+	s.page = room
 	if s.sel < s.top {
 		s.top = s.sel
 	}

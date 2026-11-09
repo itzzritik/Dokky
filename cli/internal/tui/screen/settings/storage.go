@@ -13,23 +13,62 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-// how much each drive keeps on this computer and where; c empties it
-type storage struct{}
+// how much each drive keeps on this computer and where; Clear, or c, empties it
+type storage struct {
+	at string // the focused button
+}
 
-func openStorage(*core.State) tea.Cmd { return core.Open(&storage{}) }
+func openStorage(*core.State) tea.Cmd { return core.Open(&storage{at: "btn:close"}) }
+
+// the bar, also listed by the actions menu; Clear shows while something is cached
+func (s *storage) Buttons(st *core.State) []ui.Btn {
+	btns := []ui.Btn{{ID: "close", Label: "Close"}}
+	if st.Snap.CacheBytes > 0 {
+		btns = append(btns, ui.Btn{ID: "clear", Label: "Clear", Danger: true})
+	}
+	return btns
+}
+
+func (s *storage) stops(st *core.State) []string {
+	var ids []string
+	for _, b := range s.Buttons(st) {
+		ids = append(ids, "btn:"+b.ID)
+	}
+	return ids
+}
 
 func (s *storage) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
-	if m, ok := msg.(tea.KeyPressMsg); ok {
-		switch m.String() {
-		case "esc":
+	stops := s.stops(st)
+	// once the cache is empty Clear goes, and focus with it
+	if !slices.Contains(stops, s.at) {
+		s.at = "btn:close"
+	}
+	switch m := msg.(type) {
+	case tea.KeyPressMsg:
+		switch k := m.String(); {
+		case k == "esc":
 			return s, core.Close(s)
-		case "c":
-			if st.Snap.CacheBytes > 0 {
-				return s, clearCache()
-			}
+		case k == "c" && slices.Contains(stops, "btn:clear"):
+			s.at = "btn:clear"
+			return s, s.press(s.at)
+		case ui.Pressed(k, s.at):
+			return s, s.press(s.at)
+		case ui.Walk(stops, &s.at, k):
+		}
+	case core.Click:
+		if slices.Contains(stops, m.ID) {
+			s.at = m.ID
+			return s, s.press(m.ID)
 		}
 	}
 	return s, nil
+}
+
+func (s *storage) press(id string) tea.Cmd {
+	if id == "btn:clear" {
+		return clearCache()
+	}
+	return core.Close(s)
 }
 
 func clearCache() tea.Cmd {
@@ -49,9 +88,10 @@ func clearCache() tea.Cmd {
 	})
 }
 
-func (s *storage) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+func (s *storage) window(st *core.State, maxW, maxH int) *ui.Window {
 	p := ui.P()
-	win := &ui.Window{W: min(64, maxW), Title: "Cached files"}
+	win := &ui.Window{W: min(64, maxW), Title: "Cached files", Buttons: s.Buttons(st)}
+	win.Active = max(0, win.Index(s.at))
 	cw := win.Inner()
 	bg := p.Surface
 	body := ui.NewBox()
@@ -82,14 +122,23 @@ func (s *storage) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	body.Put(0, y, win.Text(core.Home(st.Snap.CacheDir), p.Faint))
 	win.Fit(y+1, maxH)
 	win.Body = body
-	return win.Layer()
+	return win
 }
 
+func (s *storage) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
+	return s.window(st, maxW, maxH).Layer()
+}
+
+// enter names the focused button; c stays a quiet shortcut for Clear
 func (s *storage) Actions(st *core.State) []core.Action {
-	if st.Snap.CacheBytes > 0 {
-		return []core.Action{{Key: "c", Label: "clear", Danger: true}, {Key: "esc", Label: "close"}}
+	if len(s.Buttons(st)) < 2 {
+		return []core.Action{{Key: "enter", Label: "close"}}
 	}
-	return []core.Action{{Key: "esc", Label: "close"}}
+	enter := core.Action{Key: "enter", Label: "close"}
+	if s.at == "btn:clear" {
+		enter = core.Action{Key: "enter", Label: "clear", Danger: true}
+	}
+	return []core.Action{enter, {Key: "← →", Label: "choose"}, {Key: "esc", Label: "close"}}
 }
 
 func (s *storage) Animating(*core.State) bool { return false }

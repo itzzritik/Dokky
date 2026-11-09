@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image/color"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/devices"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -31,6 +29,9 @@ const (
 
 const slide = 180 * time.Millisecond
 
+// what s does when the server signed this computer out
+const removeLabel = "remove this device"
+
 type row struct {
 	group, label, value string
 	note                string // painted on the group's heading line, right side
@@ -42,9 +43,10 @@ type row struct {
 }
 
 type Settings struct {
-	sel, top int
-	pending  *api.Settings
-	flipped  map[string]time.Time
+	sel, top, page int
+	selLabel       string // rows come and go live, so the selection follows the label
+	pending        *api.Settings
+	flipped        map[string]time.Time
 }
 
 func New() *Settings { return &Settings{flipped: map[string]time.Time{}} }
@@ -128,8 +130,21 @@ func (s *Settings) uninstall(st *core.State) tea.Cmd {
 	})
 }
 
+// the selected row, found by its label; when it has gone, the one now in its place
+func (s *Settings) selected(rows []row) row {
+	for i, r := range rows {
+		if r.label == s.selLabel {
+			s.sel = i
+		}
+	}
+	s.sel = max(0, min(s.sel, len(rows)-1))
+	s.selLabel = rows[s.sel].label
+	return rows[s.sel]
+}
+
 func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	rows := s.rows(st)
+	r := s.selected(rows)
 	switch m := msg.(type) {
 	case setDone:
 		if m.err != nil {
@@ -137,29 +152,33 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			return s, core.Fail(m.err)
 		}
 	case core.Click:
-		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "row:")); err == nil && i < len(rows) {
-			s.sel = i
-			if r := rows[i]; r.run != nil {
-				return s, r.run(st)
+		for i, x := range rows {
+			if m.ID == "row:"+x.label {
+				s.sel, s.selLabel = i, x.label
+				if x.run != nil {
+					return s, x.run(st)
+				}
 			}
 		}
 	case tea.KeyPressMsg:
-		switch m.String() {
-		case "up":
-			s.sel = max(0, s.sel-1)
-		case "down":
-			s.sel = min(len(rows)-1, s.sel+1)
-		case "enter", "space":
-			if r := rows[min(s.sel, len(rows)-1)]; r.run != nil {
+		k := m.String()
+		if i, ok := ui.Move(k, s.sel, len(rows), s.page); ok {
+			s.sel, s.selLabel = i, rows[i].label
+			return s, nil
+		}
+		switch k {
+		case "enter":
+			if r.run != nil {
+				return s, r.run(st)
+			}
+		case "space":
+			// space flips switches and nothing else, so it can't start an uninstall
+			if r.kind == toggle {
 				return s, r.run(st)
 			}
 		case "s":
 			if st.Snap.Account.SignedOut {
 				return s, devices.RemoveSelf()
-			}
-		case "L":
-			if st.Snap.Vault.State == api.VaultUnlocked {
-				return s, vault.LockNow(st)
 			}
 		}
 	}
@@ -168,15 +187,18 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 
 func (s *Settings) Actions(st *core.State) []core.Action {
 	rows := s.rows(st)
-	r := rows[min(s.sel, len(rows)-1)]
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
+	r := s.selected(rows)
+	var acts []core.Action
+	if len(rows) > 1 {
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
+	}
 	switch r.kind {
 	case toggle:
 		label := "turn on"
 		if r.frac >= .5 {
 			label = "turn off"
 		}
-		acts = append(acts, core.Action{Key: "enter", Label: label})
+		acts = append(acts, core.Action{Key: "space", Label: label})
 	case action:
 		acts = append(acts, core.Action{Key: "enter", Label: "run"})
 	case danger:
@@ -185,10 +207,10 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "enter", Label: "update", Accent: true})
 	}
 	if st.Snap.Account.SignedOut {
-		acts = append(acts, core.Action{Key: "s", Label: "remove this device"})
+		acts = append(acts, core.Action{Key: "s", Label: removeLabel})
 	}
 	if st.Snap.Vault.State == api.VaultUnlocked {
-		acts = append(acts, core.Action{Key: "L", Label: "lock dokky"})
+		acts = append(acts, core.Action{Key: "ctrl+l", Label: "lock"})
 	}
 	return acts
 }
@@ -232,9 +254,9 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 		}
 		text, key, action := "Can't reach dokky.ritik.me", "", ""
 		if acct.SignedOut {
-			text, key, action = "Signed out on the server", "s", "sign out"
+			text, key, action = "Signed out on the server", "s", removeLabel
 		}
-		b.Lines(0, 0, ui.Banner(w, bh, false, text, key, action))
+		ui.PutBanner(b, 0, w, bh, false, text, key, action)
 		y = bh + 1
 	}
 	if acct.LoggedIn {
@@ -254,7 +276,8 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	y += 4
 	rows := s.rows(st)
-	s.sel = max(0, min(s.sel, len(rows)-1))
+	s.selected(rows)
+	s.page = max(1, h-y-2)
 	var lines []ui.ListLine
 	for i, r := range rows {
 		if (r.group != "" || r.apart) && len(lines) > 0 {
@@ -268,7 +291,7 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 				lines = append(lines, ui.ListLine{Text: head.String(), Item: -1})
 			}
 		}
-		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + strconv.Itoa(i)})
+		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + r.label})
 	}
 	ui.List(b, y, h-y, &s.top, s.sel, lines)
 	return b.Layer()

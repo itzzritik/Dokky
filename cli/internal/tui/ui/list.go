@@ -51,6 +51,29 @@ type ListLine struct {
 	ID   string
 }
 
+// the list keys: up/down by one, pgup/pgdown by a page, home/end to the ends.
+// Reports whether k was one of them, so the caller can stop there.
+func Move(k string, sel, n, page int) (int, bool) {
+	to := sel
+	switch k {
+	case "up":
+		to--
+	case "down":
+		to++
+	case "pgup":
+		to -= max(1, page)
+	case "pgdown":
+		to += max(1, page)
+	case "home":
+		to = 0
+	case "end":
+		to = n - 1
+	default:
+		return sel, false
+	}
+	return max(0, min(to, n-1)), true
+}
+
 // draws h lines from y, scrolled so the selected item (and the header above it) shows
 func List(b *Box, y, h int, top *int, sel int, lines []ListLine) {
 	at := 0
@@ -109,17 +132,9 @@ func Card(id string, w int, selected bool, fill, under color.Color, rows func(bg
 // a tinted band, coral when something is broken, else buoy; the fix key sits on the right
 func Banner(w, h int, bad bool, text, key, action string) []string {
 	p := P()
-	c, glyph := p.Buoy, G.Bang
-	if bad {
-		c, glyph = p.Coral, G.Cross
-	}
-	bg := Mix(p.Bg, c, .12)
-	right := L(bg)
+	c, glyph, bg := band(bad)
+	right := bannerKey(bg, w, key, action)
 	if key != "" {
-		right.Raw(Keycap(key))
-		if action != "" && w >= 60 {
-			right.Sp(1).B(action, p.Text)
-		}
 		right.Sp(2)
 	}
 	lines := make([]string, h)
@@ -132,4 +147,35 @@ func Banner(w, h int, bad bool, text, key, action string) []string {
 		lines[i] = l.Sp(2).B(glyph, c).Sp(1).T(text, p.Text).Right(w, right)
 	}
 	return lines
+}
+
+func band(bad bool) (c color.Color, glyph string, bg color.Color) {
+	p := P()
+	c, glyph = p.Buoy, G.Bang
+	if bad {
+		c, glyph = p.Coral, G.Cross
+	}
+	return c, glyph, Mix(p.Bg, c, .12)
+}
+
+func bannerKey(bg color.Color, w int, key, action string) *Line {
+	right := L(bg)
+	if key != "" {
+		right.Raw(Keycap(key))
+		if action != "" && w >= 60 {
+			right.Sp(1).B(action, P().Text)
+		}
+	}
+	return right
+}
+
+// a Banner drawn at y whose key can be clicked like a footer hint
+func PutBanner(b *Box, y, w, h int, bad bool, text, key, action string) {
+	b.Lines(0, y, Banner(w, h, bad, text, key, action))
+	if key == "" {
+		return
+	}
+	_, _, bg := band(bad)
+	k := bannerKey(bg, w, key, action)
+	b.Hit(w-2-k.Width(), y+h/2, "key:"+key, k.String())
 }

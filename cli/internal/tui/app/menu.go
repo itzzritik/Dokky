@@ -13,9 +13,23 @@ import (
 
 const menuW = 34
 
+// a window that names its buttons, so the menu lists them by label and presses them
+type buttoned interface {
+	Buttons(*core.State) []ui.Btn
+}
+
+// one menu line: a key to send, or a button of the window under the menu to press
+type menuItem struct {
+	core.Action
+	btn string // the button's click ID, "" for a key
+}
+
+// a blank line between the screen's items and the global ones
+func (it menuItem) sep() bool { return it.Key == "" && it.btn == "" }
+
 // every action of the screen under it, then the global ones
 type menu struct {
-	items       []core.Action // a blank Key is a separator
+	items       []menuItem
 	cursor, top int
 	owner       core.Screen
 }
@@ -25,20 +39,34 @@ type menuRun struct {
 	key   string
 }
 
-func newMenu(owner core.Screen, acts, global []core.Action) *menu {
+// keys that only move focus, which means nothing once the menu has closed
+var moves = map[string]bool{"tab": true, "shift+tab": true, "up": true, "down": true, "left": true, "right": true}
+
+// a window's buttons come first, by label, each showing a key that does the same; then the keys no button covers
+func newMenu(owner core.Screen, st *core.State, global []core.Action) *menu {
 	m := &menu{owner: owner}
-	seen := map[string]bool{}
-	add := func(a core.Action) {
-		if !seen[a.Key] && core.Press(a.Key).Code != 0 {
-			seen[a.Key] = true
-			m.items = append(m.items, a)
+	acts := owner.Actions(st)
+	seen, named := map[string]bool{}, map[string]bool{}
+	if b, ok := owner.(buttoned); ok {
+		for _, btn := range b.Buttons(st) {
+			key := sameKey(acts, btn.Label)
+			seen[key] = key != ""
+			named[strings.ToLower(btn.Label)] = true
+			m.items = append(m.items, menuItem{Action: core.Action{Key: key, Label: btn.Label, Danger: btn.Danger}, btn: "btn:" + btn.ID})
 		}
+	}
+	add := func(a core.Action) {
+		if seen[a.Key] || named[strings.ToLower(a.Label)] || moves[a.Key] || core.Press(a.Key).Code == 0 {
+			return
+		}
+		seen[a.Key] = true
+		m.items = append(m.items, menuItem{Action: a})
 	}
 	for _, a := range acts {
 		add(a)
 	}
 	if len(m.items) > 0 && len(global) > 0 {
-		m.items = append(m.items, core.Action{})
+		m.items = append(m.items, menuItem{})
 	}
 	for _, a := range global {
 		add(a)
@@ -46,12 +74,27 @@ func newMenu(owner core.Screen, acts, global []core.Action) *menu {
 	return m
 }
 
+// the key that does what the button does, a letter or esc before enter, which follows focus
+func sameKey(acts []core.Action, label string) string {
+	key := ""
+	for _, a := range acts {
+		if !strings.EqualFold(a.Label, label) || core.Press(a.Key).Code == 0 {
+			continue
+		}
+		if a.Key != "enter" {
+			return a.Key
+		}
+		key = a.Key
+	}
+	return key
+}
+
 func (a *App) openMenu() tea.Cmd {
 	var global []core.Action
 	if len(a.windows) == 0 {
 		global = a.globals()
 	}
-	if m := newMenu(a.top(), a.top().Actions(a.st), global); len(m.items) > 0 {
+	if m := newMenu(a.top(), a.st, global); len(m.items) > 0 {
 		a.windows = append(a.windows, m)
 	}
 	return nil
@@ -59,21 +102,26 @@ func (a *App) openMenu() tea.Cmd {
 
 func (m *menu) Place(bw, bh, w, h int) (int, int) { return bw - w, bh - h }
 
-func (m *menu) run(key string) tea.Cmd {
-	return tea.Sequence(core.Close(m), core.Send(menuRun{m.owner, key}))
+// a button is pressed as a click on the window under the menu, which is the one that opened it
+func (m *menu) run(it menuItem, st *core.State) tea.Cmd {
+	if it.btn != "" {
+		_, cmd := m.owner.Update(core.Click{ID: it.btn}, st)
+		return tea.Sequence(core.Close(m), cmd)
+	}
+	return tea.Sequence(core.Close(m), core.Send(menuRun{m.owner, it.Key}))
 }
 
-func (m *menu) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {
+func (m *menu) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case core.Click:
 		if i, err := strconv.Atoi(strings.TrimPrefix(msg.ID, "menu:")); err == nil && i < len(m.items) {
-			return m, m.run(m.items[i].Key)
+			return m, m.run(m.items[i], st)
 		}
 	case tea.KeyPressMsg:
 		k := strings.ToLower(msg.String())
 		switch k {
 		case "enter":
-			return m, m.run(m.items[m.cursor].Key)
+			return m, m.run(m.items[m.cursor], st)
 		case "esc", "?":
 			return m, core.Close(m)
 		case "up":
@@ -82,8 +130,8 @@ func (m *menu) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {
 			m.move(1)
 		default:
 			for _, it := range m.items {
-				if it.Key == k {
-					return m, m.run(k)
+				if it.Key == k && !it.sep() {
+					return m, m.run(it, st)
 				}
 			}
 		}
@@ -93,7 +141,7 @@ func (m *menu) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {
 
 func (m *menu) move(d int) {
 	for i := m.cursor + d; i >= 0 && i < len(m.items); i += d {
-		if m.items[i].Key != "" {
+		if !m.items[i].sep() {
 			m.cursor = i
 			return
 		}
@@ -106,7 +154,7 @@ func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 	iw := win.Inner()
 	var lines []ui.ListLine
 	for i, it := range m.items {
-		if it.Key == "" {
+		if it.sep() {
 			lines = append(lines, ui.ListLine{Text: ui.Paint(strings.Repeat(ui.G.H, iw), p.Line, p.Surface, false), Item: -1})
 			continue
 		}
@@ -115,10 +163,7 @@ func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 			if it.Danger {
 				fg = p.Coral
 			}
-			label := it.Label
-			if label != "" {
-				label = strings.ToUpper(label[:1]) + label[1:]
-			}
+			label := capital(it.Label)
 			l := ui.L(bg)
 			if i == m.cursor {
 				l.B(label, fg)
@@ -137,8 +182,26 @@ func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 	return win.Layer()
 }
 
+// footer labels are lowercase; a menu line starts with a capital
+func capital(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func (m *menu) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "run"}, {Key: "esc", Label: "close"}}
+	n := 0
+	for _, it := range m.items {
+		if !it.sep() {
+			n++
+		}
+	}
+	var acts []core.Action
+	if n > 1 {
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
+	}
+	return append(acts, core.Action{Key: "enter", Label: "run"}, core.Action{Key: "esc", Label: "close"})
 }
 
 func (m *menu) Animating(*core.State) bool { return false }

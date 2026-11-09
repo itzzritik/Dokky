@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -67,6 +68,9 @@ func (a *App) render() string {
 		passes = append(passes, ui.Pass{Layer: base})
 		a.mark = nil
 		left, right, more = a.tabs[a.active].Actions(a.st), a.globals(), &moreKey
+		if lettered(left) {
+			right = append([]core.Action{moreKey}, right...)
+		}
 		if a.capturing() {
 			right, more = nil, nil
 		}
@@ -89,6 +93,9 @@ func (a *App) render() string {
 			left, right, more = win.Actions(a.st), nil, nil
 			if _, open := win.(*menu); !open && !a.capturing() {
 				more = &moreKey
+				if lettered(left) {
+					right = []core.Action{moreKey}
+				}
 			}
 		}
 	}
@@ -110,6 +117,16 @@ func (a *App) render() string {
 }
 
 var moreKey = core.Action{Key: "?", Label: "more"}
+
+// letter keys are worth a menu, so a screen with any always shows where it is
+func lettered(acts []core.Action) bool {
+	for _, a := range acts {
+		if utf8.RuneCountInString(a.Key) == 1 || strings.HasPrefix(a.Key, "ctrl+") {
+			return true
+		}
+	}
+	return false
+}
 
 // the window lock hides everything under it
 func (a *App) blank(w, h int) *lipgloss.Layer {
