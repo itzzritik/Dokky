@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -85,14 +86,30 @@ func (a *App) openInfo(t core.Toast) {
 type info struct {
 	title, text string
 	bad         bool
+	top         int // the first line shown, for text taller than the window
+	page, total int // lines that fit and lines in all, from the last draw
 }
 
 func (m *info) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {
 	switch m2 := msg.(type) {
 	case tea.KeyPressMsg:
-		if s := m2.String(); s == "enter" || s == "esc" {
+		switch m2.String() {
+		case "enter", "esc":
 			return m, core.Close(m)
+		case "up":
+			m.top--
+		case "down":
+			m.top++
+		case "pgup":
+			m.top -= max(1, m.page-1)
+		case "pgdown":
+			m.top += max(1, m.page-1)
+		case "home":
+			m.top = 0
+		case "end":
+			m.top = m.total
 		}
+		m.top = max(0, min(m.top, m.total-m.page))
 	case core.Click:
 		if m2.ID == "btn:ok" {
 			return m, core.Close(m)
@@ -101,22 +118,36 @@ func (m *info) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m *info) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
+// the bar, also listed by the actions menu
+func (m *info) Buttons(*core.State) []ui.Btn {
+	return []ui.Btn{{ID: "ok", Label: "OK", Primary: true}}
+}
+
+// text taller than the window scrolls, with where it is in the top border
+func (m *info) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(60, maxW), Title: m.title, Bad: m.bad, Buttons: []ui.Btn{{ID: "ok", Label: "OK", Primary: true}}}
+	win := &ui.Window{W: min(60, maxW), Title: m.title, Bad: m.bad, Buttons: m.Buttons(st)}
 	lines := strings.Split(ansi.Wordwrap(m.text, win.Inner(), ""), "\n")
-	lines = lines[:min(len(lines), win.Room(maxH))]
+	m.total, m.page = len(lines), min(len(lines), win.Room(maxH))
+	m.top = max(0, min(m.top, m.total-m.page))
+	if m.page < m.total {
+		win.Corner = ui.L(p.Surface).T(fmt.Sprintf("%d-%d of %d", m.top+1, m.top+m.page, m.total), p.Muted).String()
+	}
 	body := ui.NewBox()
-	for i, l := range lines {
+	for i, l := range lines[m.top : m.top+m.page] {
 		body.Put(0, i, win.Text(l, p.Text))
 	}
 	win.Body = body
-	win.Fit(len(lines), maxH)
+	win.Fit(m.page, maxH)
 	return win.Layer()
 }
 
 func (m *info) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "enter", Label: "ok"}, {Key: "esc", Label: "close"}}
+	acts := []core.Action{{Key: "enter", Label: "ok"}}
+	if m.page < m.total {
+		acts = append(acts, core.Action{Key: "↑↓", Label: "scroll"})
+	}
+	return append(acts, core.Action{Key: "esc", Label: "close"})
 }
 
 func (m *info) Animating(*core.State) bool { return false }
