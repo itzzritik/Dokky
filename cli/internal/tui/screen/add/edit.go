@@ -31,9 +31,9 @@ const (
 
 const editLabelW = 20
 
-// a list of values: enter edits one in place and saves it on its own; actions are keys in the footer
+// a list of values: enter edits one in place and saves it on its own; the drive's actions are buttons under it
 type editForm struct {
-	focus      int
+	at         string    // the focused row or button
 	field      *ui.Field // the value being typed, nil when only moving
 	req        core.Req
 	err        string
@@ -62,6 +62,32 @@ func (e *editForm) animating(now time.Time) bool {
 
 func editRows() []int { return []int{eName, eSource, eMount, eLogin, eSize, eAge} }
 
+func rowID(row int) string { return "item:" + strconv.Itoa(row) }
+
+func editStops() []string {
+	var out []string
+	for _, r := range editRows() {
+		out = append(out, rowID(r))
+	}
+	return out
+}
+
+// which row a stop is, -1 for a button
+func rowAt(at string) int {
+	if r, ok := strings.CutPrefix(at, "item:"); ok {
+		if i, err := strconv.Atoi(r); err == nil {
+			return i
+		}
+	}
+	return -1
+}
+
+// letters that press the bar's buttons
+var editKeys = map[string]string{"m": "mount", "v": "view", "s": "signin", "d": "remove"}
+
+// a click or button outside drops the open list or the value being typed
+func (e *editForm) close() { e.menu, e.field = false, nil }
+
 // the drive as the daemon has it now, not as the window opened
 func (a *Add) live(st *core.State) api.Drive {
 	if d, ok := st.Drive(a.edit.ID); ok {
@@ -78,9 +104,6 @@ func (a *Add) canSignIn(st *core.State) bool {
 func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 	e := &a.ed
 	d := a.live(st)
-	rows := editRows()
-	e.focus = max(0, min(e.focus, len(rows)-1))
-	row := rows[e.focus]
 	switch m := msg.(type) {
 	case core.Reply:
 		if m.Req != e.req {
@@ -97,81 +120,145 @@ func (a *Add) updateEdit(msg tea.Msg, st *core.State) tea.Cmd {
 		}
 		return core.Say("Saved")
 	case core.Click:
-		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "opt:")); err == nil && e.menu {
-			e.menuSel = i
-			return a.pickAge(st, d)
-		}
-		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "item:")); err == nil && e.field == nil && slices.Contains(rows, i) {
-			e.focus = slices.Index(rows, i)
-			if i == eLogin {
-				return a.flipLogin(st, d)
-			}
-		}
-		return nil
+		return a.clickEdit(m.ID, st, d)
 	case tea.KeyPressMsg:
 		if e.req != 0 {
 			return nil
 		}
-		k := m.String()
-		if e.menu {
-			switch k {
-			case "esc":
-				e.menu = false
-			case "up":
-				e.menuSel = max(0, e.menuSel-1)
-			case "down":
-				e.menuSel = min(len(engine.CacheMaxAges)-1, e.menuSel+1)
-			case "enter", "space":
-				return a.pickAge(st, d)
-			}
-			return nil
-		}
-		if e.field != nil {
-			switch k {
-			case "esc":
-				e.field = nil
-				return nil
-			case "enter":
-				return a.commit(st, row, d)
-			}
-			cmd, typed := e.field.Type(m)
-			if typed {
-				e.err = ""
-			}
-			return cmd
-		}
+		return a.keyEdit(m.String(), m, st, d)
+	}
+	return nil
+}
+
+// a click closes what is open first, then lands: the login switch flips, keep-for opens, a focused value starts typing
+func (a *Add) clickEdit(id string, st *core.State, d api.Drive) tea.Cmd {
+	e := &a.ed
+	if i, err := strconv.Atoi(strings.TrimPrefix(id, "opt:")); err == nil && e.menu {
+		e.menuSel = i
+		return a.pickAge(st, d)
+	}
+	row := rowAt(id)
+	if row < 0 || e.req != 0 {
+		return nil
+	}
+	was, menu := rowAt(e.at), e.menu
+	// a click inside the value being typed keeps typing
+	if e.field != nil && row == was {
+		return nil
+	}
+	typing := e.field != nil
+	e.close()
+	e.at = id
+	switch {
+	case row == eLogin:
+		return a.flipLogin(st, d)
+	case row == eAge && !menu:
+		a.openMenu(st, d)
+	case row == was && row != eAge && !typing:
+		a.startEdit(row, d)
+	}
+	return nil
+}
+
+func (a *Add) keyEdit(k string, m tea.KeyPressMsg, st *core.State, d api.Drive) tea.Cmd {
+	e := &a.ed
+	if e.menu {
 		switch k {
+		case "esc":
+			e.menu = false
 		case "up":
-			e.focus = max(0, e.focus-1)
+			e.menuSel = max(0, e.menuSel-1)
 		case "down":
-			e.focus = min(len(rows)-1, e.focus+1)
-		case "enter", "space", "left", "right":
-			switch {
-			case row == eLogin:
-				return a.flipLogin(st, d)
-			case row == eAge && (k == "enter" || k == "space"):
-				e.menu, e.menuAt = true, st.Now
-				e.menuSel = max(0, slices.Index(engine.CacheMaxAges, d.CacheMaxAge))
-			case k == "enter" && row != eAge:
-				e.err = ""
-				e.field = ui.NewField("", a.editValue(row, d), a.editHint(row, d), false)
-				e.field.Bare = true
-			}
-		case "m":
-			if core.MountLabel(d) != "" {
-				return tea.Batch(core.Close(a), core.RunMount(st, d))
-			}
-		case "v":
-			if d.State == api.Connected {
-				return core.OpenFolder(d.Folder)
-			}
-		case "s":
-			if a.canSignIn(st) {
-				return a.toSignIn(st)
-			}
-		case "d":
-			return remove.Open(st, *a.edit, a)
+			e.menuSel = min(len(engine.CacheMaxAges)-1, e.menuSel+1)
+		case "enter", "space":
+			return a.pickAge(st, d)
 		}
+		return nil
+	}
+	if e.field != nil {
+		switch k {
+		case "esc":
+			e.field = nil
+			return nil
+		case "enter":
+			return a.commit(st, rowAt(e.at), d)
+		}
+		cmd, typed := e.field.Type(m)
+		if typed {
+			e.err = ""
+		}
+		return cmd
+	}
+	e.at = a.focused(st)
+	row := rowAt(e.at)
+	switch {
+	case ui.Pressed(k, e.at):
+		return a.press(strings.TrimPrefix(e.at, "btn:"), st)
+	// right turns it on and left turns it off, whichever way it is now
+	case row == eLogin && (k == "left" || k == "right"):
+		return a.setLogin(st, d, k == "right")
+	case row == eLogin && (k == "enter" || k == "space"):
+		return a.flipLogin(st, d)
+	case row == eAge && (k == "enter" || k == "space"):
+		a.openMenu(st, d)
+	case row >= 0 && k == "enter":
+		a.startEdit(row, d)
+	case ui.Walk(a.stops(st), &e.at, k):
+	case editKeys[k] != "" && slices.Contains(a.stops(st), "btn:"+editKeys[k]):
+		e.at = "btn:" + editKeys[k]
+		return a.press(editKeys[k], st)
+	}
+	return nil
+}
+
+func (a *Add) openMenu(st *core.State, d api.Drive) {
+	e := &a.ed
+	e.menu, e.menuAt = true, st.Now
+	e.menuSel = max(0, slices.Index(engine.CacheMaxAges, d.CacheMaxAge))
+}
+
+func (a *Add) startEdit(row int, d api.Drive) {
+	e := &a.ed
+	e.err = ""
+	e.field = ui.NewField("", a.editValue(row, d), a.editHint(row, d), false)
+	e.field.Bare = true
+}
+
+// Remove apart on the left, then sign in, view and mount, the drive's own state naming the last
+func (a *Add) editBar(st *core.State) []ui.Btn {
+	d := a.live(st)
+	login := ui.LoginFailed(d)
+	out := []ui.Btn{{ID: "remove", Label: "Remove", Danger: true}}
+	if a.canSignIn(st) {
+		out = append(out, ui.Btn{ID: "signin", Label: "Sign in", Primary: login})
+	}
+	if d.State == api.Connected {
+		out = append(out, ui.Btn{ID: "view", Label: upperFirst(core.ViewLabel())})
+	}
+	// the mount button stays while it works, so focus never jumps off it
+	m := core.MountLabel(d)
+	mount := ui.Btn{ID: "mount", Label: ui.Spin(st.T) + " " + ui.DriveStatus(d, st.T).Words, Primary: m != "unmount" && !login}
+	if m != "" {
+		mount.Label = upperFirst(m)
+	}
+	return append(out, mount)
+}
+
+func (a *Add) editPress(id string, st *core.State) tea.Cmd {
+	if a.edit == nil {
+		return nil
+	}
+	d := a.live(st)
+	switch {
+	// the window stays open; its corner shows the drive mounting
+	case id == "mount" && core.MountLabel(d) != "":
+		return core.RunMount(st, d)
+	case id == "view" && d.State == api.Connected:
+		return core.OpenFolder(d.Folder)
+	case id == "signin" && a.canSignIn(st):
+		return a.toSignIn(st)
+	case id == "remove":
+		return remove.Open(st, *a.edit, a)
 	}
 	return nil
 }
@@ -253,19 +340,31 @@ func (a *Add) pickAge(st *core.State, d api.Drive) tea.Cmd {
 	return nil
 }
 
-func (a *Add) flipLogin(st *core.State, d api.Drive) tea.Cmd {
-	on := !d.AtLogin
+// the switch as it shows, ahead of the save's answer
+func (a *Add) loginOn(d api.Drive) bool {
 	if a.ed.login != nil {
-		on = !*a.ed.login
+		return *a.ed.login
 	}
+	return d.AtLogin
+}
+
+func (a *Add) flipLogin(st *core.State, d api.Drive) tea.Cmd {
+	on := !a.loginOn(d)
 	a.ed.login, a.ed.loginAt = &on, st.Now
 	return a.saveEdit(st, api.DriveUpdate{AtLogin: &on}, false)
+}
+
+func (a *Add) setLogin(st *core.State, d api.Drive, on bool) tea.Cmd {
+	if a.loginOn(d) == on {
+		return nil
+	}
+	return a.flipLogin(st, d)
 }
 
 func (a *Add) saveEdit(st *core.State, u api.DriveUpdate, renamed bool) tea.Cmd {
 	e := &a.ed
 	u.ID, e.req, e.err = a.edit.ID, core.NextReq(), ""
-	e.saving = editRows()[max(0, min(e.focus, len(editRows())-1))]
+	e.saving = rowAt(e.at)
 	return core.Do(st, e.req, func(ctx context.Context, c *client.Client) (any, error) {
 		_, err := c.UpdateDrive(ctx, u)
 		return renamed, err
@@ -275,7 +374,7 @@ func (a *Add) saveEdit(st *core.State, u api.DriveUpdate, renamed bool) tea.Cmd 
 var ageLabels = map[string]string{"5m": "5 minutes", "15m": "15 minutes", "1h": "1 hour", "6h": "6 hours", "24h": "1 day", "7d": "7 days"}
 
 // the live status in the top border, two quiet sections of values in one column; a saved one ticks, keep-for opens a list
-func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
+func (a *Add) viewEdit(st *core.State, win *ui.Window, at string) int {
 	p := ui.P()
 	e := &a.ed
 	d := a.live(st)
@@ -295,8 +394,7 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 	if e.err != "" {
 		win.Sub, win.SubBad = e.err, true
 	}
-	rows := editRows()
-	cur := rows[max(0, min(e.focus, len(rows)-1))]
+	cur := rowAt(at)
 	body := ui.NewBox()
 	section := func(y int, name string) {
 		l := ui.L(bg).Sp(2).T(name, p.Faint).Sp(1)
@@ -348,10 +446,7 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 	line(3, eSource, "Source folder", text(eSource, d.SubPath, "Whole account"))
 	line(4, eMount, "Mount folder", text(eMount, d.LocalFolder, core.Home(d.Folder)))
 	line(5, eLogin, "Mount at login", func(rb color.Color, w int) string {
-		on := d.AtLogin
-		if e.login != nil {
-			on = *e.login
-		}
+		on := a.loginOn(d)
 		frac := 0.0
 		if on {
 			frac = 1
@@ -399,7 +494,7 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window) int {
 	return rowsUsed
 }
 
-func (a *Add) editActions(st *core.State) []core.Action {
+func (a *Add) editActions(st *core.State, at string) []core.Action {
 	e := &a.ed
 	if e.field != nil {
 		return []core.Action{{Key: "enter", Label: "save"}, {Key: "esc", Label: "cancel"}}
@@ -407,29 +502,22 @@ func (a *Add) editActions(st *core.State) []core.Action {
 	if e.menu {
 		return []core.Action{{Key: "↑↓", Label: "choose"}, {Key: "enter", Label: "select"}, {Key: "esc", Label: "close"}}
 	}
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
-	switch editRows()[max(0, min(e.focus, len(editRows())-1))] {
+	esc := core.Action{Key: "esc", Label: "close"}
+	if ui.IsBtn(at) {
+		return append(a.pressing(st, at), esc)
+	}
+	var acts []core.Action
+	switch rowAt(at) {
 	case eLogin:
 		label := "turn on"
-		if a.live(st).AtLogin {
+		if a.loginOn(a.live(st)) {
 			label = "turn off"
 		}
-		acts = append(acts, core.Action{Key: "enter", Label: label})
+		acts = []core.Action{{Key: "enter", Label: label}, {Key: "← →", Label: "off/on"}}
 	case eAge:
-		acts = append(acts, core.Action{Key: "enter", Label: "change"})
+		acts = []core.Action{{Key: "enter", Label: "change"}}
 	default:
-		acts = append(acts, core.Action{Key: "enter", Label: "edit"})
+		acts = []core.Action{{Key: "enter", Label: "edit"}}
 	}
-	d := a.live(st)
-	login := ui.LoginFailed(d)
-	if m := core.MountLabel(d); m != "" {
-		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount" && !login})
-	}
-	if d.State == api.Connected {
-		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel()})
-	}
-	if a.canSignIn(st) {
-		acts = append(acts, core.Action{Key: "s", Label: "sign in", Accent: login})
-	}
-	return append(acts, core.Action{Key: "d", Label: "remove", Danger: true}, core.Action{Key: "esc", Label: "close"})
+	return append(acts, moveAction, esc)
 }
