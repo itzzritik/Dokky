@@ -38,6 +38,7 @@ type App struct {
 	pendingRestart string // an installed dokky this TUI restarts onto once uploads finish
 	restartOpen    bool
 	restartAt      time.Time
+	carry          *carry      // the update the window before this one was restarting onto
 	mark           *brand.Mark // the splash's logo, new each time the splash shows so it fills again
 	everConnected  bool
 	autoStarted    bool
@@ -71,17 +72,29 @@ func (a *App) Reopening() bool { return a.reopen }
 
 func New(deps core.Deps) *App {
 	now := time.Now()
-	return &App{
+	a := &App{
 		st:    &core.State{Deps: deps, Now: now},
 		deps:  deps,
 		tabs:  []core.Screen{overview.New(), drives.New(), transfers.New(), activity.New(), health.New(), settings.New()},
 		start: now,
 		veil:  true,
 	}
+	if deps.Reopened {
+		a.carry = carried()
+	}
+	// Updating was on screen a moment ago, so it shows at once with the mark already full
+	if a.carry != nil {
+		a.veil, a.mark = false, brand.NewMark(now.Add(-4*time.Second))
+	}
+	return a
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, dial(), tea.Tick(veilFor, func(time.Time) tea.Msg { return unveil{} }))
+	var overdueAt tea.Cmd
+	if a.carry != nil {
+		overdueAt = tea.Tick(backWithin, func(time.Time) tea.Msg { return overdue{} })
+	}
+	return tea.Batch(tea.RequestBackgroundColor, dial(), tea.Tick(veilFor, func(time.Time) tea.Msg { return unveil{} }), overdueAt)
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -155,6 +168,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.onInstalled(m)
 	case restartNow:
 		return a.onRestartNow()
+	case overdue:
+		return a.onOverdue()
+	case settled:
+		return a.onSettled()
 	case core.OfferUpdate:
 		return a.startUpdate()
 	case core.FixAll:
@@ -235,7 +252,7 @@ func (a *App) setSnap(s api.State) tea.Cmd {
 		a.windows = append(a.windows, gate.NewClashes(s.Clashes))
 	}
 	a.followService()
-	return tea.Batch(a.nextToast(), a.checkUpdate(), a.restartWhenIdle())
+	return tea.Batch(a.arrived(), a.nextToast(), a.checkUpdate(), a.restartWhenIdle())
 }
 
 func wantGate(st *core.State) bool {
@@ -371,7 +388,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		return a.quit()
 	}
 	switch {
-	case a.restartOpen:
+	case a.updatingNow():
 		return nil
 	case a.small():
 		if s == "q" {
@@ -469,7 +486,13 @@ func (a *App) syncKick() tea.Cmd {
 	}
 }
 
-func (a *App) small() bool { return a.st.W < 80 || a.st.H < 24 }
+// Updating asks nothing of you, so it fits a smaller window than the rest
+func (a *App) small() bool {
+	if a.updatingNow() {
+		return a.st.W < 40 || a.st.H < 14
+	}
+	return a.st.W < 80 || a.st.H < 24
+}
 
 func (a *App) animating() bool {
 	if a.small() {
@@ -478,7 +501,7 @@ func (a *App) animating() bool {
 	if a.toast != nil && a.toast.Moving(a.st.Now) {
 		return true
 	}
-	if a.restartOpen || !a.st.Connected || a.removedNow() {
+	if a.updatingNow() || !a.st.Connected || a.removedNow() {
 		return !a.veil && !ui.Reduced()
 	}
 	if a.busy() && !ui.Reduced() {
