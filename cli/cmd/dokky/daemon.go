@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/platform"
@@ -40,6 +41,13 @@ func newDaemonCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if after > 0 {
 				return relaunch(after)
+			}
+			daemon.StuckExit = func(restart bool) {
+				if restart {
+					relaunchWhenGone()
+					os.Exit(restartExitCode)
+				}
+				os.Exit(1)
 			}
 			err := daemon.Run(cmd.Context(), daemon.DefaultPaths())
 			if errors.Is(err, daemon.ErrRestart) {
@@ -138,8 +146,12 @@ func restartService() error {
 	if bin := daemon.DefaultPaths().Bin; !isFile(bin) {
 		return fmt.Errorf("dokky is not installed at %s, install it with: npm i -g dokky", bin)
 	}
-	_ = callOnce("daemon.restart", nil, nil)
-	time.Sleep(time.Second)
+	// only a running service on another dokky restarts; one already on this dokky, e.g. just back from an update, or one not up yet, would only drop its drives again
+	var st daemon.StatusReply
+	if callOnce("status", nil, &st) == nil && st.Version != buildinfo.Version {
+		_ = callOnce("daemon.restart", nil, nil)
+		time.Sleep(time.Second)
+	}
 	return startDaemon(io.Discard)
 }
 

@@ -1,14 +1,19 @@
 package daemon
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unicode/utf16"
+
+	"github.com/itzzritik/dokky/cli/internal/platform"
 )
 
 const createNoWindow = 0x08000000
@@ -44,8 +49,31 @@ func RenderService(binPath string) string {
 	return renderTaskXML(binPath, u)
 }
 
-// The task XML is not read back, so the task is always re-registered.
-func ServiceCurrent(string) bool { return false }
+// schtasks can't give the XML back in a form worth parsing, so a hash of what was registered stands in for it
+const taskMarker = "task.sha256"
+
+func taskHash(binPath string) string {
+	sum := sha256.Sum256([]byte(RenderService(binPath)))
+	return hex.EncodeToString(sum[:])
+}
+
+func markerPath() (string, error) {
+	state, err := platform.StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(state, taskMarker), nil
+}
+
+// re-registering a task while its daemon runs can stop it and drop every drive, so it only happens when the task really changed
+func ServiceCurrent(binPath string) bool {
+	path, err := markerPath()
+	if err != nil {
+		return false
+	}
+	got, err := os.ReadFile(path)
+	return err == nil && strings.TrimSpace(string(got)) == taskHash(binPath) && ServiceInstalled()
+}
 
 // schtasks wants UTF-16LE with a BOM.
 func utf16LEWithBOM(s string) []byte {
@@ -77,7 +105,13 @@ func InstallService(binPath string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return schtasks("/Create", "/TN", name, "/XML", tmp.Name(), "/F")
+	if err := schtasks("/Create", "/TN", name, "/XML", tmp.Name(), "/F"); err != nil {
+		return err
+	}
+	if path, err := markerPath(); err == nil {
+		_ = os.WriteFile(path, []byte(taskHash(binPath)), 0o600)
+	}
+	return nil
 }
 
 func StartService() error {
@@ -107,6 +141,9 @@ func unregisterService() error {
 	name, err := taskName()
 	if err != nil || !ServiceInstalled() {
 		return err
+	}
+	if path, err := markerPath(); err == nil {
+		_ = os.Remove(path)
 	}
 	return schtasks("/Delete", "/TN", name, "/F")
 }

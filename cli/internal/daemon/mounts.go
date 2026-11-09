@@ -34,6 +34,9 @@ var (
 	// rclone's second unmount of a path could knock off a remount made right after
 	remountSettle = 2 * time.Second
 	retryBase     = 30 * time.Second
+	// just after a start, e.g. onto an update, Windows can hold a drive's share name for a few seconds after the old dokky let go
+	fastRetry       = 3 * time.Second
+	fastRetryWindow = 2 * time.Minute
 )
 
 type mountEngine interface {
@@ -181,10 +184,16 @@ func (d *Daemon) fail(m store.Mount, st *mountState, err error) {
 	}
 	st.state, st.err = stateError, err.Error()
 	st.failures++
-	st.retryAt = time.Now().Add(retryBase << min(st.failures-1, maxBackoffStep))
+	now := time.Now()
+	wait := retryBase << min(st.failures-1, maxBackoffStep)
+	settling := !d.startedAt.IsZero() && now.Sub(d.startedAt) < fastRetryWindow
+	if settling {
+		wait = min(wait, fastRetry)
+	}
+	st.retryAt = now.Add(wait)
 	d.log.Error("mount failed", "name", m.Name, "err", err)
-	// one entry per run of failures; a network blip at login gets a few tries before it counts
-	if msg := err.Error(); !st.logged && (api.FailKind(msg) != "offline" || st.failures >= 3) {
+	// one entry per run of failures; a network blip at login gets a few tries before it counts, and so does a drive still settling after a start
+	if msg := err.Error(); !st.logged && !settling && (api.FailKind(msg) != "offline" || st.failures >= 3) {
 		st.logged = true
 		d.eventLocked("drive.mountFailed", m.ID, m.Name, msg, false)
 		if api.FailKind(msg) == "signin" {
@@ -334,14 +343,21 @@ func (d *Daemon) refreshStats() error {
 	d.stats = live
 	var gone, names []string
 	var ejected []store.Mount
+	// while dokky itself takes drives down or swaps its binary, a missing mount is ours, not an eject: it keeps its flag and mounts again
+	ours := d.closing.Load() || d.upd.installing.Load()
 	for id, st := range d.states {
 		if _, ok := live[st.name]; st.state == stateMounted && !ok {
 			gone = append(gone, st.point)
+			*st = mountState{state: stateUnmounted}
+			if ours {
+				d.log.Warn("a drive went down while dokky was restarting or updating, keeping it mounted", "id", id)
+				continue
+			}
 			if i := slices.IndexFunc(d.data.Mounts, byID(id)); i >= 0 {
 				names = append(names, d.data.Mounts[i].Name)
 				ejected = append(ejected, d.data.Mounts[i])
+				d.log.Warn("a drive went away outside dokky, treating it as ejected", "name", d.data.Mounts[i].Name, "point", st.point)
 			}
-			*st = mountState{state: stateUnmounted}
 			d.markUnmounted(id)
 		}
 	}

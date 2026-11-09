@@ -39,6 +39,13 @@ const (
 
 var ErrRestart = errors.New("daemon restart requested")
 
+// a WinFsp unmount can hang; a daemon stuck stopping holds its task and lock, so nothing could start it again and every drive stays down
+var (
+	shutdownLimit = 45 * time.Second
+	// set by the dokky command: starts the service again for a restart, then exits
+	StuckExit = func(restart bool) { os.Exit(1) }
+)
+
 type Paths struct {
 	State, Cache, Bin string
 }
@@ -131,6 +138,10 @@ type Daemon struct {
 	saves      uint64 // a pull that started before a save is dropped
 
 	offline, signedOut bool
+
+	// set once shutdown starts: drives dokky takes down itself are not ejects, so they come back on the next start
+	closing   atomic.Bool
+	startedAt time.Time
 }
 
 func DefaultPaths() Paths {
@@ -147,6 +158,12 @@ func DefaultPaths() Paths {
 }
 
 func Run(ctx context.Context, p Paths) (err error) {
+	var watchdog *time.Timer
+	defer func() {
+		if watchdog != nil {
+			watchdog.Stop()
+		}
+	}()
 	if p.State == "" || p.Cache == "" {
 		return errors.New("cannot find the dokky state or cache folder")
 	}
@@ -203,7 +220,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 
 	d = newDaemon(eng, st, data, home, p.Cache, log)
 	d.startUpdater(p)
-	d.start()
+	d.loadServices()
 	defer d.shutdown()
 
 	ln, err := platform.Listen(platform.SocketAddr(p.State))
@@ -212,9 +229,6 @@ func Run(ctx context.Context, p Paths) (err error) {
 	}
 	restart := make(chan struct{}, 1)
 	d.srv = ipc.NewServer(ln, d.handlers(restart))
-	go d.syncLoop(ctx)
-	d.resumeRemovals()
-	d.resumeLeaving()
 	srvCtx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- d.srv.Serve(srvCtx) }()
@@ -225,6 +239,11 @@ func Run(ctx context.Context, p Paths) (err error) {
 			<-served
 		}
 	}()
+	// remounting can take a while; with the socket already up, a window opening now sees dokky starting, not stopped, and never starts or restarts it again
+	d.remountAtStart(p.State)
+	go d.syncLoop(ctx)
+	d.resumeRemovals()
+	d.resumeLeaving()
 	sampleCtx, stopSample := context.WithCancel(ctx)
 	sampled := make(chan struct{})
 	go func() { d.sample(sampleCtx); close(sampled) }()
@@ -236,6 +255,14 @@ func Run(ctx context.Context, p Paths) (err error) {
 
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
+	// runs first of the deferred steps, so it watches every one of them
+	defer func() {
+		restart := errors.Is(err, ErrRestart)
+		watchdog = time.AfterFunc(shutdownLimit, func() {
+			log.Error("dokky took too long to stop, exiting anyway", "restart", restart)
+			StuckExit(restart)
+		})
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -248,6 +275,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 			// draining commands can take a while; a reinstall meanwhile wins
 			if d.checkInstalls(w, time.Now(), pathExists) != Wipe {
 				log.Info("dokky is installed again, not uninstalling")
+				d.noteResume(p.State)
 				return ErrRestart
 			}
 			cleaned := make(chan struct{})
@@ -260,6 +288,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 			return nil
 		case <-restart:
 			log.Info("daemon restarting")
+			d.noteResume(p.State)
 			return ErrRestart
 		case serr := <-served:
 			serving = false
@@ -271,6 +300,7 @@ func Run(ctx context.Context, p Paths) (err error) {
 			d.tick(ctx)
 			if d.autoUpdate(ctx, time.Now()) {
 				log.Info("daemon restarting onto the new dokky", "version", installedVersion(p.State))
+				d.noteResume(p.State)
 				return ErrRestart
 			}
 		}
@@ -288,17 +318,23 @@ func newDaemon(eng mountEngine, st *store.Store, data store.Data, home, cacheDir
 	}
 }
 
-func (d *Daemon) start() {
+// every service goes into rclone before the socket opens, so the first command can already mount
+func (d *Daemon) loadServices() {
 	d.mu.Lock()
 	services := slices.Clone(d.data.Services)
 	d.setSecrets()
+	d.startedAt = time.Now()
 	d.mu.Unlock()
 	for _, s := range services {
 		if err := d.eng.PutService(s); err != nil {
 			d.log.Error("load service", "service", s.Name, "err", err)
 		}
 	}
-	// a restart for an update remounts too, but only a start soon after boot is a login
+}
+
+// a restart for an update remounts too, but only a start soon after boot is a login
+func (d *Daemon) remountAtStart(state string) {
+	d.applyResume(state, time.Now())
 	d.mu.Lock()
 	d.loginMounts = bootedRecently()
 	d.mu.Unlock()
@@ -335,21 +371,29 @@ func (d *Daemon) tick(ctx context.Context) {
 	d.publish()
 }
 
+// takes every drive down but keeps each one's mounted flag, so the next start, e.g. onto an update, mounts them again
 func (d *Daemon) shutdown() {
+	d.closing.Store(true)
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
-	var live []mountState
-	for _, st := range d.states {
+	live := map[string]mountState{}
+	for id, st := range d.states {
 		if st.name != "" {
-			live = append(live, *st)
+			live[id] = *st
 		}
 	}
 	d.mu.Unlock()
-	for _, st := range live {
+	for id, st := range live {
 		if err := d.detach(st.name, st.point, true); err != nil {
 			d.log.Error("unmount at shutdown", "name", st.name, "err", err)
+			continue
 		}
+		d.mu.Lock()
+		if cur := d.states[id]; cur != nil {
+			*cur = mountState{state: stateUnmounted}
+		}
+		d.mu.Unlock()
 	}
 }
 
