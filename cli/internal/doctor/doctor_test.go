@@ -127,6 +127,30 @@ func TestKeychain(t *testing.T) {
 	c = find(t, Run(t.Context(), env), "keychain")
 	require.False(t, c.OK)
 	require.False(t, c.Warn)
+	require.Contains(t, c.Fix, "store key")
+}
+
+func TestKeychainWithVault(t *testing.T) {
+	env := good("linux")
+	env.Unlock = "auto"
+	c := find(t, Run(t.Context(), env), "keychain")
+	require.True(t, c.OK)
+	require.Contains(t, c.Detail, "device key")
+
+	env.KeyringErr = store.ErrNotFound
+	c = find(t, Run(t.Context(), env), "keychain")
+	require.True(t, c.Warn)
+	require.Contains(t, c.Detail, "master password")
+
+	env.KeyringErr, env.KeyringFallback = nil, true
+	c = find(t, Run(t.Context(), env), "keychain")
+	require.True(t, c.Warn)
+	require.Contains(t, c.Detail, "device key is in a file")
+
+	env.Unlock, env.KeyringFallback = "password", false
+	c = find(t, Run(t.Context(), env), "keychain")
+	require.True(t, c.OK)
+	require.Contains(t, c.Detail, "no key is kept")
 }
 
 func TestNetworkFailures(t *testing.T) {

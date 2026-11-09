@@ -10,10 +10,17 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
 type pollTick struct{ req core.Req }
+
+// a poll's answer, and the master password step the daemon waits on before it finishes signing in
+type polled struct {
+	client.LoginPoll
+	need string
+}
 
 type SignIn struct {
 	btn    int
@@ -34,8 +41,24 @@ func (s *SignIn) begin(st *core.State) tea.Cmd {
 	return core.Do(st, s.req, func(ctx context.Context, c *client.Client) (any, error) { return c.LoginStart(ctx) })
 }
 
+// once approved, the state is asked too: the event stream can trail this reply
 func (s *SignIn) poll(st *core.State) tea.Cmd {
-	return core.Do(st, s.req, func(ctx context.Context, c *client.Client) (any, error) { return c.LoginPoll(ctx) })
+	return core.Do(st, s.req, func(ctx context.Context, c *client.Client) (any, error) {
+		p, err := c.LoginPoll(ctx)
+		if err == nil && p.Status == "pending" {
+			return polled{LoginPoll: p}, nil
+		}
+		if snap, serr := c.State(ctx); serr == nil && snap.Account.Pending && snap.Vault.Need != "" {
+			return polled{LoginPoll: p, need: snap.Vault.Need}, nil
+		}
+		return polled{LoginPoll: p}, err
+	})
+}
+
+// after the master password step: the sign in that waited for it uploads, then settles clashes as usual
+func Resume(st *core.State) tea.Cmd {
+	s := &SignIn{btn: 2, req: core.NextReq(), status: "waiting"}
+	return tea.Sequence(core.Open(s), s.poll(st))
 }
 
 func (s *SignIn) wait() tea.Cmd {
@@ -64,7 +87,11 @@ func (s *SignIn) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				return s, s.poll(st)
 			}
 			return s, s.wait()
-		case client.LoginPoll:
+		case polled:
+			if v.need != "" {
+				s.req = 0
+				return s, tea.Sequence(core.Close(s), core.Open(vault.SignIn(st, v.need, Resume)))
+			}
 			switch v.Status {
 			case "pending":
 				return s, s.wait()

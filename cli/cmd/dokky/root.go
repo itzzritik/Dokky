@@ -44,7 +44,9 @@ func newRootCmd() *cobra.Command {
 					fmt.Fprintln(os.Stderr, "dokky:", err)
 				}
 			}
-			err := tui.Run(cmd.Context(), tui.Deps{Reopened: os.Getenv(updatedEnv) != "", Start: start, Doctor: doctorChecks, Uninstall: uninstall})
+			// over SSH nobody at this computer can answer Touch ID or Windows Hello, so the TUI never offers it
+			remote := os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != ""
+			err := tui.Run(cmd.Context(), tui.Deps{Reopened: os.Getenv(updatedEnv) != "", Remote: remote, Start: start, Doctor: doctorChecks, Uninstall: uninstall})
 			if errors.Is(err, tui.ErrReopen) {
 				return reopen()
 			}

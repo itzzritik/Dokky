@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
@@ -88,6 +89,8 @@ func (d *Daemon) loginStart(ctx context.Context) (loginStartReply, error) {
 }
 
 func (d *Daemon) loginPoll(ctx context.Context) (loginPollReply, error) {
+	d.vk.op.Lock()
+	defer d.vk.op.Unlock()
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.mu.Lock()
@@ -132,13 +135,32 @@ func (d *Daemon) loginPoll(ctx context.Context) (loginPollReply, error) {
 	if !acct.Pending {
 		return loginPollReply{Status: "approved"}, nil
 	}
+	// the vault comes first: everything this upload sends is sealed with the account's key
+	if f := d.vk.current(); f == nil || !f.Account {
+		need, err := d.link(ctx, acct)
+		if err != nil {
+			return loginPollReply{}, d.checked(acct, err)
+		}
+		if need != "" {
+			d.vk.setNeed(need)
+			d.publish()
+			return loginPollReply{Status: statusVault}, nil
+		}
+	}
 
 	d.mu.Lock()
 	data := d.data
 	d.mu.Unlock()
-	out, clashes, err := dsync.Upload(ctx, client(acct), data)
+	out, clashes, err := dsync.Upload(ctx, d.client(acct), data)
 	if errors.Is(err, dsync.ErrRevoked) {
 		return loginPollReply{}, d.checked(acct, err)
+	}
+	// another device made the account's vault in between
+	if errors.Is(err, dsync.ErrKeyMismatch) || errors.Is(err, dsync.ErrNoVault) {
+		_ = d.checked(acct, err)
+		d.vk.setNeed(api.NeedJoin)
+		d.publish()
+		return loginPollReply{Status: statusVault}, nil
 	}
 	if err != nil {
 		clashes = nil
@@ -182,7 +204,7 @@ func (d *Daemon) loginResolve(ctx context.Context, p resolveParams) (resolveRepl
 	if err := d.uploadsIdle(moving); err != nil {
 		return resolveReply{}, err
 	}
-	out, more, err := dsync.Resolve(ctx, client(data.Account), data, cl, p.Keep)
+	out, more, err := dsync.Resolve(ctx, d.client(data.Account), data, cl, p.Keep)
 	if errors.Is(err, dsync.ErrRevoked) {
 		return resolveReply{}, d.checked(data.Account, err)
 	}
@@ -372,7 +394,7 @@ func (d *Daemon) logout(ctx context.Context, p logoutParams) (logoutReply, error
 		mode = "erase"
 	}
 	if r == nil {
-		err := client(acct).Revoke(ctx, "self", mode)
+		err := d.client(acct).Revoke(ctx, "self", mode)
 		if errors.Is(err, dsync.ErrRevoked) {
 			mode = stronger(mode, dsync.RevokedMode(err))
 		}
@@ -381,6 +403,10 @@ func (d *Daemon) logout(ctx context.Context, p logoutParams) (logoutReply, error
 			return logoutReply{}, d.answer(acct, err)
 		}
 	}
+	// the person signed out, so this computer keeps its master password
+	d.mu.Lock()
+	d.keepVault = true
+	d.mu.Unlock()
 	d.startLeaving(mode)
 	for d.loggedIn() {
 		select {
@@ -399,8 +425,13 @@ func (d *Daemon) loggedIn() bool {
 	return d.data.Account != nil
 }
 
-func client(a *store.Account) *dsync.Client {
-	return &dsync.Client{Base: a.APIBase, Token: a.Token}
+// once the vault is unlocked the client seals drive logins and says it understands vaults
+func (d *Daemon) client(a *store.Account) *dsync.Client {
+	c := &dsync.Client{Base: a.APIBase, Token: a.Token}
+	if d.vk != nil {
+		c.Sealer = d.vk.sealer()
+	}
+	return c
 }
 
 func deviceInfo() dsync.DeviceInfo {

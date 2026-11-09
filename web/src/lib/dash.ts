@@ -7,6 +7,7 @@ import { apiError } from "@/lib/errors";
 import { events, record } from "@/lib/events";
 import { entityId, mountBody } from "@/lib/schemas";
 import { mounts, services, users } from "@/lib/sync";
+import { vaults } from "@/lib/vault";
 
 const LOCAL = /\.local$/u;
 const byName = (a: { name: string }, b: { name: string }) =>
@@ -101,6 +102,32 @@ export async function counts(userId: string) {
   return { drives, devices, accounts };
 }
 
+// never the wraps: the dashboard needs no secrets, sealed or not
+export async function security(userId: string) {
+  const [vault, accounts, legacy] = await Promise.all([
+    vaults().findOne(
+      { _id: userId },
+      { projection: { keyId: 1, createdAt: 1, passwordChangedAt: 1 } }
+    ),
+    services().countDocuments({ userId }),
+    services().countDocuments({
+      userId,
+      $or: [{ options: { $exists: true } }, { secrets: { $exists: true } }],
+    }),
+  ]);
+  return {
+    vault: vault
+      ? {
+          keyId: vault.keyId,
+          since: vault.createdAt.toISOString(),
+          passwordChangedAt: vault.passwordChangedAt.toISOString(),
+        }
+      : null,
+    accounts,
+    legacy,
+  };
+}
+
 export type RenameResult = "ok" | "not_found" | "name_taken" | "bad_name";
 
 export async function renameDrive(
@@ -189,6 +216,7 @@ export async function deleteAccount(userId: string, ip: string) {
   await Promise.all([
     services().deleteMany({ userId }),
     mounts().deleteMany({ userId }),
+    vaults().deleteOne({ _id: userId }),
     events().deleteMany({ userId }),
     db().collection("audit").deleteMany({ userId }),
     db().collection("cliLogins").deleteMany({ userId }),

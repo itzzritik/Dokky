@@ -11,6 +11,7 @@ import (
 
 type Deps struct {
 	Reopened  bool // this run follows a reopen, so repairs that reopen again are left out
+	Remote    bool // over SSH: nobody can answer Touch ID or Windows Hello at this computer
 	Start     func() error
 	Doctor    func(context.Context) []Check
 	Uninstall func() error

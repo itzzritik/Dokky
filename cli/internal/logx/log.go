@@ -31,6 +31,8 @@ var (
 	plain   []string
 
 	obscuredRun = regexp.MustCompile(`[A-Za-z0-9_-]{22,}`)
+	// a vault recovery key, DK1- and 34 base32 characters however it was grouped or typed
+	recoveryKey = regexp.MustCompile(`(?i)\bDK1(?:[\s_-]*[0-9a-z]){30,}`)
 )
 
 func New(path string) *slog.Logger {
@@ -92,6 +94,7 @@ func Redact(s string, extra ...string) string {
 		set, long = index(append(slices.Clone(values), extra...))
 	}
 	mu.RUnlock()
+	s = recoveryKey.ReplaceAllString(s, mask)
 	if len(set) == 0 {
 		return s
 	}

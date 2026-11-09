@@ -55,6 +55,16 @@ export interface Me {
   name: string;
 }
 
+export interface Security {
+  accounts: number;
+  legacy: number;
+  vault: {
+    keyId: string;
+    passwordChangedAt: string;
+    since: string;
+  } | null;
+}
+
 // Seen within the 15 minute sync, with a minute of slack.
 export const ONLINE_MS = 16 * 60_000;
 export const isActive = (lastSeenAt: string, now: number) =>

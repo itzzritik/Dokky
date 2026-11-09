@@ -155,8 +155,16 @@ func (a *App) onQuiet(m quiet) tea.Cmd {
 		return a.listen(left)
 	}
 	a.heard = a.st.Now
+	return tea.Batch(a.listen(quietFor), a.refresh())
+}
+
+// state and activity once, now
+func (a *App) refresh() tea.Cmd {
+	if a.st.C == nil {
+		return nil
+	}
 	c, epoch := a.st.C, a.st.Epoch
-	return tea.Batch(a.listen(quietFor), func() tea.Msg {
+	return func() tea.Msg {
 		ctx := context.Background()
 		snap, err := c.State(ctx)
 		if err != nil {
@@ -164,7 +172,7 @@ func (a *App) onQuiet(m quiet) tea.Cmd {
 		}
 		act, err := c.Activity(ctx)
 		return refreshed{epoch, snap, act, err}
-	})
+	}
 }
 
 func (a *App) onRefreshed(m refreshed) tea.Cmd {

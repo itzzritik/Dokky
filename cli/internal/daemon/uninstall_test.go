@@ -364,7 +364,7 @@ func TestDeepCleanLocalOnlyKeepsStore(t *testing.T) {
 
 	DeepClean(in.d)
 
-	require.ElementsMatch(t, []string{"store.enc", "store.key"}, entries(t, in.state))
+	require.ElementsMatch(t, []string{"store.enc", "vault.json", "device.key"}, entries(t, in.state), "a reinstall opens the same vault")
 	kept := load(t, in.st)
 	require.Equal(t, sample().Services, kept.Services)
 	require.Equal(t, sample().Mounts, kept.Mounts)

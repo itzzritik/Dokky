@@ -147,6 +147,7 @@ const tocGroups: DocsTOCGroup[] = [
     items: [
       { href: "#mount", label: "Mount and unmount" },
       { href: "#devices", label: "Your devices" },
+      { href: "#security", label: "Security" },
       { href: "#cache", label: "Cache and uploads" },
     ],
   },
@@ -243,6 +244,14 @@ export default function DocsPage() {
               ]}
             />
             <p>
+              Either way, dokky then asks you to create a master password and
+              shows your recovery key. See{" "}
+              <a className="text-white underline" href="#security">
+                Security
+              </a>
+              .
+            </p>
+            <p>
               To sign in from the terminal, run <Code>dokky login</Code>. It
               shows a code and opens dokky in your browser; approve the code to
               sign this computer in.
@@ -323,6 +332,53 @@ export default function DocsPage() {
               Remove the computer from the dashboard and tick Lost or stolen. It
               erases itself the moment it comes online, without waiting for
               uploads.
+            </Note>
+          </Section>
+
+          <Section id="security" title="Security">
+            <p>
+              Your saved sign-ins are end-to-end encrypted. dokky seals them on
+              your computer with XChaCha20-Poly1305 before they sync. The key
+              that opens them is locked by your master password and, separately,
+              by your recovery key. dokky's server stores only the sealed copies
+              and can't open them.
+            </p>
+            <Steps
+              items={[
+                [
+                  "Master password",
+                  "Created the first time you open dokky. It is stretched with Argon2id on your computer and never sent anywhere. Every computer on your account uses the same one.",
+                ],
+                [
+                  "Recovery key",
+                  "Shown once, right after the master password. Keep it in a password manager or on paper. If you forget the master password, it is the only way back in. We can't reset either of them.",
+                ],
+                [
+                  "Unlock",
+                  "By default dokky unlocks by itself when your computer starts, so drives mount at login with no prompt. You can ask for Touch ID, Windows Hello or your system password instead, or the master password every time.",
+                ],
+              ]}
+            />
+            <p>
+              In Settings, Security you can also lock dokky (this unmounts your
+              drives), lock the window when you step away, choose how often the
+              master password is needed instead of Touch ID or Windows Hello,
+              change the master password and make a new recovery key. dokky asks
+              you to confirm it's you before any of these change.
+            </p>
+            <Note title="What the server can see">
+              The names of your accounts and drives, which kind of storage each
+              one is, folders, cache settings and your computers, so the
+              dashboard can show them. Never your sign-ins, passwords, tokens or
+              files.
+            </Note>
+            <Note title="Coming from an older dokky">
+              The next time you open dokky, it asks you to create a master
+              password, or to enter it if another of your computers already did.
+              It then seals your saved sign-ins on your computer and replaces
+              the server's old copies. Older versions of dokky stop syncing once
+              your account has a master password, until they update. dokky
+              updates itself every hour unless you turned that off.
             </Note>
           </Section>
 

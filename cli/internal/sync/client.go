@@ -16,6 +16,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/platform"
 	"github.com/itzzritik/dokky/cli/internal/store"
+	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
 const (
@@ -68,12 +69,18 @@ type Client struct {
 	Token   string
 	Version string
 	HTTP    *http.Client
+	// set once the vault is unlocked: drive logins are sealed with the account key and every request says so
+	Sealer *Sealer
 }
 
 type Snapshot struct {
 	Rev      string
 	Services []store.Service
 	Mounts   []store.Mount
+	// for a vault-aware pull: the account's vault (nil when it has none) and the services the server still
+	// holds with its own key, which this device seals and uploads again
+	Vault  *VaultRef
+	Legacy []string
 }
 
 type DeviceInfo struct {
@@ -153,6 +160,9 @@ func (c *Client) do(ctx context.Context, method, path string, auth bool, headers
 	if auth {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
+	if c.Sealer != nil {
+		req.Header.Set("X-Dokky-Vault", "1")
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -194,6 +204,18 @@ func failure(resp *http.Response, data []byte) error {
 		return &ConflictError{Current: env.Current}
 	case resp.StatusCode == http.StatusConflict && code == "name_taken":
 		return fmt.Errorf("%w: %s", ErrNameTaken, msg)
+	case resp.StatusCode == http.StatusConflict && code == "key_mismatch":
+		return fmt.Errorf("%w: %s", ErrKeyMismatch, msg)
+	case resp.StatusCode == http.StatusConflict && code == "vault_exists":
+		var cur RemoteVault
+		if json.Unmarshal(env.Current, &cur) != nil {
+			return &StatusError{Status: resp.StatusCode, Code: code, Message: msg}
+		}
+		return &VaultExistsError{Current: cur}
+	case code == "no_vault":
+		return fmt.Errorf("%w: %s", ErrNoVault, msg)
+	case resp.StatusCode == http.StatusUpgradeRequired:
+		return fmt.Errorf("%w: %s", ErrUpdateRequired, msg)
 	case resp.StatusCode == http.StatusNotFound:
 		return fmt.Errorf("%w: %s", ErrNotFound, msg)
 	}
@@ -201,7 +223,18 @@ func failure(resp *http.Response, data []byte) error {
 }
 
 func (c *Client) call(ctx context.Context, method, path string, auth bool, body, out any, want int) error {
-	resp, data, err := c.do(ctx, method, path, auth, nil, body)
+	if !auth {
+		return c.send(ctx, method, path, false, nil, body, out, want)
+	}
+	return c.callWith(ctx, method, path, nil, body, out, want)
+}
+
+func (c *Client) callWith(ctx context.Context, method, path string, headers map[string]string, body, out any, want int) error {
+	return c.send(ctx, method, path, true, headers, body, out, want)
+}
+
+func (c *Client) send(ctx context.Context, method, path string, auth bool, headers map[string]string, body, out any, want int) error {
+	resp, data, err := c.do(ctx, method, path, auth, headers, body)
 	if err != nil {
 		return err
 	}
@@ -248,6 +281,11 @@ func (c *Client) Pull(ctx context.Context, rev string) (*Snapshot, bool, error) 
 	default:
 		return nil, false, failure(resp, data)
 	}
+	etag := resp.Header.Get("ETag")
+	if c.Sealer != nil {
+		snap, err := c.Sealer.snapshot(data, etag)
+		return snap, false, err
+	}
 	var wire struct {
 		Services *[]store.Service `json:"services"`
 		Mounts   *[]store.Mount   `json:"mounts"`
@@ -255,14 +293,49 @@ func (c *Client) Pull(ctx context.Context, rev string) (*Snapshot, bool, error) 
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, false, fmt.Errorf("decode snapshot: %w", err)
 	}
-	etag := resp.Header.Get("ETag")
 	if wire.Services == nil || wire.Mounts == nil || etag == "" {
 		return nil, false, errors.New("incomplete snapshot")
 	}
 	return &Snapshot{Rev: etag, Services: *wire.Services, Mounts: *wire.Mounts}, false, nil
 }
 
+// every service opens with this device's key, or the pull fails as a whole: one left out would be deleted here
+func (s *Sealer) snapshot(data []byte, etag string) (*Snapshot, error) {
+	var wire struct {
+		Vault    *VaultRef        `json:"vault"`
+		Services *[]sealedService `json:"services"`
+		Mounts   *[]store.Mount   `json:"mounts"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("decode snapshot: %w", err)
+	}
+	if wire.Services == nil || wire.Mounts == nil || etag == "" {
+		return nil, errors.New("incomplete snapshot")
+	}
+	if wire.Vault == nil {
+		return nil, fmt.Errorf("%w: the pull says so", ErrNoVault)
+	}
+	if wire.Vault.KeyID != s.KeyID {
+		return nil, fmt.Errorf("%w: the account's key is %s, this device has %s", ErrKeyMismatch, wire.Vault.KeyID, s.KeyID)
+	}
+	snap := &Snapshot{Rev: etag, Mounts: *wire.Mounts, Vault: wire.Vault, Services: make([]store.Service, 0, len(*wire.Services))}
+	for _, w := range *wire.Services {
+		svc, legacy, err := s.open(w)
+		if err != nil {
+			return nil, err
+		}
+		if legacy {
+			snap.Legacy = append(snap.Legacy, svc.ID)
+		}
+		snap.Services = append(snap.Services, svc)
+	}
+	return snap, nil
+}
+
 func (c *Client) PutService(ctx context.Context, s store.Service, baseVersion int64) (store.Service, error) {
+	if c.Sealer != nil {
+		return c.putSealed(ctx, s, baseVersion)
+	}
 	body := struct {
 		Name        string            `json:"name"`
 		Type        string            `json:"type"`
@@ -273,6 +346,19 @@ func (c *Client) PutService(ctx context.Context, s store.Service, baseVersion in
 	var out store.Service
 	err := c.call(ctx, http.MethodPut, "/services/"+url.PathEscape(s.ID), true, body, &out, http.StatusOK)
 	return out, err
+}
+
+func (c *Client) putSealed(ctx context.Context, s store.Service, baseVersion int64) (store.Service, error) {
+	body, err := c.Sealer.body(s, baseVersion)
+	if err != nil {
+		return store.Service{}, err
+	}
+	var out sealedService
+	if err := c.call(ctx, http.MethodPut, "/services/"+url.PathEscape(s.ID), true, body, &out, http.StatusOK); err != nil {
+		return store.Service{}, c.Sealer.openConflict(err)
+	}
+	saved, _, err := c.Sealer.open(out)
+	return saved, err
 }
 
 func (c *Client) DeleteService(ctx context.Context, id string) error {
@@ -296,7 +382,16 @@ func (c *Client) DeleteMount(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, "/mounts/"+url.PathEscape(id), true, nil, nil, http.StatusNoContent)
 }
 
+// sealed, the token is the only field that refreshes, so field is always "token" there
 func (c *Client) WriteToken(ctx context.Context, serviceID, field, value string, expiry time.Time) error {
+	if c.Sealer != nil {
+		sealed, err := vault.Seal(c.Sealer.AK, []byte(value), vault.AADServiceToken(serviceID))
+		if err != nil {
+			return err
+		}
+		body := map[string]string{"keyId": c.Sealer.KeyID, "sealedToken": sealed, "expiry": expiry.UTC().Format(time.RFC3339)}
+		return c.call(ctx, http.MethodPost, "/services/"+url.PathEscape(serviceID)+"/token", true, body, nil, http.StatusOK)
+	}
 	body := map[string]string{"field": field, "value": value, "expiry": expiry.UTC().Format(time.RFC3339)}
 	return c.call(ctx, http.MethodPost, "/services/"+url.PathEscape(serviceID)+"/token", true, body, nil, http.StatusOK)
 }

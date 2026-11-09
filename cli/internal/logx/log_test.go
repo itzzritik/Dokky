@@ -152,3 +152,10 @@ func TestDropsFinderNoise(t *testing.T) {
 	require.NotContains(t, out, "exclusive")
 	require.Contains(t, out, "no space left", "other create errors stay")
 }
+
+func TestRedactsRecoveryKeys(t *testing.T) {
+	key := "DK1-0123-4567-89AB-CDEF-GHJK-MNPQ-RSTV-WXYZ-01"
+	require.Equal(t, "bad: ***", Redact("bad: "+key))
+	require.NotContains(t, Redact("typed dk1 0123 4567 89ab cdef ghjk mnpq rstv wxyz 01 here"), "ghjk")
+	require.Equal(t, "DK1 is a prefix", Redact("DK1 is a prefix"))
+}

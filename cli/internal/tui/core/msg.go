@@ -49,6 +49,12 @@ type OfferUpdate struct{}
 // quit and open dokky again in this terminal, onto whatever was just installed
 type Reopen struct{}
 
+// quit dokky, from a screen that takes every key
+type Quit struct{}
+
+// the window locked or dokky did: screens wipe what was typed into them
+type Locked struct{}
+
 // repair every problem that can be; Auto is the pass dokky runs by itself when it opens
 type FixAll struct{ Auto bool }
 

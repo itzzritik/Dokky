@@ -1,6 +1,16 @@
 import { ObjectId } from "mongodb";
 import { authDevice } from "@/lib/device-auth";
-import { mounts, mountWire, services, serviceWire, users } from "@/lib/sync";
+import {
+  mounts,
+  mountWire,
+  sealedWire,
+  services,
+  serviceWire,
+  updateRequired,
+  users,
+  vaultAware,
+} from "@/lib/sync";
+import { findVaultKey } from "@/lib/vault";
 
 export const runtime = "nodejs";
 
@@ -11,12 +21,23 @@ export async function GET(req: Request): Promise<Response> {
   if (who instanceof Response) {
     return who;
   }
-  const user = await users().findOne(
-    { _id: new ObjectId(who.userId) },
-    { projection: { rev: 1 } }
-  );
+  const aware = vaultAware(req);
+  const [user, vault] = await Promise.all([
+    users().findOne(
+      { _id: new ObjectId(who.userId) },
+      { projection: { rev: 1 } }
+    ),
+    findVaultKey(who.userId),
+  ]);
+  if (vault && !aware) {
+    return updateRequired();
+  }
   const rev = user?.rev ?? 0;
-  const headers = { etag: `"${rev}"`, "cache-control": "no-store" };
+  // the sealed shape is another representation, so an ETag cached before an update never matches it
+  const headers = {
+    etag: aware ? `"v${rev}"` : `"${rev}"`,
+    "cache-control": "no-store",
+  };
   if (req.headers.get("if-none-match")?.replace(WEAK, "") === headers.etag) {
     return new Response(null, { status: 304, headers });
   }
@@ -24,10 +45,21 @@ export async function GET(req: Request): Promise<Response> {
     services().find({ userId: who.userId }).toArray(),
     mounts().find({ userId: who.userId }).toArray(),
   ]);
+  if (!aware) {
+    return Response.json(
+      {
+        rev,
+        services: serviceDocs.map(serviceWire),
+        mounts: mountDocs.map(mountWire),
+      },
+      { headers }
+    );
+  }
   return Response.json(
     {
       rev,
-      services: serviceDocs.map(serviceWire),
+      vault: vault ? { keyId: vault.keyId, version: vault.version } : null,
+      services: serviceDocs.map(sealedWire),
       mounts: mountDocs.map(mountWire),
     },
     { headers }

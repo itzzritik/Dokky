@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/store"
+	"github.com/itzzritik/dokky/cli/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -33,15 +33,7 @@ func newSelftestCmd() *cobra.Command {
 }
 
 func selftest(state string) error {
-	if _, err := os.Stat(filepath.Join(state, "store.enc")); err == nil {
-		s, err := store.Open(state, store.SystemKeyring(state))
-		if err != nil {
-			return err
-		}
-		if _, err := s.Load(); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := checkState(state); err != nil {
 		return err
 	}
 	cache, err := os.MkdirTemp("", "dokky-selftest-")
@@ -54,5 +46,33 @@ func selftest(state string) error {
 		return err
 	}
 	e.Stop()
+	return nil
+}
+
+// the new binary must read what the old one wrote. a v2 store needs the master password, so only vault.json and
+// the store's shape are checked; a v1 store is opened with the keychain store key as before
+func checkState(state string) error {
+	_, vaultErr := vault.Load(state)
+	if vaultErr != nil && !errors.Is(vaultErr, os.ErrNotExist) {
+		return vaultErr
+	}
+	v, err := store.FormatOf(state)
+	if err != nil {
+		return err
+	}
+	switch v {
+	case 1:
+		s, err := store.OpenLegacy(state, store.SystemKeyring(state))
+		if err != nil {
+			return err
+		}
+		_, err = s.Load()
+		return err
+	case 2:
+		if vaultErr != nil {
+			return errors.New("store.enc is locked with the master password but vault.json is missing")
+		}
+		return store.CheckV2(state)
+	}
 	return nil
 }

@@ -44,9 +44,11 @@ type Env struct {
 	Version         string
 	KeyringFallback bool
 	KeyringErr      error
-	FreeBytes       uint64
-	MinFreeBytes    uint64
-	LogPath         string
+	// how dokky opens: "" before a master password exists (the old store key), else the vault's unlock mode
+	Unlock       string
+	FreeBytes    uint64
+	MinFreeBytes uint64
+	LogPath      string
 }
 
 func Run(_ context.Context, env Env) []Check {
@@ -183,18 +185,31 @@ func checkDaemon(env Env) []Check {
 	return append(cs, pass("daemon version", "daemon and dokky are both "+v))
 }
 
+// before a master password the store key opens the saved drive logins; after, the device key opens the vault
+// at startup, and in password mode nothing is kept on the computer
 func checkKeychain(env Env) Check {
 	const name = "keychain"
+	key := "store key"
+	if env.Unlock != "" {
+		key = "device key"
+	}
 	switch {
+	case env.Unlock == "password":
+		return pass(name, "no key is kept on this computer: dokky opens with your master password")
 	case errors.Is(env.KeyringErr, store.ErrKeyMissing):
 		return Check{Name: name, Detail: env.KeyringErr.Error(), Fix: "restore the store key to the keychain, or move the dokky state folder aside and sign in again"}
+	case errors.Is(env.KeyringErr, store.ErrNotFound) && env.Unlock != "":
+		return Check{Name: name, Warn: true, Detail: "the device key is missing, so dokky waits for your master password at startup",
+			Fix: "open dokky and unlock it with your master password; it saves a new device key"}
 	case env.KeyringErr != nil:
 		return Check{Name: name, Detail: env.KeyringErr.Error(), Fix: "unlock your keychain, then run dokky doctor again"}
 	case env.KeyringFallback:
-		return Check{Name: name, Warn: true, Detail: "store key is in a file because Secret Service isn't available",
+		return Check{Name: name, Warn: true, Detail: key + " is in a file because Secret Service isn't available",
 			Fix: "install and unlock a Secret Service keyring such as gnome-keyring or KWallet"}
+	case env.Unlock != "":
+		return pass(name, "the device key that opens your vault at startup is in the keychain")
 	}
-	return pass(name, "the store key is in the keychain")
+	return pass(name, "the store key that opens your saved drive logins is in the keychain")
 }
 
 func reachable(env Env, url string) Check {

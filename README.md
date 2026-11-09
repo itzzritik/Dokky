@@ -37,8 +37,9 @@ Sync is optional. Run `dokky login` to sign in with GitHub.
 - Does not sync: your files and the cache.
 - `dokky logout` removes your account's data from this device and clears the local cache. It waits for queued uploads first. If a mount that is not mounted still has files waiting to upload, it stops and asks you to mount it so they can finish. `--force` skips all of this, and any uploads that have not been sent are lost.
 - If you revoke a device from another device, it unmounts everything and wipes its dokky data the next time it talks to the server.
+- Signing in on another device asks for the same master password.
 
-Privacy: the server stores your credentials encrypted, but it can decrypt them to serve your devices.
+Privacy: saved logins are end-to-end encrypted. dokky seals them on your device with XChaCha20-Poly1305, using a key that only your master password (stretched with Argon2id) or your recovery key can open. The server stores only ciphertext and can't decrypt it. It does see the names of your services and mounts, their folders and cache settings, so the dashboard can show them. Nobody can reset your master password, so keep the recovery key dokky shows you somewhere safe. By default dokky unlocks by itself at startup so drives mount at login. You can ask for Touch ID, Windows Hello, your system password or the master password instead.
 
 ## Updates
 

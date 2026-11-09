@@ -76,7 +76,7 @@ func (d *Daemon) flushEvents() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
-		err := client(acct).PostEvents(ctx, batch)
+		err := d.client(acct).PostEvents(ctx, batch)
 		cancel()
 		// a batch the server refuses as bad would block every later entry, so it is dropped
 		var se *dsync.StatusError
@@ -110,7 +110,7 @@ func (d *Daemon) events(ctx context.Context) (api.Events, error) {
 	seen := d.data.Events.SeenAt
 	d.mu.Unlock()
 	if acct != nil && !acct.Pending {
-		list, err := client(acct).Events(ctx, eventsShown)
+		list, err := d.client(acct).Events(ctx, eventsShown)
 		// offline, the log still shows what this device recorded
 		if !dsync.Offline(err) {
 			if err = d.answer(acct, err); err != nil {

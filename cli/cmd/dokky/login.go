@@ -49,6 +49,9 @@ func newLoginCmd() *cobra.Command {
 				case "pending":
 					time.Sleep(time.Duration(max(start.Interval, 1)) * time.Second)
 					continue
+				case "vault":
+					// the master password is typed in the app, never on a command line
+					return errors.New("signing in needs your master password: run dokky to finish")
 				}
 				break
 			}
@@ -103,6 +106,9 @@ func newLogoutCmd() *cobra.Command {
 			var st daemon.StatusReply
 			if err := call("status", nil, &st); err != nil {
 				return err
+			}
+			if st.Locked {
+				return errors.New("dokky is locked: run dokky and unlock it first")
 			}
 			if !st.LoggedIn {
 				_, err := fmt.Fprintln(out, "Not logged in.")

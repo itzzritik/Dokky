@@ -107,7 +107,7 @@ func (d *Daemon) leave() {
 		d.mu.Lock()
 		r := d.data.Removal
 		d.mu.Unlock()
-		if r == nil {
+		if r == nil || d.closed.Load() {
 			return
 		}
 		if !r.Erased {
@@ -224,7 +224,7 @@ func (d *Daemon) dokkyReachable() bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	_, err := client(acct).Me(ctx)
+	_, err := d.client(acct).Me(ctx)
 	up := !dsync.Offline(err)
 	d.mu.Lock()
 	d.reached = lostCheck{!up, time.Now()}
@@ -247,7 +247,7 @@ func (d *Daemon) flushTokens() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	err := d.loop.Flush(ctx, client(acct))
+	err := d.loop.Flush(ctx, d.client(acct))
 	// a server that refuses them will never take them
 	if errors.Is(err, dsync.ErrRevoked) || errors.Is(err, dsync.ErrUnauthorized) {
 		return nil
@@ -327,7 +327,7 @@ func (d *Daemon) reportErased() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	err := client(acct).Erased(ctx)
+	err := d.client(acct).Erased(ctx)
 	var se *dsync.StatusError
 	switch {
 	case err == nil, errors.Is(err, dsync.ErrRevoked), errors.Is(err, dsync.ErrUnauthorized), errors.Is(err, dsync.ErrNotFound):
