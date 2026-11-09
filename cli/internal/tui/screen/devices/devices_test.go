@@ -48,7 +48,7 @@ func TestDevicesTabWalksCardsThenButtons(t *testing.T) {
 	s, st := loaded(t)
 	require.Equal(t, "row:self", s.at, "this device comes first and has focus")
 	require.Equal(t, -1, s.window(st, 80, 40).Active, "no button is lit while a card has focus")
-	require.Equal(t, []string{"enter", "↑↓", "r", "d", "esc"}, keys(s.Actions(st)))
+	require.Equal(t, []string{"enter", "↑↓", "esc"}, keys(s.Actions(st)))
 	require.Equal(t, core.Action{Key: "enter", Label: "rename"}, s.Actions(st)[0])
 
 	var seen []string
@@ -129,5 +129,5 @@ func TestDevicesOneDeviceSaysTab(t *testing.T) {
 	s := &Devices{}
 	s.load(st)
 	s.Update(core.Reply{Req: s.req, Val: []api.Device{{ID: "self", Name: "laptop", Current: true, LastSeenAt: now}}}, st)
-	require.Equal(t, []string{"enter", "tab", "r", "d", "esc"}, keys(s.Actions(st)))
+	require.Equal(t, []string{"enter", "tab", "esc"}, keys(s.Actions(st)))
 }

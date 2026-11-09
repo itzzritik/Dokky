@@ -290,7 +290,7 @@ func (s *Devices) remove(st *core.State, d api.Device) tea.Cmd {
 	}
 }
 
-// enter names what it does on the focused stop; the letters stay as shortcuts
+// enter names what it does on the focused stop; r and d stay as quiet shortcuts
 func (s *Devices) Actions(*core.State) []core.Action {
 	switch {
 	case s.rename != nil:
@@ -310,7 +310,7 @@ func (s *Devices) Actions(*core.State) []core.Action {
 	if ui.IsBtn(s.at) {
 		acts = append(acts, core.Action{Key: "← →", Label: "choose"})
 	}
-	return append(acts, core.Action{Key: "r", Label: "rename"}, core.Action{Key: "d", Label: "remove", Danger: true}, core.Action{Key: "esc", Label: "close"})
+	return append(acts, core.Action{Key: "esc", Label: "close"})
 }
 
 func (s *Devices) Animating(*core.State) bool { return s.req != 0 && s.list == nil && !ui.Reduced() }

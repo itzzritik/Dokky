@@ -129,16 +129,16 @@ func (s *storage) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	return s.window(st, maxW, maxH).Layer()
 }
 
-// enter names the focused button; c stays a shortcut for Clear
+// enter names the focused button; c stays a quiet shortcut for Clear
 func (s *storage) Actions(st *core.State) []core.Action {
 	if len(s.Buttons(st)) < 2 {
-		return []core.Action{{Key: "enter", Label: "close"}, {Key: "esc", Label: "close"}}
+		return []core.Action{{Key: "enter", Label: "close"}}
 	}
 	enter := core.Action{Key: "enter", Label: "close"}
 	if s.at == "btn:clear" {
 		enter = core.Action{Key: "enter", Label: "clear", Danger: true}
 	}
-	return []core.Action{enter, {Key: "← →", Label: "choose"}, {Key: "c", Label: "clear", Danger: true}, {Key: "esc", Label: "close"}}
+	return []core.Action{enter, {Key: "← →", Label: "choose"}, {Key: "esc", Label: "close"}}
 }
 
 func (s *storage) Animating(*core.State) bool { return false }
