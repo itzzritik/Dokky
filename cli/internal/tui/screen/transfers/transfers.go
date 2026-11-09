@@ -19,7 +19,12 @@ import (
 
 const graphRows = 5
 
-type Transfers struct{ sel, top int }
+type Transfers struct {
+	sel, top, page int
+	selFile        string // the list changes every second, so the selection follows the file
+	selEarlier     bool
+	open           bool // the detail over the list, when there is no room beside it
+}
 
 func New() *Transfers { return &Transfers{} }
 
@@ -45,65 +50,144 @@ func entries(st *core.State) (now, earlier []entry) {
 	return now, earlier
 }
 
-func (s *Transfers) current(st *core.State) (entry, bool) {
+func all(st *core.State) []entry {
 	now, earlier := entries(st)
-	all := append(now, earlier...)
-	if len(all) == 0 {
+	return append(now, earlier...)
+}
+
+// one file on one drive going one way
+func fileKey(t api.Transfer) string {
+	dir := "down"
+	if t.Up {
+		dir = "up"
+	}
+	return t.DriveID + "|" + dir + "|" + t.Name
+}
+
+func rowID(e entry) string {
+	if e.earlier {
+		return "row:earlier|" + fileKey(e.t)
+	}
+	return "row:now|" + fileKey(e.t)
+}
+
+func (s *Transfers) choose(list []entry, i int) {
+	s.sel, s.selFile, s.selEarlier = i, fileKey(list[i].t), list[i].earlier
+}
+
+// the selected row, else the same file now in the other section, else what took its place
+func (s *Transfers) current(st *core.State) (entry, bool) {
+	list := all(st)
+	if len(list) == 0 {
 		return entry{}, false
 	}
-	s.sel = max(0, min(s.sel, len(all)-1))
-	return all[s.sel], true
+	at := -1
+	for i, e := range list {
+		if fileKey(e.t) != s.selFile {
+			continue
+		}
+		if e.earlier == s.selEarlier {
+			at = i
+			break
+		}
+		if at < 0 {
+			at = i
+		}
+	}
+	if at >= 0 {
+		s.sel = at
+	}
+	s.choose(list, max(0, min(s.sel, len(list)-1)))
+	return list[s.sel], true
 }
 
 func retryable(e entry) bool { return e.t.Up && (e.t.Waiting || e.t.Error != "") }
 
 func (s *Transfers) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
-	now, earlier := entries(st)
-	n := len(now) + len(earlier)
+	e, ok := s.current(st)
+	list := all(st)
 	switch m := msg.(type) {
+	case core.SwitchTab:
+		s.open = false
 	case core.Click:
-		if i, err := strconv.Atoi(strings.TrimPrefix(m.ID, "row:")); err == nil && i < n {
-			s.sel = i
+		for i, x := range list {
+			if m.ID == rowID(x) {
+				s.choose(list, i)
+				s.open = !st.Wide
+			}
 		}
 	case tea.KeyPressMsg:
-		switch m.String() {
-		case "up":
-			s.sel = max(0, s.sel-1)
-		case "down":
-			s.sel = max(0, min(n-1, s.sel+1))
+		k := m.String()
+		if i, moved := ui.Move(k, s.sel, len(list), s.page); moved {
+			if len(list) > 0 {
+				s.choose(list, i)
+			}
+			return s, nil
+		}
+		switch k {
+		case "esc":
+			s.open = false
 		case "enter":
-			e, ok := s.current(st)
 			if !ok {
 				return s, nil
 			}
-			if retryable(e) {
-				c, id, name := st.C, e.t.DriveID, e.t.Name
-				return s, func() tea.Msg {
-					if err := c.Retry(context.Background(), id, name); err != nil {
-						return core.Toast{Text: core.Report(err), Bad: true}
-					}
-					return core.Toast{Text: "Trying " + core.Safe(name) + " again"}
-				}
+			if !st.Wide && !s.open {
+				s.open = true
+				return s, nil
 			}
-			if d, ok := st.Drive(e.t.DriveID); ok && e.earlier && d.State == api.Connected {
-				return s, core.OpenFolder(filepath.Join(d.Folder, filepath.FromSlash(path.Dir(e.t.Name))))
-			}
+			return s, act(st, e)
 		}
 	}
 	return s, nil
 }
 
+// try a stuck upload now, or show a finished file where it lives
+func act(st *core.State, e entry) tea.Cmd {
+	if retryable(e) {
+		c, id, name := st.C, e.t.DriveID, e.t.Name
+		return func() tea.Msg {
+			if err := c.Retry(context.Background(), id, name); err != nil {
+				return core.Toast{Text: core.Report(err), Bad: true}
+			}
+			return core.Toast{Text: "Trying " + core.Safe(name) + " again"}
+		}
+	}
+	if d, ok := st.Drive(e.t.DriveID); ok && e.earlier && d.State == api.Connected {
+		return core.OpenFolder(filepath.Join(d.Folder, filepath.FromSlash(path.Dir(e.t.Name))))
+	}
+	return nil
+}
+
+func actLabel(st *core.State, e entry) string {
+	if retryable(e) {
+		return "try now"
+	}
+	if d, ok := st.Drive(e.t.DriveID); ok && e.earlier && d.State == api.Connected {
+		return "show in " + core.FileManager()
+	}
+	return ""
+}
+
 func (s *Transfers) Actions(st *core.State) []core.Action {
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
 	e, ok := s.current(st)
+	n := len(all(st))
+	pane := ok && !st.Wide && s.open
+	var acts []core.Action
+	switch {
+	case pane:
+		acts = append(acts, core.Action{Key: "esc", Label: "back"})
+		if n > 1 {
+			acts = append(acts, core.Action{Key: "↑↓", Label: "next"})
+		}
+	case n > 1:
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
+	}
 	switch {
 	case !ok:
-	case retryable(e):
-		acts = append(acts, core.Action{Key: "enter", Label: "try now"})
-	case e.earlier:
-		if d, ok := st.Drive(e.t.DriveID); ok && d.State == api.Connected {
-			acts = append(acts, core.Action{Key: "enter", Label: "show in " + core.FileManager()})
-		}
+	case !st.Wide && !s.open:
+		acts = append(acts, core.Action{Key: "enter", Label: "details"})
+	case actLabel(st, e) != "":
+		acts = append(acts, core.Action{Key: "enter", Label: actLabel(st, e)})
 	}
 	return acts
 }
@@ -116,6 +200,11 @@ func (s *Transfers) View(st *core.State, w, h int) *lipgloss.Layer {
 	p := ui.P()
 	b := ui.NewBox()
 	a := st.Act
+	cur, ok := s.current(st)
+	if ok && !st.Wide && s.open {
+		s.detail(b, st, cur, 0, 0, w, h)
+		return b.Layer()
+	}
 	now, earlier := entries(st)
 	moving, waiting := 0, 0
 	for _, e := range now {
@@ -134,7 +223,7 @@ func (s *Transfers) View(st *core.State, w, h int) *lipgloss.Layer {
 	b.Lines(2, 2, ui.Graph(w-3, graphRows, total, ui.Phase(a.History, st.Now)))
 
 	lw := w
-	if st.W >= 120 {
+	if st.Wide {
 		lw = w * 11 / 20
 	}
 	var lines []ui.ListLine
@@ -143,39 +232,39 @@ func (s *Transfers) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	lines = append(lines, head("Now", p.Muted))
 	for i, e := range now {
-		lines = append(lines, ui.ListLine{Text: s.row(st, e, i, lw), Item: i, ID: "row:" + strconv.Itoa(i)})
+		lines = append(lines, ui.ListLine{Text: s.row(st, e, i, lw), Item: i, ID: rowID(e)})
 	}
 	if len(now) == 0 {
 		lines = append(lines, head("Nothing is moving.", p.Faint))
 	}
 	lines = append(lines, ui.ListLine{Item: -1}, head("Earlier", p.Muted))
 	for i, e := range earlier {
-		lines = append(lines, ui.ListLine{Text: s.row(st, e, len(now)+i, lw), Item: len(now) + i, ID: "row:" + strconv.Itoa(len(now)+i)})
+		lines = append(lines, ui.ListLine{Text: s.row(st, e, len(now)+i, lw), Item: len(now) + i, ID: rowID(e)})
 	}
 	if len(earlier) == 0 {
 		lines = append(lines, head("Nothing has moved yet.", p.Faint))
 	}
-	ui.List(b, graphRows+3, h-(graphRows+3), &s.top, s.sel, lines)
+	ly, lh := graphRows+3, h-(graphRows+3)
+	s.page = max(1, lh-1)
+	ui.List(b, ly, lh, &s.top, s.sel, lines)
 	if lw < w {
-		s.detail(b, st, lw+1, graphRows+3, w-lw-1, h-(graphRows+3))
+		rule := make([]string, lh)
+		for i := range rule {
+			rule[i] = ui.Paint(ui.G.V, p.Line, nil, false)
+		}
+		b.Lines(lw+1, ly, rule)
+		if ok {
+			s.detail(b, st, cur, lw+3, ly+1, w-lw-3, lh-1)
+		}
 	}
 	return b.Layer()
 }
 
-// the selected transfer in full, right of the list
-func (s *Transfers) detail(b *ui.Box, st *core.State, x, y, w, h int) {
+// the selected transfer in full: beside the list, or over it when there is no room
+func (s *Transfers) detail(b *ui.Box, st *core.State, e entry, x, y, w, h int) {
 	p := ui.P()
-	rule := make([]string, h)
-	for i := range rule {
-		rule[i] = ui.Paint(ui.G.V, p.Line, nil, false)
-	}
-	b.Lines(x, y, rule)
-	e, ok := s.current(st)
-	if !ok {
-		return
-	}
-	t, dw := e.t, w-2
-	b.Put(x+2, y+1, ui.Paint(core.Fit(path.Base(t.Name), dw), p.Text, nil, true))
+	t := e.t
+	b.Put(x, y, ui.Paint(core.Fit(path.Base(t.Name), w), p.Text, nil, true))
 	var rows [][2]string
 	field := func(k, v string) { rows = append(rows, [2]string{k, v}) }
 	if dir := path.Dir(t.Name); dir != "." {
@@ -211,16 +300,16 @@ func (s *Transfers) detail(b *ui.Box, st *core.State, x, y, w, h int) {
 	if d := t.RetryAt.Sub(st.Now); d > 0 {
 		field("Retry", "in "+core.In(d))
 	}
-	row := y + 3
-	b.Put(x+2, row, ui.L(nil).Raw(ui.L(nil).T("Status", p.Faint).Pad(9)).T(status, sc).String())
+	row := y + 2
+	b.Put(x, row, ui.L(nil).Raw(ui.L(nil).T("Status", p.Faint).Pad(9)).T(status, sc).String())
 	for _, r := range rows {
 		row++
-		b.Put(x+2, row, ui.L(nil).Raw(ui.L(nil).T(r[0], p.Faint).Pad(9)).T(core.Fit(r[1], dw-9), p.Text).String())
+		b.Put(x, row, ui.L(nil).Raw(ui.L(nil).T(r[0], p.Faint).Pad(9)).T(core.Fit(r[1], w-9), p.Text).String())
 	}
 	if t.Error != "" && row+2 < y+h {
-		msg := strings.Split(ansi.Wordwrap(core.Report(errors.New(t.Error)), dw, ""), "\n")
+		msg := strings.Split(ansi.Wordwrap(core.Report(errors.New(t.Error)), w, ""), "\n")
 		for i, l := range msg[:min(len(msg), y+h-row-2)] {
-			b.Put(x+2, row+2+i, ui.Paint(l, p.Coral, nil, false))
+			b.Put(x, row+2+i, ui.Paint(l, p.Coral, nil, false))
 		}
 	}
 }

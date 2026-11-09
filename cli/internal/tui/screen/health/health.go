@@ -1,6 +1,7 @@
 package health
 
 import (
+	"fmt"
 	"image/color"
 	"strings"
 
@@ -17,11 +18,17 @@ const (
 	nameW    = 24
 	bannerH  = 3
 	shortBox = 18
+
+	settingsTab = 5
 )
 
 type Health struct {
-	sel   int
-	moved bool
+	sel     int
+	selName string // checks swap in live, so the selection follows the name
+	moved   bool
+	open    bool // the full detail over the list, when it can't sit beside it
+	split   bool // the detail sits beside the list, as last drawn
+	page    int
 }
 
 func New() *Health { return &Health{} }
@@ -62,43 +69,118 @@ func sync(st *core.State) core.Check {
 
 // the first problem is shown until the person moves
 func (h *Health) selected(cs []core.Check) int {
-	if h.moved {
-		return max(0, min(h.sel, len(cs)-1))
+	if !h.moved {
+		for i, c := range cs {
+			if !c.Expected && (c.Tone == core.Warn || c.Tone == core.Bad) {
+				return i
+			}
+		}
+		return 0
 	}
 	for i, c := range cs {
-		if !c.Expected && (c.Tone == core.Warn || c.Tone == core.Bad) {
-			return i
+		if c.Name == h.selName {
+			h.sel = i
 		}
 	}
-	return 0
+	h.sel = max(0, min(h.sel, len(cs)-1))
+	h.selName = cs[h.sel].Name
+	return h.sel
+}
+
+func (h *Health) choose(cs []core.Check, i int) {
+	h.sel, h.selName, h.moved = i, cs[i].Name, true
+}
+
+type repaired struct {
+	name   string
+	err    error
+	reopen bool
 }
 
 func (h *Health) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
-	k, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		if c, ok := msg.(core.Click); ok && strings.HasPrefix(c.ID, "check:") {
-			for i, x := range Checks(st) {
-				if c.ID == "check:"+x.Name {
-					h.sel, h.moved = i, true
-				}
+	cs := Checks(st)
+	at := h.selected(cs)
+	switch m := msg.(type) {
+	case core.SwitchTab:
+		h.open = false
+	case repaired:
+		return h, onRepaired(st, m)
+	case core.Click:
+		for i, x := range cs {
+			if m.ID == "check:"+x.Name {
+				h.choose(cs, i)
+				h.open = !h.split
 			}
 		}
-		return h, nil
-	}
-	cs := Checks(st)
-	switch k.String() {
-	case "up":
-		h.sel, h.moved = max(0, h.selected(cs)-1), true
-	case "down":
-		h.sel, h.moved = min(len(cs)-1, h.selected(cs)+1), true
-	case "r":
-		return h, core.Send(core.RunChecks{})
-	case "f":
-		return h, core.Send(core.FixAll{})
-	case "c":
-		return h, tea.Batch(tea.SetClipboard(report(st, cs)), core.Say("Report copied"))
+	case tea.KeyPressMsg:
+		k := m.String()
+		if i, moved := ui.Move(k, at, len(cs), h.page); moved {
+			h.choose(cs, i)
+			return h, nil
+		}
+		switch k {
+		case "enter":
+			if !h.split && !h.open {
+				h.open = true
+				return h, nil
+			}
+			return h, act(st, cs[at])
+		case "esc":
+			h.open = false
+		case "r":
+			return h, core.Send(core.RunChecks{})
+		case "f":
+			return h, core.Send(core.FixAll{})
+		case "c":
+			return h, tea.Batch(tea.SetClipboard(report(st, cs)), core.Say("Report copied"))
+		}
 	}
 	return h, nil
+}
+
+// Fix all's repair for this one check, else where the person can sort it out
+func act(st *core.State, c core.Check) tea.Cmd {
+	switch {
+	case fixable(st, c):
+		st.Fixing = true
+		run, name, reopen := c.Repair, c.Name, c.Reopen
+		return func() tea.Msg { return repaired{name: name, err: run(), reopen: reopen} }
+	case signIn(st, c):
+		return core.Send(core.SwitchTab{Tab: settingsTab})
+	}
+	return nil
+}
+
+func actLabel(st *core.State, c core.Check) string {
+	switch {
+	case fixable(st, c):
+		return "fix"
+	case signIn(st, c):
+		return "open settings"
+	}
+	return ""
+}
+
+func fixable(st *core.State, c core.Check) bool {
+	return c.Repair != nil && (c.Tone == core.Warn || c.Tone == core.Bad) && !st.Fixing
+}
+
+// Sync is sorted out by signing in, which lives in Settings
+func signIn(st *core.State, c core.Check) bool {
+	a := st.Snap.Account
+	return c.Name == "Sync" && (!a.LoggedIn || a.SignedOut)
+}
+
+// like Fix all when it ends: say how it went and look again
+func onRepaired(st *core.State, m repaired) tea.Cmd {
+	st.Fixing = false
+	switch {
+	case m.err != nil:
+		return tea.Batch(core.Fail(fmt.Errorf("%s: %w", m.name, m.err)), core.Send(core.RunChecks{}))
+	case m.reopen:
+		return core.Send(core.Reopen{})
+	}
+	return tea.Batch(core.Say(m.name+" is fixed"), core.Send(core.RunChecks{}))
 }
 
 func report(st *core.State, cs []core.Check) string {
@@ -121,7 +203,24 @@ func report(st *core.State, cs []core.Check) string {
 }
 
 func (h *Health) Actions(st *core.State) []core.Action {
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
+	cs := Checks(st)
+	c := cs[h.selected(cs)]
+	var acts []core.Action
+	switch {
+	case !h.split && h.open:
+		acts = append(acts, core.Action{Key: "esc", Label: "back"})
+		if len(cs) > 1 {
+			acts = append(acts, core.Action{Key: "↑↓", Label: "next"})
+		}
+	case len(cs) > 1:
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
+	}
+	switch {
+	case !h.split && !h.open:
+		acts = append(acts, core.Action{Key: "enter", Label: "details"})
+	case actLabel(st, c) != "":
+		acts = append(acts, core.Action{Key: "enter", Label: actLabel(st, c)})
+	}
 	if len(Repairs(st, false)) > 0 && !st.Fixing {
 		acts = append(acts, core.Action{Key: "f", Label: "fix all", Accent: true})
 	}
@@ -165,18 +264,24 @@ func (h *Health) View(st *core.State, w, ht int) *lipgloss.Layer {
 	b := ui.NewBox()
 	cs := Checks(st)
 	sel := h.selected(cs)
+	h.split = w >= twoCol
+	if !h.split && h.open {
+		b.Lines(2, 0, detail(st, cs[sel], w-4, ht))
+		return b.Layer()
+	}
 	bh := 1
 	if ht >= shortBox+bannerH {
 		bh = bannerH
 	}
-	b.Lines(0, 0, h.banner(st, cs, w, bh))
+	h.banner(b, st, cs, w, bh)
 	y := bh + 1
 	room := ht - y
 	if room <= 0 {
 		return b.Layer()
 	}
+	h.page = room
 	lw := w
-	if w >= twoCol {
+	if h.split {
 		lw = listW
 	}
 	start := max(0, sel-room+1)
@@ -184,7 +289,7 @@ func (h *Health) View(st *core.State, w, ht int) *lipgloss.Layer {
 		b.Hit(0, y+i-start, "check:"+cs[i].Name, row(st, cs[i], lw, i == sel))
 	}
 	c := cs[sel]
-	if w >= twoCol {
+	if h.split {
 		dw := w - lw - 4
 		rule := make([]string, room)
 		for i := range rule {
@@ -272,7 +377,7 @@ func row(st *core.State, c core.Check, w int, on bool) string {
 }
 
 // one tinted band when something needs you, a calm line when all is well
-func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
+func (hl *Health) banner(b *ui.Box, st *core.State, cs []core.Check, w, h int) {
 	p := ui.P()
 	n, bad := 0, false
 	for _, c := range cs {
@@ -296,7 +401,8 @@ func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
 			right.T("Checked "+core.Ago(st.Checked, st.Now), p.Muted)
 		}
 		lines[mid] = text.Right(w-1, right)
-		return lines
+		b.Lines(0, 0, lines)
+		return
 	}
 	verb := " need attention."
 	if n == 1 {
@@ -309,7 +415,7 @@ func (hl *Health) banner(st *core.State, cs []core.Check, w, h int) []string {
 	case len(Repairs(st, false)) > 0:
 		key, action = "f", "fix all"
 	}
-	return ui.Banner(w, h, bad, text, key, action)
+	ui.PutBanner(b, 0, w, h, bad, text, key, action)
 }
 
 // the problems Fix all can repair, anything that reopens dokky last; the pass on open skips reopening twice
