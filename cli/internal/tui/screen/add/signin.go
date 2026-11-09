@@ -99,7 +99,7 @@ type signForm struct {
 	typ, editOf string
 	base        *client.Service
 	fields      []*field
-	focus       int
+	at          string // the focused stop
 	oauth       bool
 
 	cfgID, qState, qErr string
@@ -133,6 +133,74 @@ func (s *signForm) load(st *core.State, typ, editOf string) tea.Cmd {
 }
 
 func (s *signForm) working() bool { return s.loadReq != 0 || s.req != 0 || s.saveReq != 0 }
+
+// the browser is open on the provider's sign-in page
+func (s *signForm) waiting() bool { return s.oauth && s.req != 0 && s.question == nil }
+
+// a browser sign-in that already finished, kept when Details goes back a step
+func (s *signForm) signedIn() bool { return s.oauth && s.question == nil && s.draft != nil }
+
+// a text field takes typing; a chip row takes left, right and space
+func stopID(i int, f *field) string {
+	if f.chips != nil {
+		return "chip:" + strconv.Itoa(i)
+	}
+	return "field:" + strconv.Itoa(i)
+}
+
+// which visible field a stop is, -1 for a button
+func fieldIndex(at string) int {
+	for _, pre := range []string{"field:", "chip:"} {
+		if r, ok := strings.CutPrefix(at, pre); ok {
+			if i, err := strconv.Atoi(r); err == nil {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// the fields while the form is up; a browser sign-in has none, only its bar
+func (s *signForm) stops() []string {
+	if s.loadReq != 0 || s.saveReq != 0 || s.oauth && s.question == nil {
+		return nil
+	}
+	var out []string
+	for i, f := range s.visible() {
+		out = append(out, stopID(i, f))
+	}
+	return out
+}
+
+// the next required field still empty after field i, wrapping round; -1 once they are all filled
+func (s *signForm) nextEmpty(i int) int {
+	fields := s.visible()
+	if i < 0 {
+		return -1
+	}
+	for k := 1; k < len(fields); k++ {
+		j := (i + k) % len(fields)
+		if f := fields[j]; f.opt.Required && f.value() == "" && !f.kept {
+			return j
+		}
+	}
+	return -1
+}
+
+// left and right step along a chip row without wrapping; space moves on and wraps, so two chips toggle
+func slide(sel *int, n int, k string) bool {
+	switch k {
+	case "left":
+		*sel = max(0, *sel-1)
+	case "right":
+		*sel = min(n-1, *sel+1)
+	case "space":
+		*sel = (*sel + 1) % n
+	default:
+		return false
+	}
+	return true
+}
 
 func (s *signForm) stop() {
 	if s.cancel != nil {
@@ -226,11 +294,23 @@ func (s *signForm) submit(st *core.State) tea.Cmd {
 	}
 	for i, f := range s.visible() {
 		if f.opt.Required && f.value() == "" && !f.kept {
-			s.focus, s.err = i, "Fill in "+label(f.opt)+"."
+			s.at, s.err = stopID(i, f), "Fill in "+label(f.opt)+"."
 			return nil
 		}
 	}
 	return s.configure(st, s.options(), "", "")
+}
+
+// Next on the sign-in step: a browser sign-in already done goes straight on, anything else signs in
+func (a *Add) signNext(st *core.State) tea.Cmd {
+	switch s := &a.sign; {
+	case s.working():
+		return nil
+	case s.signedIn():
+		a.goTo(name)
+		return nil
+	}
+	return a.sign.submit(st)
 }
 
 func (a *Add) updateSign(msg tea.Msg, st *core.State) tea.Cmd {
@@ -247,59 +327,105 @@ func (a *Add) updateSign(msg tea.Msg, st *core.State) tea.Cmd {
 	case core.Reply:
 		return a.signReply(m, st)
 	case core.Click:
-		id := m.ID
-		if i, err := strconv.Atoi(strings.TrimPrefix(id, "field:")); err == nil && i < len(fields) {
-			s.focus = i
+		if s.working() {
+			return nil
 		}
-		if rest, ok := strings.CutPrefix(id, "chip:"); ok {
+		if i := fieldIndex(m.ID); i >= 0 && i < len(fields) && m.ID == stopID(i, fields[i]) {
+			s.at = m.ID
+		}
+		if rest, ok := strings.CutPrefix(m.ID, "chip:"); ok {
 			row, k, _ := strings.Cut(rest, ":")
-			if i, err := strconv.Atoi(row); err == nil && i < len(fields) && fields[i].chips != nil {
-				s.focus, fields[i].sel = i, int(k[0]-'0')
+			if i, err := strconv.Atoi(row); err == nil && i < len(fields) && fields[i].chips != nil && k != "" {
+				s.at, fields[i].sel = "chip:"+row, int(k[0]-'0')
 			}
 		}
 		return nil
 	case tea.KeyPressMsg:
-		if s.working() {
-			return s.copyOrOpen(m.String())
-		}
-		switch m.String() {
-		case "down":
-			s.focus = max(0, min(len(fields)-1, s.focus+1))
-			return nil
-		case "up":
-			s.focus = max(0, s.focus-1)
-			return nil
-		case "enter":
-			return s.submit(st)
-		}
-		if s.focus >= 0 && s.focus < len(fields) && fields[s.focus].chips != nil {
-			f := fields[s.focus]
-			switch m.String() {
-			case "left":
-				f.sel = max(0, f.sel-1)
-			case "right", "space":
-				f.sel = (f.sel + 1) % len(f.chips)
-			}
-			return nil
-		}
+		return a.keySign(m, st)
 	}
-	if s.focus >= 0 && s.focus < len(fields) && fields[s.focus].in != nil && !s.working() {
-		cmd, _ := fields[s.focus].in.Type(msg)
+	if i := fieldIndex(s.at); i >= 0 && i < len(fields) && fields[i].in != nil && !s.working() {
+		cmd, _ := fields[i].in.Type(msg)
 		return cmd
 	}
 	return nil
 }
 
-func (s *signForm) copyOrOpen(k string) tea.Cmd {
+func (a *Add) keySign(m tea.KeyPressMsg, st *core.State) tea.Cmd {
+	s := &a.sign
+	fields := s.visible()
+	k := m.String()
+	at := a.focused(st)
+	s.at = at
+	i := fieldIndex(at)
+	switch {
+	// c and o stay as letters for the Copy link and Open browser buttons
+	case s.waiting() && (k == "c" || k == "o") && s.authURL != "":
+		id := map[string]string{"c": "copy", "o": "open"}[k]
+		s.at = "btn:" + id
+		return s.copyOrOpen(id)
+	case s.working() && !s.waiting():
+		return nil
+	case ui.Pressed(k, at):
+		return a.press(strings.TrimPrefix(at, "btn:"), st)
+	case k == "enter" && i >= 0:
+		if j := s.nextEmpty(i); j >= 0 {
+			s.at = stopID(j, fields[j])
+			return nil
+		}
+		return a.signNext(st)
+	case i >= 0 && i < len(fields) && fields[i].chips != nil && slide(&fields[i].sel, len(fields[i].chips), k):
+		return nil
+	case ui.Walk(a.stops(st), &s.at, k):
+		return nil
+	}
+	if i >= 0 && i < len(fields) && fields[i].in != nil {
+		cmd, _ := fields[i].in.Type(m)
+		return cmd
+	}
+	return nil
+}
+
+func (s *signForm) copyOrOpen(id string) tea.Cmd {
 	u := s.authURL
 	switch {
 	case u == "":
-	case k == "c":
+	case id == "copy":
 		return tea.Batch(tea.SetClipboard(u), core.Say("Link copied"))
-	case k == "o":
-		return func() tea.Msg { _ = platform.OpenURL(u); return nil }
+	case id == "open":
+		return func() tea.Msg {
+			if err := platform.OpenURL(u); err != nil {
+				return core.Toast{Text: "Could not open the browser. Copy the link instead.", Bad: true}
+			}
+			return nil
+		}
 	}
 	return nil
+}
+
+// Cancel, Copy link and Open browser while the browser signs in; Back and the step's primary otherwise
+func (a *Add) signBar(st *core.State) []ui.Btn {
+	s := &a.sign
+	back := ui.Btn{ID: "back", Label: "Back"}
+	switch {
+	case s.waiting() && s.authURL != "":
+		return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "copy", Label: "Copy link"}, {ID: "open", Label: "Open browser", Primary: true}}
+	case s.waiting():
+		return []ui.Btn{{ID: "cancel", Label: "Cancel"}}
+	case s.loadReq != 0 || s.saveReq != 0:
+		return []ui.Btn{back}
+	case s.signedIn():
+		return []ui.Btn{back, {ID: "next", Label: "Next", Primary: true}}
+	case s.oauth && s.question == nil:
+		return []ui.Btn{back, {ID: "next", Label: "Open browser", Primary: true}}
+	}
+	next := "Sign in"
+	if s.question != nil {
+		next = "Continue"
+	}
+	if s.req != 0 {
+		next = ui.Spin(st.T) + " Checking"
+	}
+	return []ui.Btn{back, {ID: "next", Label: next, Primary: true}}
 }
 
 func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
@@ -312,13 +438,17 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 			return nil
 		}
 		l := m.Val.(loaded)
-		s.base = l.base
+		s.base, s.at = l.base, ""
 		s.build(l.opts)
 		if s.oauth && s.editOf == "" {
 			return s.configure(st, map[string]string{}, "", "")
 		}
 	case s.authPoll:
 		if u, ok := m.Val.(string); ok && m.Err == nil {
+			// the link's buttons arrive with it, focus on Open browser
+			if u != "" && s.authURL == "" {
+				s.at = "btn:open"
+			}
 			s.authURL = u
 		}
 	case s.req:
@@ -340,7 +470,7 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 			return s.configure(st, nil, r.Step.State, "true")
 		case r.Step.Option != nil:
 			s.cfgID, s.qState, s.qErr = r.ID, r.Step.State, core.Report(errors.New(r.Step.Error))
-			s.question, s.focus = newField(*r.Step.Option, nil), 0
+			s.question, s.at = newField(*r.Step.Option, nil), ""
 		default:
 			s.err = "Setup stopped without asking anything. Try again."
 		}
@@ -359,7 +489,10 @@ func (a *Add) signReply(m core.Reply, st *core.State) tea.Cmd {
 func (a *Add) signedIn(st *core.State) tea.Cmd {
 	s := &a.sign
 	if a.edit == nil {
-		a.named.reset(unique(st, a.prov.Name))
+		// details already typed stay when signing in again after going back
+		if a.named.name == nil {
+			a.named.reset(unique(st, a.prov.Name))
+		}
 		a.goTo(name)
 		return nil
 	}
@@ -370,7 +503,7 @@ func (a *Add) signedIn(st *core.State) tea.Cmd {
 	})
 }
 
-func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int) int {
+func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int, at string) int {
 	p := ui.P()
 	s := &a.sign
 	cw := win.Inner()
@@ -402,6 +535,11 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int) int {
 		win.Body = body
 		return waiting("Saving")
 	}
+	if s.signedIn() {
+		win.Ok, win.Title, win.Sub = true, "Signed in to "+a.prov.Name, "Go on to the drive details."
+		win.Body = body
+		return 0
+	}
 	if s.oauth && s.question == nil {
 		win.Sub = "We open your browser to sign in."
 		rows := 0
@@ -426,18 +564,23 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int) int {
 	}
 	fields := s.visible()
 	room := max(1, (win.Room(maxH)-3-off)/2)
-	top := max(0, min(s.focus-room+1, len(fields)-room))
+	// with a button focused, the fields nearest the bar show
+	fi := fieldIndex(at)
+	if fi < 0 {
+		fi = len(fields) - 1
+	}
+	top := max(0, min(fi-room+1, len(fields)-room))
 	rows := off
 	for i := top; i < len(fields) && i < top+room; i++ {
 		f, y := fields[i], off+(i-top)*2
 		switch {
 		case f.chips != nil && s.question != nil:
-			body.Add(0, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, i == s.focus, p.Surface))
+			body.Add(0, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, at == stopID(i, f), p.Surface))
 		case f.chips != nil:
 			body.Put(0, y, ui.L(p.Surface).T(chipLabel(f), p.Muted).Pad(ui.LabelW))
-			body.Add(ui.LabelW, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, i == s.focus, p.Surface))
+			body.Add(ui.LabelW, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, at == stopID(i, f), p.Surface))
 		default:
-			body.Add(0, y, f.in.View("field:"+strconv.Itoa(i), cw, i == s.focus && !s.working(), p.Surface))
+			body.Add(0, y, f.in.View("field:"+strconv.Itoa(i), cw, at == stopID(i, f) && !s.working(), p.Surface))
 		}
 		rows = y + 1
 	}
