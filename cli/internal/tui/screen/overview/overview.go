@@ -22,18 +22,24 @@ const (
 
 type Overview struct {
 	sel, top int
+	page     int    // items on screen, for pgup and pgdown
+	selID    string // drives come and go live, so the selection follows the item
 	shown    time.Time
 }
 
 func New() *Overview { return &Overview{} }
 
-// list items: the drives, or the services when there are none
+// list items: the drives then a way to add one, or the services when there are none
 type item struct {
-	id    string
-	drive *api.Drive
-	prov  *api.Provider
-	more  bool
+	id     string
+	drive  *api.Drive
+	prov   *api.Provider
+	more   bool
+	add    bool
+	signIn bool
 }
+
+const addH = 2 // the add row, a line under the last card
 
 func (o *Overview) items(st *core.State) []item {
 	var out []item
@@ -42,7 +48,7 @@ func (o *Overview) items(st *core.State) []item {
 			d := &st.Snap.Drives[i]
 			out = append(out, item{id: "row:" + d.ID, drive: d})
 		}
-		return out
+		return append(out, item{id: "row:add", add: true})
 	}
 	cloud, own := groups(st)
 	for i := range cloud {
@@ -52,8 +58,27 @@ func (o *Overview) items(st *core.State) []item {
 	for i := range own {
 		out = append(out, item{id: "row:" + own[i].Type, prov: &own[i]})
 	}
+	if !st.Snap.Account.LoggedIn {
+		out = append(out, item{id: "row:signin", signIn: true})
+	}
 	return out
 }
+
+// the selected item, found by its ID; when it has gone, the one now in its place
+func (o *Overview) current(items []item) (item, bool) {
+	for i, it := range items {
+		if it.id == o.selID {
+			o.sel = i
+		}
+	}
+	if len(items) == 0 {
+		return item{}, false
+	}
+	o.choose(items, max(0, min(o.sel, len(items)-1)))
+	return items[o.sel], true
+}
+
+func (o *Overview) choose(items []item, i int) { o.sel, o.selID = i, items[i].id }
 
 func groups(st *core.State) (cloud, own []api.Provider) {
 	for _, p := range st.Catalog {
@@ -70,7 +95,7 @@ func groups(st *core.State) (cloud, own []api.Provider) {
 
 func (o *Overview) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	items := o.items(st)
-	o.sel = max(0, min(o.sel, len(items)-1))
+	cur, ok := o.current(items)
 	switch m := msg.(type) {
 	case core.SwitchTab:
 		if m.Tab == 0 {
@@ -79,19 +104,22 @@ func (o *Overview) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	case core.Click:
 		for i, it := range items {
 			if it.id == m.ID {
-				o.sel = i
+				o.choose(items, i)
 				return o, o.activate(st, it)
 			}
 		}
 	case tea.KeyPressMsg:
-		switch m.String() {
-		case "up":
-			o.sel = max(0, o.sel-1)
-		case "down":
-			o.sel = min(len(items)-1, o.sel+1)
+		k := m.String()
+		if i, moved := ui.Move(k, o.sel, len(items), o.page); moved {
+			if ok {
+				o.choose(items, i)
+			}
+			return o, nil
+		}
+		switch k {
 		case "enter":
-			if len(items) > 0 {
-				return o, o.activate(st, items[o.sel])
+			if ok {
+				return o, o.activate(st, cur)
 			}
 		case "a":
 			return o, add.Open(st, "")
@@ -110,25 +138,35 @@ func (o *Overview) activate(st *core.State, it item) tea.Cmd {
 		return core.Send(core.SwitchTab{Tab: core.DrivesTab, Drive: it.drive.ID})
 	case it.prov != nil:
 		return add.Open(st, it.prov.Type)
+	case it.signIn:
+		return gate.Open(st)
 	}
 	return add.Open(st, "")
 }
 
 func (o *Overview) Actions(st *core.State) []core.Action {
-	acts := []core.Action{{Key: "↑↓", Label: "move"}}
 	items := o.items(st)
-	if o.sel < len(items) {
-		switch it := items[o.sel]; {
-		case it.drive != nil:
-			acts = append(acts, core.Action{Key: "enter", Label: "show"})
-		default:
-			acts = append(acts, core.Action{Key: "enter", Label: "add"})
-		}
+	it, ok := o.current(items)
+	var acts []core.Action
+	if len(items) > 1 {
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
 	}
-	if len(st.Snap.Drives) > 0 {
+	switch {
+	case !ok:
+	case it.drive != nil:
+		acts = append(acts, core.Action{Key: "enter", Label: "show"})
+	case it.signIn:
+		acts = append(acts, core.Action{Key: "enter", Label: "sign in"})
+	case it.add:
+		acts = append(acts, core.Action{Key: "enter", Label: "add drive"})
+	default:
+		acts = append(acts, core.Action{Key: "enter", Label: "add"})
+	}
+	// the letter keys too, unless enter already says the same
+	if len(st.Snap.Drives) > 0 && !it.add {
 		acts = append(acts, core.Action{Key: "a", Label: "add drive"})
 	}
-	if !st.Snap.Account.LoggedIn {
+	if !st.Snap.Account.LoggedIn && !it.signIn {
 		acts = append(acts, core.Action{Key: "s", Label: "sign in"})
 	}
 	return acts
@@ -171,22 +209,63 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	b.Put(0, y, ui.Paint("Your drives", p.Muted, nil, false))
 	items := o.items(st)
-	fit := max(1, (h-y-1)/cardH)
-	o.top = max(0, min(o.top, len(items)-fit))
-	if o.sel < o.top {
-		o.top = o.sel
-	}
-	if o.sel >= o.top+fit {
-		o.top = o.sel - fit + 1
-	}
+	o.current(items)
+	room := h - y - 1
+	o.page = max(1, room/cardH)
+	o.scroll(items, room)
 	if o.shown.IsZero() {
 		o.shown = st.Now
 	}
 	grow := ui.MeterGrow(o.shown, st.Now)
-	for i := o.top; i < len(items) && i < o.top+fit; i++ {
-		b.Add(0, y+1+(i-o.top)*cardH, card(st, items[i], w, i == o.sel, grow))
+	at := y + 1
+	for i := o.top; i < len(items) && at+height(items[i]) <= y+1+room; i++ {
+		if it := items[i]; it.add {
+			b.Add(0, at+addH-1, ui.Row(it.id, w, i == o.sel, nil, func(bg color.Color, iw int) string {
+				return addLine(bg, iw, i == o.sel)
+			}))
+		} else {
+			b.Add(0, at, card(st, it, w, i == o.sel, grow))
+		}
+		at += height(items[i])
 	}
 	return b.Layer()
+}
+
+func height(it item) int {
+	if it.add {
+		return addH
+	}
+	return cardH
+}
+
+func span(items []item) int {
+	n := 0
+	for _, it := range items {
+		n += height(it)
+	}
+	return n
+}
+
+// keeps the selected item in view, and no empty room under the last one
+func (o *Overview) scroll(items []item, room int) {
+	o.top = max(0, min(o.top, o.sel))
+	for o.top < o.sel && span(items[o.top:o.sel+1]) > room {
+		o.top++
+	}
+	for o.top > 0 && span(items[o.top-1:]) <= room {
+		o.top--
+	}
+}
+
+func addLine(bg color.Color, iw int, sel bool) string {
+	p := ui.P()
+	l := ui.L(bg).B("+", p.Accent).Sp(1)
+	if sel {
+		l.B("Add a drive", p.Text)
+	} else {
+		l.T("Add a drive", p.Text)
+	}
+	return l.Sp(2).T("Cloud accounts or your own storage", p.Muted).Pad(iw)
 }
 
 // a drive as a solid card: name, what it is and its status on the left, its space meter on the right
@@ -218,6 +297,9 @@ func card(st *core.State, it item, w int, sel bool, grow float64) *lipgloss.Laye
 func row(st *core.State, it item, w int, sel bool) string {
 	p := ui.P()
 	return ui.RowLine(w, sel, nil, func(bg color.Color, iw int) string {
+		if it.signIn {
+			return ui.L(bg).T("Already use dokky on another computer?", p.Muted).Sp(2).B("Sign in", p.Accent).Pad(iw)
+		}
 		name, hint := "More services", "Search "+strconv.Itoa(max(0, len(st.Catalog)-11))+"+"
 		if it.prov != nil {
 			name, hint = it.prov.Name, it.prov.Desc
