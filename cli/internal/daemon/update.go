@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -69,11 +70,12 @@ type Release struct {
 }
 
 type updater struct {
-	mu      sync.Mutex
-	paths   Paths
-	blocked string // decided at start: after a swap, Linux reports the running exe as dokky.old
-	ticks   int
-	off     string
+	mu         sync.Mutex
+	installing atomic.Bool // a new binary is being fetched, swapped in and selftested
+	paths      Paths
+	blocked    string // decided at start: after a swap, Linux reports the running exe as dokky.old
+	ticks      int
+	off        string
 }
 
 type updateParams struct {
@@ -320,6 +322,11 @@ func (d *Daemon) autoUpdate(ctx context.Context, now time.Time) bool {
 		return false
 	}
 	if buildinfo.Newer(installedVersion(u.paths.State), buildinfo.Version) {
+		// the version file is written before the selftest; restarting then would cut the selftest off and roll the update back
+		if !u.mu.TryLock() {
+			return false
+		}
+		u.mu.Unlock()
 		return d.idle.IsIdle(now)
 	}
 	why := autoOff(d.settings())
@@ -452,7 +459,10 @@ func (d *Daemon) install(ctx context.Context, version string) (string, bool, err
 			return cur, false, nil
 		}
 	}
-	if err := Install(ctx, r, d.upd.paths); err != nil {
+	d.upd.installing.Store(true)
+	err = Install(ctx, r, d.upd.paths)
+	d.upd.installing.Store(false)
+	if err != nil {
 		return "", false, err
 	}
 	d.log.Info("installed dokky", "version", r.Version)
