@@ -31,7 +31,7 @@ func TestExplainCodes(t *testing.T) {
 		"cancelled":        {coded(api.ErrCancelled, "cancelled"), v, "Cancelled. Try again or use your master password."},
 		"no system":        {coded(api.ErrSystemUnavailable, "x"), v, "Windows Hello isn't available right now."},
 		"password due":     {coded(api.ErrPasswordRequired, "x"), v, "It's been 14 days. Type your master password this time."},
-		"weak":             {coded(api.ErrWeakPassword, "use at least 10 characters"), v, "Use at least 10 characters."},
+		"weak":             {coded(api.ErrWeakPassword, "use at least 8 characters"), v, "Use at least 8 characters."},
 		"bad key":          {coded(api.ErrBadRecoveryKey, "x"), v, "That recovery key is not right."},
 		"grant expired":    {coded(api.ErrGrantRequired, "x"), v, "That took too long. Try again."},
 		"locked":           {coded(api.ErrLocked, "x"), v, "dokky is locked. Unlock it first."},

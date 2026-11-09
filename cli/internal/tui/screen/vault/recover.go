@@ -244,16 +244,20 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	cw, bg := win.Inner(), p.Surface
 	idle := r.req == 0
 	room := win.Room(maxH)
-	g := gap(room-1, 3, 3)
+	g := 1
+	if room >= 7 {
+		g = 2
+	}
+	focus := r.focus - 1
+	if !idle {
+		focus = -1
+	}
 	body := ui.NewBox()
 	body.Add(0, 0, r.key.View("field:0", cw, r.focus == 0 && idle, bg))
 	body.Put(0, 1, keyLine(r.ks, r.kn, cw, bg))
-	body.Add(0, 1+g, r.np.pw.View("field:1", cw, r.focus == 1 && idle, bg))
-	body.Add(0, 1+2*g, r.np.again.View("field:2", cw, r.focus == 2 && idle, bg))
-	meter := r.np.rows(cw, bg, room-1-3*g)
-	body.Lines(0, 1+3*g, meter)
+	rows := 1 + g + r.np.place(body, 1+g, cw, room-1-g, [2]string{"field:1", "field:2"}, focus, bg)
 	win.Body = body
-	return 1 + 3*g + len(meter)
+	return rows
 }
 
 func (r *recoverForm) actions(*core.State) []core.Action {

@@ -107,19 +107,12 @@ func (c *create) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Buttons = []ui.Btn{{ID: "create", Label: busyLabel(st, c.req != 0, "Create password", "Creating"), Primary: true}}
 	win.Active = 0
 	cw, bg := win.Inner(), p.Surface
-	room := win.Room(maxH)
-	g := gap(room, 2, 3)
-	body := ui.NewBox()
-	body.Add(0, 0, c.np.pw.View("field:0", cw, c.focus == 0 && c.req == 0, bg))
-	body.Add(0, g, c.np.again.View("field:1", cw, c.focus == 1 && c.req == 0, bg))
-	meter := c.np.rows(cw, bg, room-2*g)
-	body.Lines(0, 2*g, meter)
-	rows := 2*g + len(meter)
-	note := para(win, "dokky never sees it, and it can't be reset without your recovery key.", p.Faint)
-	if rows+1+len(note) <= room {
-		body.Lines(0, rows+1, note)
-		rows += 1 + len(note)
+	focus := c.focus
+	if c.req != 0 {
+		focus = -1
 	}
+	body := ui.NewBox()
+	rows := c.np.place(body, 0, cw, win.Room(maxH), [2]string{"field:0", "field:1"}, focus, bg)
 	win.Body = body
 	return rows
 }

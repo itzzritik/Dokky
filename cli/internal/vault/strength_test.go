@@ -9,8 +9,9 @@ import (
 
 func TestCheckPasswordRejects(t *testing.T) {
 	for pw, hint := range map[string]string{
-		"":                         "at least 10",
-		"Ab1$Ab1$9":                "at least 10",
+		"":                         "at least 8",
+		"Ab1$Ab1":                  "at least 8",
+		"kx9mp2vl":                 "longer",
 		strings.Repeat("Ab1$", 33): "at most 128",
 		" Kx9#mP2$vLq":             "spaces",
 		"Kx9#mP2$vLq ":             "spaces",
@@ -43,6 +44,8 @@ func TestCheckPasswordAccepts(t *testing.T) {
 		"kx9mp2vlqz":                   2,
 		"Kx9mP2vLqz":                   2,
 		"Kx9#mP2$vL":                   3,
+		"Kx9#mP2$":                     2,
+		"Kx9mP2vL":                     2,
 		"Tr0ub4dor&3":                  3,
 		"correct horse battery staple": 4,
 		"mydogisnamedrexx":             3,

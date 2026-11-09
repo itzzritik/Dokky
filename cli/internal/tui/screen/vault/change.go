@@ -127,15 +127,19 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	cw, bg := win.Inner(), p.Surface
 	idle := c.req == 0
 	room := win.Room(maxH)
-	g := gap(room, 3, 3)
-	body := ui.NewBox()
-	for i, fd := range c.fields() {
-		body.Add(0, g*i, fd.View("field:"+string(rune('0'+i)), cw, c.focus == i && idle, bg))
+	g := 1
+	if room >= 6 {
+		g = 2
 	}
-	meter := c.np.rows(cw, bg, room-3*g)
-	body.Lines(0, 3*g, meter)
+	focus := c.focus - 1
+	if !idle {
+		focus = -1
+	}
+	body := ui.NewBox()
+	body.Add(0, 0, c.cur.View("field:0", cw, c.focus == 0 && idle, bg))
+	rows := g + c.np.place(body, g, cw, room-g, [2]string{"field:1", "field:2"}, focus, bg)
 	win.Body = body
-	return 3*g + len(meter)
+	return rows
 }
 
 func (c *change) actions(*core.State) []core.Action {
