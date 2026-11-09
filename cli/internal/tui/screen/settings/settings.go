@@ -15,7 +15,6 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/devices"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
-	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -157,10 +156,6 @@ func (s *Settings) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			if st.Snap.Account.SignedOut {
 				return s, devices.RemoveSelf()
 			}
-		case "L":
-			if st.Snap.Vault.State == api.VaultUnlocked {
-				return s, vault.LockNow(st)
-			}
 		}
 	}
 	return s, nil
@@ -188,7 +183,7 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "s", Label: "remove this device"})
 	}
 	if st.Snap.Vault.State == api.VaultUnlocked {
-		acts = append(acts, core.Action{Key: "L", Label: "lock dokky"})
+		acts = append(acts, core.Action{Key: "ctrl+l", Label: "lock"})
 	}
 	return acts
 }

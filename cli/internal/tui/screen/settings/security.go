@@ -16,10 +16,10 @@ func (s *Settings) security(st *core.State) []row {
 	rows := []row{
 		{label: "Unlock at startup", value: vault.UnlockLabel(st), kind: action, run: vault.PickUnlock},
 		{label: "Ask for master password every", value: vault.DaysLabel(v.PasswordDays), kind: action, run: vault.PickDays},
-		{label: "Lock window after", value: vault.IdleLabel(v.IdleLockMinutes), kind: action, run: vault.PickIdle},
+		{label: "Lock dokky after", value: vault.IdleLabel(v.IdleLockMinutes), kind: action, run: vault.PickIdle},
 		{label: "Change master password", kind: action, run: vault.ChangePassword},
 		{label: "New recovery key", kind: action, run: vault.NewRecoveryKey},
-		{label: "Lock dokky now", value: "unmounts drives", kind: action, tone: ui.P().Faint, run: vault.LockNow},
+		{label: "Lock dokky now", value: "ctrl+l", kind: action, tone: ui.P().Faint, run: vault.LockNow},
 	}
 	// sync waits until this device has the account's key
 	if v.Need == api.NeedJoin && !st.Snap.Account.Pending {

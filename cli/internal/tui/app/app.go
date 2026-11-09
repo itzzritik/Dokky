@@ -213,6 +213,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return tea.Batch(a.route(), a.refresh())
 	case vault.Released:
 		return a.released()
+	case vault.LockWindow:
+		if a.canLock() {
+			return a.lockWindow()
+		}
 	case idleCheck:
 		return a.onIdle(m)
 	case core.NeedDriver:

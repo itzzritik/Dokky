@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"image/color"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,8 @@ const (
 type unlock struct {
 	mode       unlockMode
 	pw         *ui.Secret
-	focus      int // 0 password, 1 forgot password
+	at         string // the focused stop
+	forgot     bool   // the forgot link fit last time it was drawn
 	reveal     bool
 	err        string
 	cool       bool // err is a cooldown, which the live countdown replaces
@@ -41,14 +43,23 @@ type unlock struct {
 }
 
 func newUnlock(mode unlockMode, title, sub string) *unlock {
-	return &unlock{mode: mode, pw: ui.NewSecret("Password", "", vault.MaxPassword), title: title, sub: sub}
+	return &unlock{mode: mode, pw: ui.NewSecret("Password", "", vault.MaxPassword), at: "field:pw", forgot: mode == atStart, title: title, sub: sub}
 }
 
-func (u *unlock) items() int {
-	if u.mode == atStart {
-		return 2
+// the Touch ID tile when offered, the field, the forgot link when it shows, then the buttons
+func (u *unlock) stops(st *core.State) []string {
+	var s []string
+	if offered(st) {
+		s = append(s, "tile:system")
 	}
-	return 1
+	s = append(s, "field:pw")
+	if u.forgot {
+		s = append(s, "link:forgot")
+	}
+	if u.mode == forGrant {
+		s = append(s, "btn:cancel")
+	}
+	return append(s, "btn:unlock")
 }
 
 func (u *unlock) busy() bool { return u.req != 0 || u.done }
@@ -69,7 +80,7 @@ func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		u.stop()
 		if m.Err != nil {
-			u.err, u.cool, u.focus = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts, 0
+			u.err, u.cool, u.at = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts, "field:pw"
 			if code(m.Err) == api.ErrWrongPassword {
 				u.pw.Wipe()
 			}
@@ -95,16 +106,22 @@ func (u *unlock) click(id string, f *Flow, st *core.State) tea.Cmd {
 	if u.busy() {
 		return nil
 	}
+	if slices.Contains(u.stops(st), id) {
+		u.at = id
+	}
+	return u.press(id, f, st)
+}
+
+// what enter on a stop, or a click on it, does
+func (u *unlock) press(id string, f *Flow, st *core.State) tea.Cmd {
 	switch id {
-	case "btn:system":
+	case "tile:system":
 		if offered(st) {
 			return u.ask(st, api.AuthSystem)
 		}
-	case "field:pw":
-		u.focus = 0
 	case "link:forgot":
 		f.push(newRecover(false))
-	case "btn:unlock":
+	case "btn:unlock", "field:pw":
 		return u.submit(st)
 	case "btn:cancel":
 		return f.back()
@@ -120,7 +137,7 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch {
 	case k == "esc" && u.system && u.req != 0:
 		u.stop()
-		u.focus = 0
+		u.at = "field:pw"
 		return nil
 	case u.busy():
 		return nil
@@ -129,12 +146,10 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	case k == "ctrl+r":
 		u.reveal = !u.reveal
 		u.pw.Reveal = u.reveal
-	case k == "enter" && u.focus == 1:
-		f.push(newRecover(false))
-	case k == "enter":
-		return u.submit(st)
-	case move(k, &u.focus, u.items()):
-	case u.focus == 0 && u.pw.Type(msg):
+	case k == "enter" || k == "space" && u.at != "field:pw":
+		return u.press(u.at, f, st)
+	case ui.Walk(u.stops(st), &u.at, k):
+	case u.at == "field:pw" && u.pw.Type(msg):
 		u.err = ""
 	}
 	return nil
@@ -200,11 +215,14 @@ func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 		body.Add(0, 0, u.tile(st, cw, bg))
 		y = 4
 	}
-	body.Add(0, y, u.pw.View("field:pw", cw, u.focus == 0 && !u.system, bg))
+	body.Add(0, y, u.pw.View("field:pw", cw, u.at == "field:pw" && !u.system, bg))
 	y++
-	if u.mode == atStart && y+2 <= win.Room(maxH) {
-		body.Add(0, y+1, link("link:forgot", "Forgot password?", u.focus == 1, bg))
+	u.forgot = u.mode == atStart && y+2 <= win.Room(maxH)
+	if u.forgot {
+		body.Add(0, y+1, link("link:forgot", "Forgot password?", u.at == "link:forgot", bg))
 		y += 2
+	} else if u.at == "link:forgot" {
+		u.at = "field:pw"
 	}
 	label := "Unlock"
 	if u.mode == forGrant {
@@ -212,7 +230,10 @@ func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 		win.Buttons = append(win.Buttons, ui.Btn{ID: "cancel", Label: "Cancel"})
 	}
 	win.Buttons = append(win.Buttons, ui.Btn{ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, label, "Checking"), Primary: true})
-	if u.pw.Len() > 0 || !sys || u.busy() && !u.system {
+	switch {
+	case ui.IsBtn(u.at) && !u.busy():
+		win.Active = win.Index(u.at)
+	case u.at == "field:pw" && (u.pw.Len() > 0 || !sys) || u.busy() && !u.system:
 		win.Active = len(win.Buttons) - 1
 	}
 	win.Body = body
@@ -224,7 +245,7 @@ func (u *unlock) tile(st *core.State, w int, bg color.Color) *lipgloss.Layer {
 	p := ui.P()
 	name := systemName(st.Snap.Vault)
 	fill, fg := p.Cap, p.Text
-	if u.system || u.pw.Len() == 0 && u.focus == 0 && !u.busy() {
+	if u.system || !u.busy() && (u.at == "tile:system" || u.at == "field:pw" && u.pw.Len() == 0) {
 		fill, fg = p.Accent, p.OnAccent
 	}
 	l := ui.L(fill)
@@ -238,7 +259,7 @@ func (u *unlock) tile(st *core.State, w int, bg color.Color) *lipgloss.Layer {
 	}
 	pad := max(0, (w-l.Width())/2)
 	lines := []string{rim(ui.G.Top, w, fill, bg), ui.L(fill).Sp(pad).Raw(l.String()).Pad(w), rim(ui.G.Bottom, w, fill, bg)}
-	return lipgloss.NewLayer(strings.Join(lines, "\n")).ID("btn:system")
+	return lipgloss.NewLayer(strings.Join(lines, "\n")).ID("tile:system")
 }
 
 func (u *unlock) actions(st *core.State) []core.Action {
@@ -250,21 +271,19 @@ func (u *unlock) actions(st *core.State) []core.Action {
 	}
 	enter := core.Action{Key: "enter", Label: "unlock"}
 	switch {
-	case u.focus == 1:
+	case u.at == "link:forgot":
 		enter.Label = "recover"
-	case u.pw.Len() == 0 && offered(st):
+	case u.at == "btn:cancel":
+		enter.Label = "cancel"
+	case u.at == "tile:system" || u.at == "field:pw" && u.pw.Len() == 0 && offered(st):
 		enter.Label = strings.TrimPrefix(systemName(st.Snap.Vault), "your ")
 	case u.mode == forGrant:
 		enter.Label = "confirm"
 	}
-	acts := []core.Action{enter}
-	if u.items() > 1 {
-		acts = append(acts, core.Action{Key: "tab", Label: "switch"})
-	}
-	return append(acts, revealAction(u.reveal))
+	return []core.Action{enter, moveAction, revealAction(u.reveal)}
 }
 
-func (u *unlock) typing() bool  { return u.focus == 0 }
+func (u *unlock) typing() bool  { return u.at == "field:pw" }
 func (u *unlock) holding() bool { return false }
 
 func (u *unlock) animating(st *core.State) bool {

@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -14,6 +15,7 @@ import (
 // the master password, for a recovery key that replaces the old one
 type askKey struct {
 	pw     *ui.Secret
+	at     string // the focused stop
 	reveal bool
 	err    string
 	cool   bool
@@ -21,8 +23,10 @@ type askKey struct {
 }
 
 func newAskKey() *askKey {
-	return &askKey{pw: ui.NewSecret("Password", "Your master password", vault.MaxPassword)}
+	return &askKey{pw: ui.NewSecret("Password", "Your master password", vault.MaxPassword), at: "field:pw"}
 }
+
+var askKeyStops = []string{"field:pw", "btn:cancel", "btn:create"}
 
 func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch m := msg.(type) {
@@ -37,19 +41,20 @@ func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 			a.err, a.cool = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts
 			if code(m.Err) == api.ErrWrongPassword {
 				a.pw.Wipe()
+				a.at = "field:pw"
 			}
 			return nil
 		}
 		key, _ := m.Val.(string)
 		f.swap(newShowKey(key, "New recovery key saved"))
 	case core.Click:
-		switch {
-		case a.req != 0:
-		case m.ID == "btn:create":
-			return a.submit(st)
-		case m.ID == "btn:cancel":
-			return f.back()
+		if a.req != 0 {
+			return nil
 		}
+		if slices.Contains(askKeyStops, m.ID) {
+			a.at = m.ID
+		}
+		return a.press(m.ID, f, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
 		if a.req != 0 {
 			return nil
@@ -64,11 +69,24 @@ func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		case k == "ctrl+r":
 			a.reveal = !a.reveal
 			a.pw.Reveal = a.reveal
+		case ui.Pressed(k, a.at):
+			return a.press(a.at, f, st)
 		case k == "enter":
 			return a.submit(st)
-		case a.pw.Type(msg):
+		case ui.Walk(askKeyStops, &a.at, k):
+		case a.at == "field:pw" && a.pw.Type(msg):
 			a.err = ""
 		}
+	}
+	return nil
+}
+
+func (a *askKey) press(id string, f *Flow, st *core.State) tea.Cmd {
+	switch id {
+	case "btn:create":
+		return a.submit(st)
+	case "btn:cancel":
+		return f.back()
 	}
 	return nil
 }
@@ -78,7 +96,7 @@ func (a *askKey) submit(st *core.State) tea.Cmd {
 		return nil
 	}
 	if a.pw.Len() == 0 {
-		a.err = "Type your master password."
+		a.at, a.err = "field:pw", "Type your master password."
 		return nil
 	}
 	pw := a.pw.String()
@@ -91,9 +109,9 @@ func (a *askKey) view(st *core.State, win *ui.Window, _ int) int {
 	win.Title = "New recovery key"
 	sub(win, "Your current recovery key stops working.", errLine(a.err, a.cool, st))
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "create", Label: busyLabel(st, a.req != 0, "Create key", "Creating"), Primary: true}}
-	win.Active = 1
+	win.Active = lit(win, a.at, "btn:create")
 	body := ui.NewBox()
-	body.Add(0, 0, a.pw.View("field:pw", win.Inner(), a.req == 0, p.Surface))
+	body.Add(0, 0, a.pw.View("field:pw", win.Inner(), a.at == "field:pw" && a.req == 0, p.Surface))
 	win.Body = body
 	return 1
 }
@@ -102,10 +120,14 @@ func (a *askKey) actions(*core.State) []core.Action {
 	if a.req != 0 {
 		return nil
 	}
-	return []core.Action{{Key: "enter", Label: "create key"}, revealAction(a.reveal)}
+	enter := core.Action{Key: "enter", Label: "create key"}
+	if a.at == "btn:cancel" {
+		enter.Label = "cancel"
+	}
+	return []core.Action{enter, moveAction, revealAction(a.reveal)}
 }
 
-func (a *askKey) typing() bool  { return true }
+func (a *askKey) typing() bool  { return a.at == "field:pw" }
 func (a *askKey) holding() bool { return a.req != 0 }
 func (a *askKey) animating(st *core.State) bool {
 	return coolingFor(st) > 0 || a.req != 0 && !ui.Reduced()
