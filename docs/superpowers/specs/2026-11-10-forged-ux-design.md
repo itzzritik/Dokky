@@ -49,7 +49,7 @@ All of this follows Forged's `screen/gate` layout:
 - No footer bar.
 - Dokky's still wordmark at the top.
 - A centred card, `min(52, w-4)` wide.
-- An ultra-realistic water animation filling the bottom third, in place of Forged's fire.
+- A breathing topographic contour map filling the bottom third, in place of Forged's fire. Picked from more than a hundred options, ahead of water.
 
 The cards:
 

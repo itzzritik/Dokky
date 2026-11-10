@@ -23,7 +23,7 @@ func Wordmark() []string {
 	return rows
 }
 
-// a speck drawn above the band, like spray off the water
+// a speck drawn above the band, like a star over the map
 type Particle struct {
 	X, Row int
 	Glyph  string
