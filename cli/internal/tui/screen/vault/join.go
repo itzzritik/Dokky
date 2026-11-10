@@ -22,7 +22,7 @@ type join struct {
 }
 
 func newJoin(toast string) *join {
-	return &join{pw: ui.NewSecret("Password", "", vault.MaxPassword), at: "field:pw", toast: toast}
+	return &join{pw: ui.NewSecret("", "", vault.MaxPassword), at: "field:pw", toast: toast}
 }
 
 var joinStops = []string{"field:pw", "link:recover", "btn:join"}
@@ -116,11 +116,12 @@ func (j *join) view(st *core.State, win *ui.Window, maxH int) int {
 	}
 	cw, bg := win.Inner(), p.Window
 	body := ui.NewBox()
-	body.Add(0, 0, j.pw.View("field:pw", cw, j.at == "field:pw" && j.req == 0, bg))
-	rows := 1
-	if win.Room(maxH) >= 3 {
-		body.Add(0, 2, link("link:recover", "Use recovery key instead", j.at == "link:recover", bg))
-		rows = 3
+	body.Put(0, 0, ui.L(bg).T("Master password", p.Muted).Pad(cw))
+	body.Add(0, 1, j.pw.View("field:pw", cw, j.at == "field:pw" && j.req == 0, bg))
+	rows := 2
+	if win.Room(maxH) >= 4 {
+		body.Add(0, 3, link("link:recover", "Use recovery key instead", j.at == "link:recover", bg))
+		rows = 4
 	}
 	win.Body = body
 	return rows
@@ -130,11 +131,11 @@ func (j *join) actions(*core.State) []core.Action {
 	if j.req != 0 {
 		return nil
 	}
-	enter := core.Action{Key: "enter", Label: "continue"}
+	enter := core.Action{Key: "enter", Label: "Continue"}
 	if j.at == "link:recover" {
-		enter.Label = "use recovery key"
+		enter.Label = "Use recovery key"
 	}
-	return []core.Action{enter, moveAction, revealAction(j.reveal)}
+	return []core.Action{enter, {Key: "tab", Label: "Recovery key"}}
 }
 
 func (j *join) typing() bool  { return j.at == "field:pw" }
