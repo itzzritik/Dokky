@@ -133,12 +133,12 @@ func (s *SignIn) update(msg tea.Msg, st *core.State) tea.Cmd {
 			return s.press(m.ID, st)
 		}
 	case tea.KeyPressMsg:
-		switch k := m.String(); {
-		case k == "esc":
+		switch k := m.String(); k {
+		case "esc":
 			return s.press("btn:cancel", st)
-		case k == "c" || k == "o":
+		case "c", "o":
 			return s.letter(k, st)
-		case k == "enter" || k == "space":
+		case "enter", "space":
 			return s.press(s.primary(), st)
 		}
 	}

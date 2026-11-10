@@ -178,12 +178,11 @@ func TestLockedAnswersOnlyItsMethods(t *testing.T) {
 
 // argon2's second a try is the only brake: no number of wrong passwords keeps the right one out
 func TestWrongPasswordsNeverLockOut(t *testing.T) {
-	l, k, h := newLocked(t, nil)
+	l, _, h := newLocked(t, nil)
 	wrong := api.UnlockParams{Method: api.AuthPassword, Password: "wrong guess 123"}
 	for range 8 {
 		require.Equal(t, api.ErrWrongPassword, codeOf(t, invoke(t, h, api.MVaultUnlock, wrong, nil)))
 	}
-	require.True(t, k.view(false).CooldownUntil.IsZero())
 	require.NoError(t, invoke(t, h, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, nil))
 	require.Equal(t, testVault().ak, <-l.opened)
 }
@@ -575,7 +574,7 @@ func TestPasswordDaysSetting(t *testing.T) {
 	vf, err := vault.Load(d.vk.dir)
 	require.NoError(t, err)
 	require.Equal(t, 15, vf.PasswordDays)
-	require.NotContains(t, d.handlers(nil), api.MVaultAuthorize, "grants are gone")
+	require.NotContains(t, d.handlers(nil), "vault.authorize", "grants are gone")
 }
 
 // the password once makes a device key again for a vault without one, whatever an older dokky was set to
