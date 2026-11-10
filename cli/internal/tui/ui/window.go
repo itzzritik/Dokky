@@ -57,9 +57,18 @@ func (w *Window) top() int {
 		t += 2
 	}
 	if w.Sub != "" {
-		t += 2
+		t += len(w.subLines()) + 1
 	}
 	return t
+}
+
+// the sub line wraps to two lines at most, the second cut short, as Forged's prompts do
+func (w *Window) subLines() []string {
+	lines := Wrap(w.Sub, w.Inner())
+	if len(lines) > 2 {
+		lines = []string{lines[0], core.Fit(strings.Join(lines[1:], " "), w.Inner())}
+	}
+	return lines
 }
 
 func (w *Window) bottom() int {
@@ -137,7 +146,9 @@ func (w *Window) Layer() *lipgloss.Layer {
 		if w.SubBad {
 			sc = p.Coral
 		}
-		b.Put(WindowPad, y, L(bg).T(w.Sub, sc).Pad(cw))
+		for i, l := range w.subLines() {
+			b.Put(WindowPad, y+i, L(bg).T(l, sc).Pad(cw))
+		}
 	}
 
 	box := lipgloss.NewLayer("").AddLayers(root, b.Layer())
