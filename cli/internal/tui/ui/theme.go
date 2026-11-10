@@ -9,10 +9,10 @@ import (
 )
 
 type Palette struct {
-	Bg, Text, Muted, Faint, Line, Cap, Surface, Sel, Field color.Color
-	Accent, OnAccent, Kelp, Buoy, Coral                    color.Color
-	Ramp                                                   [6]color.Color
-	Dark                                                   bool
+	Bg, Text, Muted, Faint, Line, Cap, Surface, Sel, Field, Window color.Color
+	Accent, OnAccent, Kelp, Buoy, Coral                            color.Color
+	Ramp                                                           [6]color.Color
+	Dark                                                           bool
 }
 
 type base struct {
@@ -43,7 +43,12 @@ func build(b base, bg color.Color) *Palette {
 	m := func(t float64) color.Color { return Mix(p.Bg, p.Text, t) }
 	p.Muted, p.Faint, p.Line, p.Cap, p.Surface = m(.58), m(.36), m(.20), m(.10), m(.055)
 	p.Sel = Mix(p.Bg, p.Accent, .16)
-	p.Field = p.Bg
+	// a window is the screen itself on light, a shade raised on dark; a field is a tint of the window
+	p.Window = p.Bg
+	if p.Dark {
+		p.Window = m(.045)
+	}
+	p.Field = Mix(p.Window, p.Text, .055)
 	return p
 }
 

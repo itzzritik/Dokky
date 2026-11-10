@@ -90,7 +90,7 @@ func TestNarrowFooters(t *testing.T) {
 	s := New()
 	list := keys(s.Actions(st))
 	require.Equal(t, "details", list["enter"])
-	require.Equal(t, "unmount", list["m"], "the drive's keys show in the list too")
+	require.Equal(t, "unmount", list["space"], "the drive's keys show in the list too")
 	require.Contains(t, list, "v")
 
 	press(s, st, "enter")

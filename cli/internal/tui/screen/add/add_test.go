@@ -440,8 +440,9 @@ func TestEditButtons(t *testing.T) {
 
 	// the drive is already busy, so the mount itself sends nothing
 	st.Busy = core.Flight{d.ID: true}
-	require.Nil(t, key(a, st, "m"), "m keeps the window open")
-	require.Equal(t, "btn:mount", a.ed.at, "and focuses the button it pressed")
+	a.ed.at = "btn:mount"
+	require.Nil(t, key(a, st, "enter"), "enter on Unmount keeps the window open")
+	require.Equal(t, "btn:mount", a.ed.at, "and keeps the button focused")
 
 	st.Snap.Drives[0].State = api.Connecting
 	require.Equal(t, "btn:mount", a.focused(st), "the mount button stays while it works")

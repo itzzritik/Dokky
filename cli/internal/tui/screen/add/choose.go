@@ -150,7 +150,7 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int, focus string)
 	body := ui.NewBox()
 	// with a button focused, the chosen service stays bold but drops the focus bar
 	searching := focus == searchID
-	body.Add(0, 0, p.search.View(searchID, cw, searching, pal.Surface))
+	body.Add(0, 0, p.search.View(searchID, cw, searching, pal.Window))
 	opts := p.options(st)
 	if len(opts) == 0 {
 		body.Put(0, 2, win.Text("Nothing matches. Try another word.", pal.Faint))
@@ -184,12 +184,12 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int, focus string)
 	for j := p.top; j < len(lines) && j < p.top+room; j++ {
 		l := lines[j]
 		if l.opt < 0 {
-			body.Put(0, 2+rows, ui.L(pal.Surface).Sp(2).T(l.head, pal.Faint).Pad(cw))
+			body.Put(0, 2+rows, ui.L(pal.Window).Sp(2).T(l.head, pal.Faint).Pad(cw))
 			rows++
 			continue
 		}
 		i, o := l.opt, opts[l.opt]
-		body.Add(0, 2+rows, ui.Row("row:"+strconv.Itoa(i), cw, i == p.sel && searching, pal.Surface, func(bg color.Color, iw int) string {
+		body.Add(0, 2+rows, ui.Row("row:"+strconv.Itoa(i), cw, i == p.sel && searching, pal.Window, func(bg color.Color, iw int) string {
 			if i == p.sel {
 				return ui.L(bg).B(o.name, pal.Text).Pad(iw)
 			}
@@ -198,8 +198,8 @@ func (a *Add) viewChoose(st *core.State, win *ui.Window, maxH int, focus string)
 		rows++
 	}
 	y := 2 + rows + 1
-	body.Put(0, y, ui.L(pal.Surface).T(strings.Repeat(ui.G.H, cw), ui.Mix(pal.Surface, pal.Text, .1)).Pad(cw))
-	body.Put(0, y+2, ui.L(pal.Surface).Sp(2).T(core.Fit(opts[p.sel].desc, cw-2), pal.Muted).Pad(cw))
+	body.Put(0, y, ui.L(pal.Window).T(strings.Repeat(ui.G.H, cw), ui.Mix(pal.Window, pal.Text, .1)).Pad(cw))
+	body.Put(0, y+2, ui.L(pal.Window).Sp(2).T(core.Fit(opts[p.sel].desc, cw-2), pal.Muted).Pad(cw))
 	win.Body = body
 	return y + descRows - 1
 }

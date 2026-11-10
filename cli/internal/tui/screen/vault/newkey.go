@@ -111,7 +111,7 @@ func (a *askKey) view(st *core.State, win *ui.Window, _ int) int {
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "create", Label: busyLabel(st, a.req != 0, "Create key", "Creating"), Primary: true}}
 	win.Active = lit(win, a.at, "btn:create")
 	body := ui.NewBox()
-	body.Add(0, 0, a.pw.View("field:pw", win.Inner(), a.at == "field:pw" && a.req == 0, p.Surface))
+	body.Add(0, 0, a.pw.View("field:pw", win.Inner(), a.at == "field:pw" && a.req == 0, p.Window))
 	win.Body = body
 	return 1
 }

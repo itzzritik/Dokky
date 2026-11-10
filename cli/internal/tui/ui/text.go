@@ -3,6 +3,8 @@ package ui
 import (
 	"image/color"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -108,3 +110,12 @@ func (b *Box) Add(x, y int, l *lipgloss.Layer) *Box {
 }
 
 func (b *Box) Layer() *lipgloss.Layer { return b.root }
+
+// Capital starts a label with a capital letter, as every hint and menu row does
+func Capital(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	if n == 0 || !unicode.IsLower(r) {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[n:]
+}

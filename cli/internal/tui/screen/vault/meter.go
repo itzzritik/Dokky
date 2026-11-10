@@ -60,7 +60,7 @@ func (n *newPassword) problem() (int, string) {
 
 // the two fields with a blank row between when there is room; each says how it is doing at its right end
 func (n *newPassword) place(body *ui.Box, y, w, room int, ids [2]string, focus int) int {
-	bg := ui.P().Surface
+	bg := ui.P().Window
 	g := 1
 	if room >= 3 {
 		g = 2

@@ -140,7 +140,7 @@ func (s *Drives) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 				return s, nil
 			}
 			return s, add.Edit(st, d)
-		case "m":
+		case "space":
 			return s, core.RunMount(st, d)
 		case "v":
 			if d.State == api.Connected {
@@ -175,7 +175,7 @@ func (s *Drives) Actions(st *core.State) []core.Action {
 	if ok {
 		acts = append(acts, s.driveActions(st, d)...)
 	}
-	acts = append(acts, core.Action{Key: "a", Label: "add"}, core.Action{Key: "/", Label: "find"})
+	acts = append(acts, core.Action{Key: "a", Label: "add", Icon: ui.G.Icon.Add}, core.Action{Key: "/", Label: "find", Icon: ui.G.Icon.Find})
 	if !pane && s.find.Value() != "" {
 		acts = append(acts, core.Action{Key: "esc", Label: "clear"})
 	}
@@ -187,22 +187,26 @@ func (s *Drives) driveActions(st *core.State, d api.Drive) []core.Action {
 	var acts []core.Action
 	switch {
 	case !st.Wide && !s.open:
-		acts = append(acts, core.Action{Key: "enter", Label: "details"})
+		acts = append(acts, core.Action{Key: "enter", Label: "details", Icon: ui.G.Icon.Details})
 	case !leaving(d):
-		acts = append(acts, core.Action{Key: "enter", Label: "edit"})
+		acts = append(acts, core.Action{Key: "enter", Label: "edit", Icon: ui.G.Icon.Edit})
 	}
 	if leaving(d) {
 		return acts
 	}
 	login := ui.LoginFailed(d)
 	if login {
-		acts = append(acts, core.Action{Key: "s", Label: "sign in", Accent: true})
+		acts = append(acts, core.Action{Key: "s", Label: "sign in", Icon: ui.G.Icon.SignIn, Accent: true})
 	}
 	if m := core.MountLabel(d); m != "" {
-		acts = append(acts, core.Action{Key: "m", Label: m, Accent: m != "unmount" && !login})
+		icon := ui.G.Icon.Mount
+		if m == "unmount" {
+			icon = ui.G.Icon.Unmount
+		}
+		acts = append(acts, core.Action{Key: "space", Label: m, Icon: icon, Accent: m != "unmount" && !login})
 	}
 	if d.State == api.Connected {
-		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel()})
+		acts = append(acts, core.Action{Key: "v", Label: core.ViewLabel(), Icon: ui.G.Icon.Files})
 	}
 	return acts
 }

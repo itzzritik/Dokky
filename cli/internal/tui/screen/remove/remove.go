@@ -168,7 +168,7 @@ func (r *Remove) window(st *core.State, maxW, maxH int) *ui.Window {
 	body := ui.NewBox()
 	y := 0
 	line := func(s string, fg color.Color) {
-		body.Put(0, y, ui.L(p.Surface).T(core.Fit(s, cw), fg).Pad(cw))
+		body.Put(0, y, ui.L(p.Window).T(core.Fit(s, cw), fg).Pad(cw))
 		y++
 	}
 	switch {
@@ -176,7 +176,7 @@ func (r *Remove) window(st *core.State, maxW, maxH int) *ui.Window {
 		win.Sub, win.SubBad = "Couldn't check this drive", true
 		line(r.err, p.Muted)
 	case r.check == nil:
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Checking where it's mounted", p.Muted).Pad(cw))
+		body.Put(0, 0, ui.L(p.Window).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Checking where it's mounted", p.Muted).Pad(cw))
 		y = 1
 	case r.busy():
 		win.Sub, win.SubBad = "In use on this device", true
@@ -225,7 +225,7 @@ func (r *Remove) sureRow(w int) *lipgloss.Layer {
 	if r.sure {
 		frac = 1
 	}
-	return ui.Row(sureID, w, focused, p.Surface, func(bg color.Color, iw int) string {
+	return ui.Row(sureID, w, focused, p.Window, func(bg color.Color, iw int) string {
 		l := ui.L(bg).Raw(ui.Switch(frac, bg)).Sp(1)
 		if focused {
 			return l.B("I understand", p.Text).Pad(iw)

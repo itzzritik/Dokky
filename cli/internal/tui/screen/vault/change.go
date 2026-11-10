@@ -134,7 +134,7 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	sub(win, "Your recovery key stays the same.", c.err)
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "change", Label: busyLabel(st, c.req != 0, "Change password", "Changing"), Primary: true}}
 	win.Active = lit(win, c.at, "btn:change")
-	cw, bg := win.Inner(), p.Surface
+	cw, bg := win.Inner(), p.Window
 	idle := c.req == 0
 	room := win.Room(maxH)
 	g := 1

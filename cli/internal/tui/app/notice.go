@@ -131,7 +131,7 @@ func (m *info) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	m.total, m.page = len(lines), min(len(lines), win.Room(maxH))
 	m.top = max(0, min(m.top, m.total-m.page))
 	if m.page < m.total {
-		win.Corner = ui.L(p.Surface).T(fmt.Sprintf("%d-%d of %d", m.top+1, m.top+m.page, m.total), p.Muted).String()
+		win.Corner = ui.L(p.Window).T(fmt.Sprintf("%d-%d of %d", m.top+1, m.top+m.page, m.total), p.Muted).String()
 	}
 	body := ui.NewBox()
 	for i, l := range lines[m.top : m.top+m.page] {

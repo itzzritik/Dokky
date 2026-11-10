@@ -140,7 +140,7 @@ func (a *Add) viewConnect(st *core.State, win *ui.Window) int {
 	body := ui.NewBox()
 	n := r.checked()
 	for i, s := range steps {
-		l := ui.L(p.Surface)
+		l := ui.L(p.Window)
 		switch {
 		case i < n:
 			l.B(ui.G.Check, p.Kelp).Sp(1).T(s[1], p.Text)

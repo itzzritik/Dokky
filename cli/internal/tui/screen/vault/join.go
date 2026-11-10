@@ -118,7 +118,7 @@ func (j *join) view(st *core.State, win *ui.Window, maxH int) int {
 	if j.at != "link:recover" {
 		win.Active = 0
 	}
-	cw, bg := win.Inner(), p.Surface
+	cw, bg := win.Inner(), p.Window
 	body := ui.NewBox()
 	body.Add(0, 0, j.pw.View("field:pw", cw, j.at == "field:pw" && j.req == 0, bg))
 	rows := 1

@@ -97,9 +97,9 @@ func Chips(id string, labels []string, sel int, focused bool, bg color.Color) *l
 	b := NewBox()
 	x := 0
 	for i, label := range labels {
-		fg, cb := p.Muted, Mix(p.Surface, p.Text, .08)
+		fg, cb := p.Muted, Mix(p.Window, p.Text, .08)
 		if i == sel {
-			fg, cb = p.OnAccent, Mix(p.Surface, p.Accent, .6)
+			fg, cb = p.OnAccent, Mix(p.Window, p.Accent, .6)
 			if focused {
 				cb = p.Accent
 			}

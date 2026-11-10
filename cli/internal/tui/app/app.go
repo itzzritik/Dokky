@@ -432,7 +432,8 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case a.lock != nil:
 		return a.updateTop(k)
-	case s == "ctrl+l" && a.canLock():
+	// l locks from every screen and window, ctrl+l even while typing
+	case (s == "ctrl+l" || s == "l" && !a.capturing()) && a.canLock():
 		return a.lockWindow()
 	case a.removedNow():
 		if s == "q" || s == "esc" {
@@ -455,7 +456,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		if s == "q" && len(a.windows) == 0 && !a.capturing() {
 			return a.quit()
 		}
-		if _, open := a.top().(*menu); s == "?" && len(a.windows) > 0 && !open && !a.capturing() {
+		if _, open := a.top().(*menu); (s == "m" || s == "?") && len(a.windows) > 0 && !open && !a.capturing() {
 			return a.openMenu()
 		}
 		return a.updateTop(k)
@@ -463,7 +464,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 	switch s {
 	case "q":
 		return a.quit()
-	case "?":
+	case "m", "?":
 		return a.openMenu()
 	case "1", "2", "3", "4", "5", "6":
 		return a.setTab(int(s[0] - '1'))

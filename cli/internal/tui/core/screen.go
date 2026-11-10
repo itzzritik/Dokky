@@ -10,6 +10,7 @@ import (
 
 type Action struct {
 	Key, Label     string
+	Icon           string // shown in the menu; empty draws nothing
 	Danger, Accent bool
 }
 

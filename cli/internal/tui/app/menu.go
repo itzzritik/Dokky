@@ -92,7 +92,7 @@ func sameKey(acts []core.Action, label string) string {
 func (a *App) openMenu() tea.Cmd {
 	var global []core.Action
 	if len(a.windows) == 0 {
-		global = a.globals()
+		global = a.menuGlobals()
 	}
 	if m := newMenu(a.top(), a.st, global); len(m.items) > 0 {
 		a.windows = append(a.windows, m)
@@ -122,7 +122,7 @@ func (m *menu) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		switch k {
 		case "enter":
 			return m, m.run(m.items[m.cursor], st)
-		case "esc", "?":
+		case "esc", "?", "m":
 			return m, core.Close(m)
 		case "up":
 			m.move(-1)
@@ -148,27 +148,40 @@ func (m *menu) move(d int) {
 	}
 }
 
+// Forged's menu: an icon, the label and its key on each row, the bar and tint on the chosen one
 func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(menuW, maxW), Title: "Actions"}
-	iw := win.Inner()
+	win := &ui.Window{W: min(menuW, maxW), Title: "Actions", Flush: true}
+	iw, bg := win.Edge(), p.Window
+	icons := 0
+	for _, it := range m.items {
+		if it.Icon != "" {
+			icons = 2 + ui.Width(it.Icon)
+		}
+	}
 	var lines []ui.ListLine
 	for i, it := range m.items {
 		if it.sep() {
-			lines = append(lines, ui.ListLine{Text: ui.Paint(strings.Repeat(ui.G.H, iw), p.Line, p.Surface, false), Item: -1})
+			lines = append(lines, ui.ListLine{Text: ui.L(bg).Sp(2).T(strings.Repeat(ui.G.H, iw-4), p.Line).Pad(iw), Item: -1})
 			continue
 		}
-		row := ui.RowLine(iw, i == m.cursor, p.Surface, func(bg color.Color, w int) string {
-			fg := p.Text
-			if it.Danger {
-				fg = p.Coral
+		on := i == m.cursor
+		row := ui.RowLine(iw, on, bg, func(bg color.Color, w int) string {
+			fg, ic := p.Text, p.Muted
+			switch {
+			case it.Danger:
+				fg, ic = p.Coral, p.Coral
+			case on:
+				ic = p.Accent
 			}
-			label := capital(it.Label)
 			l := ui.L(bg)
-			if i == m.cursor {
-				l.B(label, fg)
+			if icons > 0 {
+				l.Raw(ui.L(bg).T(it.Icon, ic).Pad(icons))
+			}
+			if on {
+				l.B(ui.Capital(it.Label), fg)
 			} else {
-				l.T(label, fg)
+				l.T(ui.Capital(it.Label), fg)
 			}
 			return l.Right(w-1, ui.L(bg).B(it.Key, p.Muted))
 		})
@@ -182,14 +195,6 @@ func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 	return win.Layer()
 }
 
-// footer labels are lowercase; a menu line starts with a capital
-func capital(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
-
 func (m *menu) Actions(*core.State) []core.Action {
 	n := 0
 	for _, it := range m.items {
@@ -199,9 +204,9 @@ func (m *menu) Actions(*core.State) []core.Action {
 	}
 	var acts []core.Action
 	if n > 1 {
-		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
+		acts = append(acts, core.Action{Key: "↑↓", Label: "Move"})
 	}
-	return append(acts, core.Action{Key: "enter", Label: "run"}, core.Action{Key: "esc", Label: "close"})
+	return append(acts, core.Action{Key: "enter", Label: "Run"}, core.Action{Key: "esc", Label: "Close"})
 }
 
 func (m *menu) Animating(*core.State) bool { return false }

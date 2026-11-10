@@ -229,10 +229,10 @@ func (s *SignIn) window(st *core.State, maxW, maxH int) *ui.Window {
 		rows = 1
 	case s.start.UserCode == "":
 		win.Title, win.Sub = "Signing in", ""
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for dokky.ritik.me", p.Muted).Pad(win.Inner()))
+		body.Put(0, 0, ui.L(p.Window).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for dokky.ritik.me", p.Muted).Pad(win.Inner()))
 		rows = 1
 	default:
-		code := ui.L(p.Surface)
+		code := ui.L(p.Window)
 		for _, c := range s.start.UserCode {
 			if c == '-' {
 				code.T(" - ", p.Faint)
@@ -241,7 +241,7 @@ func (s *SignIn) window(st *core.State, maxW, maxH int) *ui.Window {
 			code.Raw(ui.Paint(" "+string(c)+" ", p.Ramp[5], p.Cap, true)).Sp(1)
 		}
 		body.Put(0, 0, code.Pad(win.Inner()))
-		body.Put(0, 3, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for you to approve", p.Muted).Pad(win.Inner()))
+		body.Put(0, 3, ui.L(p.Window).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for you to approve", p.Muted).Pad(win.Inner()))
 		rows = 4
 	}
 	win.Fit(rows, maxH)

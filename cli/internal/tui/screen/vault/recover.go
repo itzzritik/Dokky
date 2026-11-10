@@ -252,7 +252,7 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	sub(win, "Then choose a new master password.", r.err)
 	win.Buttons = []ui.Btn{{ID: "recover", Label: busyLabel(st, r.req != 0, "Reset password", "Resetting"), Primary: true}}
 	win.Active = 0
-	cw, bg := win.Inner(), p.Surface
+	cw, bg := win.Inner(), p.Window
 	idle := r.req == 0
 	room := win.Room(maxH)
 	g := 1

@@ -134,12 +134,12 @@ func (a *Add) viewName(st *core.State, win *ui.Window, maxH int, at string) int 
 		win.Sub, win.SubBad = n.err, true
 	}
 	body := ui.NewBox()
-	body.Add(0, 0, n.name.View("field:0", cw, at == "field:0", p.Surface))
-	body.Add(0, 2, n.folder.View("field:1", cw, at == "field:1", p.Surface))
+	body.Add(0, 0, n.name.View("field:0", cw, at == "field:0", p.Window))
+	body.Add(0, 2, n.folder.View("field:1", cw, at == "field:1", p.Window))
 	name := cmpOr(strings.TrimSpace(n.name.Value()), "…")
-	body.Put(0, 4, ui.L(p.Surface).T("In "+core.FileManager(), p.Muted).Pad(ui.LabelW)+ui.L(p.Surface).Sp(2).B(finderPath(engine.Title(name)), p.Accent).Pad(cw-ui.LabelW))
-	body.Put(0, 6, ui.L(p.Surface).T("At login", p.Muted).Pad(ui.LabelW))
-	body.Add(ui.LabelW, 6, ui.Chips("chip:login", atLogin, n.stayOff, at == "chip:login", p.Surface))
+	body.Put(0, 4, ui.L(p.Window).T("In "+core.FileManager(), p.Muted).Pad(ui.LabelW)+ui.L(p.Window).Sp(2).B(finderPath(engine.Title(name)), p.Accent).Pad(cw-ui.LabelW))
+	body.Put(0, 6, ui.L(p.Window).T("At login", p.Muted).Pad(ui.LabelW))
+	body.Add(ui.LabelW, 6, ui.Chips("chip:login", atLogin, n.stayOff, at == "chip:login", p.Window))
 	win.Body = body
 	return min(win.Room(maxH), 7)
 }

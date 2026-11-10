@@ -61,7 +61,7 @@ func (pk *pick) view(_ *core.State, win *ui.Window, maxH int) int {
 	p := ui.P()
 	win.Title = pk.title
 	sub(win, pk.sub, pk.err)
-	cw, bg := win.Inner(), p.Surface
+	cw, bg := win.Inner(), p.Window
 	var lines []ui.ListLine
 	for i, o := range pk.opts {
 		row := ui.RowLine(cw, i == pk.sel, bg, func(bg color.Color, iw int) string {

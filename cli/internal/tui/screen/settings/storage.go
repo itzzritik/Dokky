@@ -93,7 +93,7 @@ func (s *storage) window(st *core.State, maxW, maxH int) *ui.Window {
 	win := &ui.Window{W: min(64, maxW), Title: "Cached files", Buttons: s.Buttons(st)}
 	win.Active = max(0, win.Index(s.at))
 	cw := win.Inner()
-	bg := p.Surface
+	bg := p.Window
 	body := ui.NewBox()
 	total := st.Snap.CacheBytes
 	drives := slices.DeleteFunc(slices.Clone(st.Snap.Drives), func(d api.Drive) bool { return d.CacheBytes <= 0 })

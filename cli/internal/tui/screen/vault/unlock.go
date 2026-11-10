@@ -203,7 +203,7 @@ func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 		usual = "It's been " + strconv.Itoa(v.PasswordDays) + " days. Type your master password this time."
 	}
 	sub(win, usual, errLine(u.err, u.cool, st))
-	cw, bg := win.Inner(), p.Surface
+	cw, bg := win.Inner(), p.Window
 	sys := offered(st)
 	u.pw.Hint = ""
 	if sys {

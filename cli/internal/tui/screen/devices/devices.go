@@ -352,7 +352,7 @@ func (s *Devices) window(st *core.State, maxW, maxH int) *ui.Window {
 	case !st.Snap.Account.LoggedIn:
 		body.Put(0, 0, win.Text("Sign in to see your devices.", p.Muted))
 	case s.list == nil:
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Loading", p.Muted).Pad(cw))
+		body.Put(0, 0, ui.L(p.Window).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Loading", p.Muted).Pad(cw))
 	default:
 		sel := max(0, min(s.sel, len(s.list)-1))
 		fit := max(1, (win.Room(maxH)+1)/cardH)
@@ -392,11 +392,11 @@ func chip(d api.Device) string {
 // a device as a soft card: its name and where it stands, then what it runs and its dokky version
 func (s *Devices) card(st *core.State, d api.Device, w int, chosen, focused bool) *lipgloss.Layer {
 	p := ui.P()
-	fill := ui.Mix(p.Surface, p.Text, .045)
+	fill := ui.Mix(p.Window, p.Text, .045)
 	if chosen && !focused {
 		fill = ui.Mix(fill, p.Sel, .5)
 	}
-	return ui.Card(rowID(d), w, focused, fill, p.Surface, func(bg color.Color, iw int) []string {
+	return ui.Card(rowID(d), w, focused, fill, p.Window, func(bg color.Color, iw int) []string {
 		name := ui.L(bg)
 		if chosen && s.rename != nil {
 			name.Raw(ui.L(bg).Raw(s.rename.View("rename", iw-18, true, bg).GetContent()).Pad(iw - 18))
