@@ -72,7 +72,7 @@ func (a *App) render() string {
 		if full(win) {
 			passes = append(passes, ui.Pass{Layer: a.blank(w, h), Modal: true}, ui.Pass{Layer: win.View(a.st, w, h), Modal: true})
 			if i == len(a.windows)-1 {
-				keys = footerNone
+				acts, keys = nil, footerNone
 			}
 			continue
 		}
