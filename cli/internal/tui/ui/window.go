@@ -42,7 +42,8 @@ type Window struct {
 	Body            *Box
 	Buttons         []Btn
 	Active          int
-	Flush           bool // the body spans border to border with no padding, for rows that draw their own bar
+	Flush           bool          // the body spans border to border with no padding, for rows that draw their own bar
+	Hints           []core.Action // keys drawn left of the buttons, Forged's in-card footer
 }
 
 func (w *Window) Inner() int { return w.W - 2*WindowPad }
@@ -63,7 +64,7 @@ func (w *Window) top() int {
 
 func (w *Window) bottom() int {
 	switch {
-	case len(w.Buttons) > 0:
+	case len(w.Buttons) > 0 || len(w.Hints) > 0:
 		return 3
 	case w.Flush:
 		return 1
@@ -147,6 +148,7 @@ func (w *Window) Layer() *lipgloss.Layer {
 		}
 		box.AddLayers(w.Body.Layer().X(x).Y(w.top()))
 	}
+	bw := 0
 	if len(w.Buttons) > 0 {
 		bar := NewBox()
 		x := 0
@@ -154,9 +156,42 @@ func (w *Window) Layer() *lipgloss.Layer {
 			bar.Add(x, 0, Button("btn:"+btn.ID, btn.Label, btn.Primary, btn.Danger, i == w.Active))
 			x += ButtonWidth(btn.Label) + 2
 		}
-		box.AddLayers(bar.Layer().X(WindowPad + cw - (x - 2)).Y(w.H - 2))
+		bw = x - 2
+		box.AddLayers(bar.Layer().X(WindowPad + cw - bw).Y(w.H - 2))
+	}
+	if len(w.Hints) > 0 {
+		box.AddLayers(cardHints(w.Hints, cw-bw-2, bg).X(WindowPad).Y(w.H - 2))
 	}
 	return box
+}
+
+// the in-card hints: all of them, else the last, labelled while there is room
+func cardHints(acts []core.Action, room int, bg color.Color) *lipgloss.Layer {
+	b := NewBox()
+	last := acts[len(acts)-1:]
+	for _, c := range []struct {
+		acts  []core.Action
+		label bool
+	}{{acts, true}, {last, true}, {acts, false}, {last, false}} {
+		if HintsWidth(c.acts, c.label) > room {
+			continue
+		}
+		x, gap := 0, 2
+		if c.label {
+			gap = 3
+		}
+		for _, a := range c.acts {
+			h := hintOn(a, c.label, bg)
+			if core.Press(a.Key).Code == 0 {
+				b.Put(x, 0, h)
+			} else {
+				b.Hit(x, 0, "key:"+a.Key, h)
+			}
+			x += Width(h) + gap
+		}
+		break
+	}
+	return b.Layer()
 }
 
 // a text row inside a window

@@ -1,13 +1,18 @@
 package ui
 
 import (
+	"image/color"
+
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 )
 
 func Keycap(k string) string { return Paint(" "+k+" ", P().Text, P().Cap, true) }
 
-func hint(a core.Action, label bool) string {
+func hint(a core.Action, label bool) string { return hintOn(a, label, nil) }
+
+// a hint whose label sits on bg, like inside a card
+func hintOn(a core.Action, label bool, bg color.Color) string {
 	key, fg := Keycap(a.Key), P().Muted
 	switch {
 	case a.Accent:
@@ -18,7 +23,7 @@ func hint(a core.Action, label bool) string {
 	if !label {
 		return key
 	}
-	return key + " " + Paint(Capital(a.Label), fg, nil, false)
+	return key + Paint(" "+Capital(a.Label), fg, bg, false)
 }
 
 func HintsWidth(acts []core.Action, labels bool) int {

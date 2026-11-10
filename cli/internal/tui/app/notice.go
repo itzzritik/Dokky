@@ -23,7 +23,7 @@ func long(t core.Toast) bool { return ui.Width(t.Text) > longNotice }
 
 // notices wait while the gate is all there is on screen, while Updating is, and while the window is locked
 func (a *App) waiting() bool {
-	return a.updatingNow() || a.lock != nil || a.st.Connected && a.gate != nil && len(a.windows) == 0
+	return a.updatingNow() || a.st.Connected && a.gate != nil && len(a.windows) == 0
 }
 
 func (a *App) post(t core.Toast) tea.Cmd {

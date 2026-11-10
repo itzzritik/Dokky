@@ -17,27 +17,22 @@ func coded(c, msg string) error { return &client.Error{Code: c, Message: msg} }
 func TestExplainCodes(t *testing.T) {
 	now := time.Now()
 	v := api.Vault{System: "Windows Hello", PasswordDays: 14}
-	cooling := v
-	cooling.CooldownUntil = now.Add(30 * time.Second)
 	for name, c := range map[string]struct {
 		err  error
 		v    api.Vault
 		want string
 	}{
-		"wrong":            {coded(api.ErrWrongPassword, "wrong password"), v, "That password is not right."},
-		"cooling":          {coded(api.ErrTooManyAttempts, "x"), cooling, "Too many tries. Try again in 30 s."},
-		"daemon says wait": {coded(api.ErrTooManyAttempts, "too many tries, wait 5 min"), v, "Too many tries, wait 5 min."},
-		"no wait known":    {coded(api.ErrTooManyAttempts, ""), v, "Too many tries. Wait a moment and try again."},
-		"cancelled":        {coded(api.ErrCancelled, "cancelled"), v, "Cancelled. Try again or use your master password."},
-		"no system":        {coded(api.ErrSystemUnavailable, "x"), v, "Windows Hello isn't available right now."},
-		"password due":     {coded(api.ErrPasswordRequired, "x"), v, "It's been 14 days. Type your master password this time."},
-		"weak":             {coded(api.ErrWeakPassword, "use at least 8 characters"), v, "Use at least 8 characters."},
-		"bad key":          {coded(api.ErrBadRecoveryKey, "x"), v, "That recovery key is not right."},
-		"grant expired":    {coded(api.ErrGrantRequired, "x"), v, "That took too long. Try again."},
-		"locked":           {coded(api.ErrLocked, "x"), v, "dokky is locked. Unlock it first."},
-		"not running":      {client.ErrNotRunning, v, "dokky isn't running."},
-		"cancel is quiet":  {context.Canceled, v, ""},
-		"plain":            {errors.New("could not reach the server"), v, "Could not reach the server."},
+		"wrong":           {coded(api.ErrWrongPassword, "wrong password"), v, "That password is not right."},
+		"cancelled":       {coded(api.ErrCancelled, "cancelled"), v, "Cancelled. Try again or use your master password."},
+		"no system":       {coded(api.ErrSystemUnavailable, "x"), v, "Windows Hello isn't available right now."},
+		"password due":    {coded(api.ErrPasswordRequired, "x"), v, "It's been 14 days. Type your master password this time."},
+		"weak":            {coded(api.ErrWeakPassword, "use at least 8 characters"), v, "Use at least 8 characters."},
+		"bad key":         {coded(api.ErrBadRecoveryKey, "x"), v, "That recovery key is not right."},
+		"session ended":   {coded(api.ErrSessionRequired, "x"), v, "dokky locked meanwhile. Unlock it and try again."},
+		"locked":          {coded(api.ErrLocked, "x"), v, "dokky is locked. Unlock it first."},
+		"not running":     {client.ErrNotRunning, v, "dokky isn't running."},
+		"cancel is quiet": {context.Canceled, v, ""},
+		"plain":           {errors.New("could not reach the server"), v, "Could not reach the server."},
 	} {
 		require.Equal(t, c.want, explain(c.err, c.v, now), name)
 	}
@@ -63,15 +58,6 @@ func TestOfferedOnlyWhereSomeoneCanAnswer(t *testing.T) {
 		st := &core.State{Snap: api.State{Vault: c.v}, Deps: core.Deps{Remote: c.remote}}
 		require.Equal(t, c.want, offered(st), name)
 	}
-}
-
-func TestErrLineCountsDown(t *testing.T) {
-	now := time.Now()
-	st := &core.State{Now: now, Snap: api.State{Vault: api.Vault{CooldownUntil: now.Add(90 * time.Second)}}}
-	require.Equal(t, "Too many tries. Try again in 2 min.", errLine("old", true, st))
-	st.Now = now.Add(2 * time.Minute)
-	require.Empty(t, errLine("Too many tries. Try again in 30 s.", true, st), "a known cooldown that ran out says nothing")
-	require.Equal(t, "That password is not right.", errLine("That password is not right.", false, st))
 }
 
 func TestLabels(t *testing.T) {

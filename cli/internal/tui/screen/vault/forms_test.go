@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
-	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 	"github.com/stretchr/testify/require"
 )
 
@@ -165,18 +164,22 @@ func TestRevealShowsBothFields(t *testing.T) {
 	require.False(t, c.np.pw.Reveal)
 }
 
-func TestUnlockEnter(t *testing.T) {
+func TestUnlockStartsSystemAuth(t *testing.T) {
 	st := newState()
-	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st)
+	st.Snap.Vault.State = api.VaultUnlocked
+	f := Unlock(st, false)
 	u := f.top().(*unlock)
+	require.NotNil(t, f.Start(st), "the lock screen asks for Touch ID at once")
+	require.True(t, u.system)
+	require.Equal(t, []core.Action{{Key: "esc", Label: "Use password"}}, f.top().actions(st))
 
-	key(f, st, "enter")
-	require.True(t, u.system, "enter on an empty field asks Touch ID")
-	require.NotZero(t, u.req)
 	key(f, st, "esc")
 	require.Zero(t, u.req, "esc stops waiting")
-	require.False(t, u.system)
+	require.True(t, u.typing(), "and the password field takes over")
+
+	key(f, st, "tab")
+	require.True(t, u.system, "tab asks for Touch ID again")
+	key(f, st, "esc")
 
 	typed(f, st, "secret")
 	key(f, st, "enter")
@@ -185,18 +188,19 @@ func TestUnlockEnter(t *testing.T) {
 	require.Equal(t, "That password is not right.", u.err)
 	require.Zero(t, u.pw.Len(), "a wrong password is cleared")
 
-	st.Snap.Vault.CooldownUntil = st.Now.Add(time.Minute)
-	typed(f, st, "secret")
 	key(f, st, "enter")
-	require.Zero(t, u.req, "nothing is tried during a cooldown")
+	require.True(t, u.system, "enter on an empty field asks Touch ID")
+	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrCancelled, "cancelled")}, st)
+	require.Empty(t, u.err, "a dismissed prompt is no error")
 }
 
 func TestUnlockOverSSHNeverAsksSystem(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
 	st.Deps.Remote = true
-	f := Unlock(st)
+	f := Unlock(st, false)
 	u := f.top().(*unlock)
+	require.Nil(t, f.Start(st))
 	key(f, st, "enter")
 	require.Zero(t, u.req)
 	require.Equal(t, "Type your master password.", u.err)
@@ -205,11 +209,12 @@ func TestUnlockOverSSHNeverAsksSystem(t *testing.T) {
 func TestUnlockSucceeds(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultUnlocked
-	f := WindowLock(st)
+	f := Unlock(st, true)
 	u := f.top().(*unlock)
+	require.True(t, u.force, "after a lock a live session is not enough")
 	typed(f, st, "secret")
 	key(f, st, "enter")
-	_, cmd := f.Update(core.Reply{Req: u.req, Val: "grant"}, st)
+	_, cmd := f.Update(core.Reply{Req: u.req}, st)
 	require.Contains(t, sent(cmd), tea.Msg(Released{}))
 	require.Zero(t, u.pw.Len())
 }
@@ -217,8 +222,8 @@ func TestUnlockSucceeds(t *testing.T) {
 func TestForgotPassword(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st)
-	key(f, st, "tab")
+	f := Unlock(st, false)
+	key(f, st, "down")
 	require.False(t, f.top().typing(), "the link has focus")
 	key(f, st, "enter")
 	r, ok := f.top().(*recoverForm)
@@ -227,10 +232,6 @@ func TestForgotPassword(t *testing.T) {
 	key(f, st, "esc")
 	_, ok = f.top().(*unlock)
 	require.True(t, ok, "esc goes back")
-
-	w := WindowLock(st)
-	key(w, st, "tab")
-	require.Equal(t, "btn:unlock", w.top().(*unlock).at, "the window lock has no forgot link")
 }
 
 func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
@@ -260,10 +261,11 @@ func TestSignInCreatesWhenTheAccountHasNoVault(t *testing.T) {
 func TestFlowExits(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st)
+	st.Deps.Remote = true
+	f := Unlock(st, false)
 	typed(f, st, "q")
 	require.Equal(t, 1, f.top().(*unlock).pw.Len(), "q is a letter in the password field")
-	key(f, st, "tab")
+	key(f, st, "down")
 	require.Equal(t, []tea.Msg{core.Quit{}}, sent(key(f, st, "q")), "q quits off the field")
 
 	w := newFlow(st, newChange(), true, exitClose)
@@ -335,17 +337,6 @@ func TestCancelButtonsByKeyboard(t *testing.T) {
 	}
 }
 
-func TestUnlockTileIsAStop(t *testing.T) {
-	st := newState()
-	st.Snap.Vault.State = api.VaultUnlocked
-	f := WindowLock(st)
-	u := f.top().(*unlock)
-	key(f, st, "shift+tab")
-	require.Equal(t, "tile:system", u.at, "Touch ID is reachable by keyboard")
-	require.NotNil(t, key(f, st, "enter"))
-	require.True(t, u.system, "enter on the tile asks Touch ID")
-}
-
 func focusOf(fm form) string {
 	switch v := fm.(type) {
 	case *create:
@@ -364,11 +355,4 @@ func focusOf(fm form) string {
 		return v.at
 	}
 	return ""
-}
-
-func TestSetupMarkKeepsMoving(t *testing.T) {
-	st := newState()
-	f := Setup(st)
-	st.Now = st.Now.Add(10 * time.Minute)
-	require.Equal(t, !ui.Reduced(), f.Animating(st), "the mark under a setup or lock screen never freezes mid wave")
 }

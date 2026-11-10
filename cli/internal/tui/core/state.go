@@ -57,6 +57,7 @@ type State struct {
 	Fixing    bool   // Fix all is running
 	Updating  string // the update's step for the header, empty when idle
 	Latest    string // a newer dokky to update to
+	Locked    bool   // the view was locked: unlocking needs system auth or the password even with a live session
 }
 
 func (s *State) UpdateReady() bool { return s.Latest != "" && s.Updating == "" }

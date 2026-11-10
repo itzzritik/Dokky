@@ -17,7 +17,6 @@ type join struct {
 	at     string // the focused stop
 	reveal bool
 	err    string
-	cool   bool
 	req    core.Req
 	toast  string
 }
@@ -46,7 +45,7 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		j.req = 0
 		if m.Err != nil {
-			j.err, j.cool, j.at = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts, "field:pw"
+			j.err, j.at = Explain(m.Err, st), "field:pw"
 			if code(m.Err) == api.ErrWrongPassword {
 				j.pw.Wipe()
 			}
@@ -98,9 +97,6 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 }
 
 func (j *join) submit(st *core.State) tea.Cmd {
-	if coolingFor(st) > 0 {
-		return nil
-	}
 	if j.pw.Len() == 0 {
 		j.at, j.err = "field:pw", "Type your master password."
 		return nil
@@ -113,7 +109,7 @@ func (j *join) submit(st *core.State) tea.Cmd {
 func (j *join) view(st *core.State, win *ui.Window, maxH int) int {
 	p := ui.P()
 	win.Title = "Enter your master password"
-	sub(win, joinSub(st), errLine(j.err, j.cool, st))
+	sub(win, joinSub(st), j.err)
 	win.Buttons = []ui.Btn{{ID: "join", Label: busyLabel(st, j.req != 0, "Continue", "Checking"), Primary: true}}
 	if j.at != "link:recover" {
 		win.Active = 0
@@ -144,6 +140,6 @@ func (j *join) actions(*core.State) []core.Action {
 func (j *join) typing() bool  { return j.at == "field:pw" }
 func (j *join) holding() bool { return j.req != 0 }
 func (j *join) animating(st *core.State) bool {
-	return coolingFor(st) > 0 || j.req != 0 && !ui.Reduced()
+	return j.req != 0 && !ui.Reduced()
 }
 func (j *join) wipe() { j.pw.Wipe() }

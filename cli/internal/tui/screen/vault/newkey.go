@@ -18,7 +18,6 @@ type askKey struct {
 	at     string // the focused stop
 	reveal bool
 	err    string
-	cool   bool
 	req    core.Req
 }
 
@@ -38,7 +37,7 @@ func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		a.req = 0
 		if m.Err != nil {
-			a.err, a.cool = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts
+			a.err = Explain(m.Err, st)
 			if code(m.Err) == api.ErrWrongPassword {
 				a.pw.Wipe()
 				a.at = "field:pw"
@@ -92,9 +91,6 @@ func (a *askKey) press(id string, f *Flow, st *core.State) tea.Cmd {
 }
 
 func (a *askKey) submit(st *core.State) tea.Cmd {
-	if coolingFor(st) > 0 {
-		return nil
-	}
 	if a.pw.Len() == 0 {
 		a.at, a.err = "field:pw", "Type your master password."
 		return nil
@@ -107,7 +103,7 @@ func (a *askKey) submit(st *core.State) tea.Cmd {
 func (a *askKey) view(st *core.State, win *ui.Window, _ int) int {
 	p := ui.P()
 	win.Title = "New recovery key"
-	sub(win, "Your current recovery key stops working.", errLine(a.err, a.cool, st))
+	sub(win, "Your current recovery key stops working.", a.err)
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "create", Label: busyLabel(st, a.req != 0, "Create key", "Creating"), Primary: true}}
 	win.Active = lit(win, a.at, "btn:create")
 	body := ui.NewBox()
@@ -130,6 +126,6 @@ func (a *askKey) actions(*core.State) []core.Action {
 func (a *askKey) typing() bool  { return a.at == "field:pw" }
 func (a *askKey) holding() bool { return a.req != 0 }
 func (a *askKey) animating(st *core.State) bool {
-	return coolingFor(st) > 0 || a.req != 0 && !ui.Reduced()
+	return a.req != 0 && !ui.Reduced()
 }
 func (a *askKey) wipe() { a.pw.Wipe() }

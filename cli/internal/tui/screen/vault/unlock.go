@@ -2,14 +2,9 @@ package vault
 
 import (
 	"context"
-	"image/color"
-	"slices"
 	"strconv"
-	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/client"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
@@ -17,56 +12,31 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-type unlockMode int
-
-const (
-	atStart  unlockMode = iota // the daemon is locked: vault.unlock
-	onWindow                   // the window lock: vault.authorize, its grant unused
-	forGrant                   // a sensitive change: vault.authorize, then the grant is spent
-)
-
-// proving it is the person: Touch ID or Windows Hello when offered, the master password always
+// Forged's unlock card: system auth starts by itself, esc falls back to the master password, tab asks again
 type unlock struct {
-	mode       unlockMode
-	pw         *ui.Secret
-	at         string // the focused stop
-	forgot     bool   // the forgot link fit last time it was drawn
-	reveal     bool
-	err        string
-	cool       bool // err is a cooldown, which the live countdown replaces
-	req        core.Req
-	system     bool // the call in flight waits for Touch ID or Windows Hello
-	cancel     context.CancelFunc
-	done       bool // unlocked; the screen waits for the app to take it down
-	title, sub string
-	then       func(*core.State, string) tea.Cmd // forGrant: spends the grant
+	force  bool // the view was locked, so a live session is not enough
+	pw     *ui.Secret
+	at     string // field:pw or link:forgot
+	reveal bool
+	err    string
+	req    core.Req
+	system bool // the call in flight waits for Touch ID or Windows Hello
+	cancel context.CancelFunc
+	done   bool // unlocked; the screen waits for the app to take it down
 }
 
-func newUnlock(mode unlockMode, title, sub string) *unlock {
-	return &unlock{mode: mode, pw: ui.NewSecret("Password", "", vault.MaxPassword), at: "field:pw", forgot: mode == atStart, title: title, sub: sub}
-}
-
-// the Touch ID tile when offered, the field, the forgot link when it shows, then the buttons
-func (u *unlock) stops(st *core.State) []string {
-	var s []string
-	if offered(st) {
-		s = append(s, "tile:system")
-	}
-	s = append(s, "field:pw")
-	if u.forgot {
-		s = append(s, "link:forgot")
-	}
-	if u.mode == forGrant {
-		s = append(s, "btn:cancel")
-	}
-	return append(s, "btn:unlock")
+func newUnlock(force bool) *unlock {
+	return &unlock{force: force, pw: ui.NewSecret("", "", vault.MaxPassword), at: "field:pw"}
 }
 
 func (u *unlock) busy() bool { return u.req != 0 || u.done }
 
-// too many wrong passwords; the daemon's clock says until when
-func coolingFor(st *core.State) time.Duration {
-	return max(0, st.Snap.Vault.CooldownUntil.Sub(st.Now))
+// start asks for system auth at once when this computer offers it, as Forged's lock screen does
+func (u *unlock) start(st *core.State) tea.Cmd {
+	if u.busy() || !offered(st) {
+		return nil
+	}
+	return u.ask(st, api.AuthSystem)
 }
 
 func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
@@ -78,20 +48,19 @@ func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		if m.Req != u.req || u.req == 0 {
 			return nil
 		}
+		system := u.system
 		u.stop()
 		if m.Err != nil {
-			u.err, u.cool, u.at = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts, "field:pw"
+			u.err, u.at = Explain(m.Err, st), "field:pw"
+			if system && code(m.Err) == api.ErrCancelled {
+				u.err = ""
+			}
 			if code(m.Err) == api.ErrWrongPassword {
 				u.pw.Wipe()
 			}
 			return nil
 		}
 		u.pw.Wipe()
-		if u.mode == forGrant {
-			g, _ := m.Val.(string)
-			f.wipe()
-			return tea.Batch(core.Close(f), u.then(st, g))
-		}
 		u.done = true
 		return f.finish(st)
 	case core.Click:
@@ -103,28 +72,25 @@ func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 }
 
 func (u *unlock) click(id string, f *Flow, st *core.State) tea.Cmd {
-	if u.busy() {
+	switch {
+	case id == "key:esc":
+		return u.key(core.Press("esc"), f, st)
+	case id == "key:tab":
+		return u.key(core.Press("tab"), f, st)
+	case u.busy():
 		return nil
-	}
-	if slices.Contains(u.stops(st), id) {
+	case id == "field:pw" || id == "link:forgot":
 		u.at = id
 	}
 	return u.press(id, f, st)
 }
 
-// what enter on a stop, or a click on it, does
 func (u *unlock) press(id string, f *Flow, st *core.State) tea.Cmd {
 	switch id {
-	case "tile:system":
-		if offered(st) {
-			return u.ask(st, api.AuthSystem)
-		}
 	case "link:forgot":
 		f.push(newRecover(false))
-	case "btn:unlock", "field:pw":
+	case "btn:unlock":
 		return u.submit(st)
-	case "btn:cancel":
-		return f.back()
 	}
 	return nil
 }
@@ -143,23 +109,28 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		return nil
 	case k == "esc":
 		return f.back()
+	case k == "tab" && offered(st):
+		return u.ask(st, api.AuthSystem)
 	case k == "ctrl+r":
 		u.reveal = !u.reveal
 		u.pw.Reveal = u.reveal
-	case k == "enter" || k == "space" && u.at != "field:pw":
+	case k == "down" && u.at == "field:pw":
+		u.at = "link:forgot"
+	case k == "up" && u.at == "link:forgot":
+		u.at = "field:pw"
+	case k == "enter" && u.at == "link:forgot":
 		return u.press(u.at, f, st)
-	case ui.Walk(u.stops(st), &u.at, k):
+	case k == "enter":
+		return u.submit(st)
 	case u.at == "field:pw" && u.pw.Type(msg):
 		u.err = ""
 	}
 	return nil
 }
 
-// enter on an empty field asks Touch ID when it is offered; a typed password is checked
+// enter on an empty field asks system auth when offered; a typed password is checked
 func (u *unlock) submit(st *core.State) tea.Cmd {
 	switch {
-	case coolingFor(st) > 0:
-		return nil
 	case u.pw.Len() > 0:
 		return u.ask(st, api.AuthPassword)
 	case offered(st):
@@ -169,20 +140,17 @@ func (u *unlock) submit(st *core.State) tea.Cmd {
 	return nil
 }
 
-// over SSH the daemon is told, so it never shows a prompt nobody here can answer
+// opens the control session; over SSH the daemon is told, so it never shows a prompt nobody here can answer
 func (u *unlock) ask(st *core.State, method string) tea.Cmd {
+	u.stop()
 	ctx, cancel := context.WithCancel(context.Background())
 	u.req, u.cancel, u.system, u.err = core.NextReq(), cancel, method == api.AuthSystem, ""
-	p := api.UnlockParams{Method: method, Remote: st.Deps.Remote}
+	p := api.SessionParams{Method: method, Force: u.force, Remote: st.Deps.Remote}
 	if method == api.AuthPassword {
 		p.Password = u.pw.String()
 	}
-	start := u.mode == atStart
 	return core.DoCtx(ctx, st, u.req, func(ctx context.Context, c *client.Client) (any, error) {
-		if start {
-			return nil, c.VaultUnlock(ctx, p)
-		}
-		return c.VaultAuthorize(ctx, p)
+		return nil, c.SessionOpen(ctx, p)
 	})
 }
 
@@ -194,101 +162,74 @@ func (u *unlock) stop() {
 	u.req, u.cancel, u.system = 0, nil, false
 }
 
+// the line under the title: what unlocking does, or why the password is needed this time
+func (u *unlock) prompt(st *core.State) string {
+	v := st.Snap.Vault
+	switch {
+	case v.PasswordDue && v.System != "" && !st.Deps.Remote:
+		return "It's been " + strconv.Itoa(v.PasswordDays) + " days. Enter your master password this time."
+	case v.State == api.VaultLocked:
+		return "Your drives mount once dokky is unlocked."
+	case offered(st):
+		return "Please authenticate to continue using dokky."
+	}
+	return "Enter your master password to continue using dokky."
+}
+
 func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 	p := ui.P()
-	v := st.Snap.Vault
-	win.Title = u.title
-	usual := u.sub
-	if v.PasswordDue && v.System != "" && !st.Deps.Remote && v.PasswordDays > 0 {
-		usual = "It's been " + strconv.Itoa(v.PasswordDays) + " days. Type your master password this time."
-	}
-	sub(win, usual, errLine(u.err, u.cool, st))
+	win.Title = "Unlock dokky"
+	win.Sub = u.prompt(st)
 	cw, bg := win.Inner(), p.Window
-	sys := offered(st)
-	u.pw.Hint = ""
-	if sys {
-		u.pw.Hint = "Or type your master password"
-	}
 	body := ui.NewBox()
-	y := 0
-	if sys {
-		body.Add(0, 0, u.tile(st, cw, bg))
-		y = 4
+	waiting := u.system && u.req != 0
+	if waiting {
+		body.Put(0, 0, ui.L(bg).T(upper(systemName(st.Snap.Vault)), p.Muted).Pad(cw))
+		body.Put(0, 1, ui.L(bg).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for confirmation", p.Text).Pad(cw))
+	} else {
+		body.Put(0, 0, ui.L(bg).T("Master password", p.Muted).Pad(cw))
+		body.Add(0, 1, u.pw.View("field:pw", cw, u.at == "field:pw" && !u.busy(), bg))
 	}
-	body.Add(0, y, u.pw.View("field:pw", cw, u.at == "field:pw" && !u.system, bg))
-	y++
-	u.forgot = u.mode == atStart && y+2 <= win.Room(maxH)
-	if u.forgot {
+	y := 2
+	if u.err != "" {
+		body.Put(0, y, ui.L(bg).T(core.Fit(u.err, cw), p.Coral).Pad(cw))
+		y++
+	}
+	if !waiting && y+2 <= win.Room(maxH) {
 		body.Add(0, y+1, link("link:forgot", "Forgot password?", u.at == "link:forgot", bg))
 		y += 2
 	} else if u.at == "link:forgot" {
 		u.at = "field:pw"
 	}
-	label := "Unlock"
-	if u.mode == forGrant {
-		label = "Confirm"
-		win.Buttons = append(win.Buttons, ui.Btn{ID: "cancel", Label: "Cancel"})
-	}
-	win.Buttons = append(win.Buttons, ui.Btn{ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, label, "Checking"), Primary: true})
-	switch {
-	case ui.IsBtn(u.at) && !u.busy():
-		win.Active = win.Index(u.at)
-	case u.at == "field:pw" && (u.pw.Len() > 0 || !sys) || u.busy() && !u.system:
-		win.Active = len(win.Buttons) - 1
-	}
+	win.Buttons = []ui.Btn{{ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, "Unlock", "Unlocking"), Primary: true}}
+	win.Active = 0
 	win.Body = body
 	return y
 }
 
-// the big Touch ID button: lit while enter would press it or while it waits
-func (u *unlock) tile(st *core.State, w int, bg color.Color) *lipgloss.Layer {
-	p := ui.P()
-	name := systemName(st.Snap.Vault)
-	fill, fg := p.Cap, p.Text
-	if u.system || !u.busy() && (u.at == "tile:system" || u.at == "field:pw" && u.pw.Len() == 0) {
-		fill, fg = p.Accent, p.OnAccent
-	}
-	l := ui.L(fill)
-	switch {
-	case u.system:
-		l.B(ui.Spin(st.T), fg).Sp(1).B("Waiting for "+name, fg)
-	case u.mode == forGrant:
-		l.B("Confirm with "+name, fg)
-	default:
-		l.B("Unlock with "+name, fg)
-	}
-	pad := max(0, (w-l.Width())/2)
-	lines := []string{rim(ui.G.Top, w, fill, bg), ui.L(fill).Sp(pad).Raw(l.String()).Pad(w), rim(ui.G.Bottom, w, fill, bg)}
-	return lipgloss.NewLayer(strings.Join(lines, "\n")).ID("tile:system")
-}
-
+// Forged's hints: system auth on tab, esc quits; while waiting, esc goes to the password
 func (u *unlock) actions(st *core.State) []core.Action {
 	switch {
 	case u.system && u.req != 0:
-		return []core.Action{{Key: "esc", Label: "use password"}}
+		return []core.Action{{Key: "esc", Label: "Use password"}}
 	case u.busy():
 		return nil
 	}
-	enter := core.Action{Key: "enter", Label: "unlock"}
-	switch {
-	case u.at == "link:forgot":
-		enter.Label = "recover"
-	case u.at == "btn:cancel":
-		enter.Label = "cancel"
-	case u.at == "tile:system" || u.at == "field:pw" && u.pw.Len() == 0 && offered(st):
-		enter.Label = strings.TrimPrefix(systemName(st.Snap.Vault), "your ")
-	case u.mode == forGrant:
-		enter.Label = "confirm"
+	enter := core.Action{Key: "enter", Label: "Unlock"}
+	if u.at == "link:forgot" {
+		enter.Label = "Reset password"
 	}
-	return []core.Action{enter, moveAction, revealAction(u.reveal)}
+	acts := []core.Action{enter}
+	if offered(st) {
+		acts = append(acts, core.Action{Key: "tab", Label: upper(systemName(st.Snap.Vault))})
+	}
+	return acts
 }
 
 func (u *unlock) typing() bool  { return u.at == "field:pw" }
 func (u *unlock) holding() bool { return false }
 
-func (u *unlock) animating(st *core.State) bool {
-	return coolingFor(st) > 0 || u.busy() && !ui.Reduced()
-}
+func (u *unlock) animating(*core.State) bool { return u.busy() && !ui.Reduced() }
 
 func (u *unlock) wipe() {
 	u.stop()

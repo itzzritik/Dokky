@@ -53,8 +53,9 @@ func (a *App) render() string {
 		}
 		keys = footerQuit
 	case a.gate != nil:
+		// Forged's gate has no footer: its card carries its own keys
 		passes = append(passes, ui.Pass{Layer: a.gate.View(a.st, w, h)})
-		acts, keys = a.gate.Actions(a.st), footerQuit
+		keys = footerNone
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
 			ui.Header(w, a.tabNames(), a.active, a.account()),
@@ -81,10 +82,6 @@ func (a *App) render() string {
 			acts, keys = win.Actions(a.st), footerWindow
 		}
 	}
-	if a.lock != nil && !a.updatingNow() {
-		passes = append(passes, ui.Pass{Layer: a.blank(w, h), Modal: true}, ui.Pass{Layer: a.lock.View(a.st, w, h), Modal: true})
-		acts, keys = a.lock.Actions(a.st), footerNone
-	}
 	// as in Forged, a window fades everything under it, the footer too
 	foot := ui.Pass{Layer: a.footer(w, acts, keys).Y(h - 2)}
 	at := slices.IndexFunc(passes, func(p ui.Pass) bool { return p.Dim })
@@ -92,7 +89,7 @@ func (a *App) render() string {
 		at = len(passes)
 	}
 	passes = slices.Insert(passes, at, foot)
-	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) && a.lock == nil {
+	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
 	out, hits, caret := ui.Compose(w, h, passes...)

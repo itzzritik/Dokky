@@ -2,41 +2,53 @@ package gate
 
 import (
 	"context"
-	"time"
+	"image/color"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/client"
-	"github.com/itzzritik/dokky/cli/internal/tui/brand"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-var choices = []string{"Sign in with browser", "Use on this computer only"}
+type choice struct{ icon, title, sub string }
 
-type Gate struct {
-	mark *brand.Mark
-	sel  int
-	req  core.Req
-	err  string
+// Forged's welcome: sign in, or keep everything on this computer
+func choices() []choice {
+	return []choice{
+		{ui.G.Icon.SignIn, "Sign in with browser", "Sync your drives across devices"},
+		{ui.G.Icon.Add, "Use on this computer only", "You can sign in later from Settings"},
+	}
 }
 
-func New(now time.Time) *Gate { return &Gate{mark: brand.NewMark(now)} }
+type Gate struct {
+	stage *ui.Stage
+	sel   int
+	req   core.Req
+	err   string
+}
+
+func New(*core.State) *Gate { return &Gate{stage: vault.NewStage()} }
 
 func (g *Gate) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.KeyPressMsg:
 		switch m.String() {
 		// two choices, so every move lands on the other one
-		case "left", "right", "tab", "shift+tab":
+		case "up", "down", "left", "right", "tab", "shift+tab":
 			g.sel = 1 - g.sel
 		case "enter", "space":
 			return g, g.choose(st)
+		case "esc", "q":
+			return g, core.Send(core.Quit{})
 		}
 	case core.Click:
 		switch m.ID {
-		case "btn:0", "btn:1":
+		case "opt:0", "opt:1":
 			g.sel = int(m.ID[4] - '0')
+			return g, g.choose(st)
+		case "btn:continue":
 			return g, g.choose(st)
 		}
 	case core.Reply:
@@ -63,31 +75,58 @@ func Choose(st *core.State, req core.Req) tea.Cmd {
 }
 
 func (g *Gate) View(st *core.State, w, h int) *lipgloss.Layer {
-	p := ui.P()
-	b := ui.NewBox()
-	y := max(1, h/2-9)
-	b.Put((w-brand.W)/2, y, g.mark.View(st.Now))
-	center := func(y int, s string) { b.Put((w-ui.Width(s))/2, y, s) }
-	center(y+7, ui.Paint("Your drives, in one folder.", p.Muted, nil, false))
-	bw := ui.ButtonWidth(choices[0]) + 2 + ui.ButtonWidth(choices[1])
-	x := (w - bw) / 2
-	for i, c := range choices {
-		b.Add(x, y+10, ui.Button("btn:"+string(rune('0'+i)), c, i == 0, false, g.sel == i))
-		x += ui.ButtonWidth(c) + 2
-	}
-	switch {
-	case g.err != "":
-		center(y+12, ui.Paint(core.Fit(g.err, w-4), p.Coral, nil, false))
-	case st.Updating != "":
-		center(y+12, ui.L(nil).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(st.Updating, p.Muted).String())
-	default:
-		center(y+12, ui.Paint("You can sign in later from Settings.", p.Faint, nil, false))
-	}
-	return b.Layer()
+	return g.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window {
+		p := ui.P()
+		win := &ui.Window{W: ui.CardWidth(w), Title: "Welcome to dokky", Hints: g.Actions(st), Active: 0,
+			Buttons: []ui.Btn{{ID: "continue", Label: "Continue", Primary: true}}}
+		cw, bg := win.Inner(), p.Window
+		body := ui.NewBox()
+		y := 0
+		for i, c := range choices() {
+			on := i == g.sel
+			top := ui.RowLine(cw, on, bg, func(bg color.Color, iw int) string {
+				l := ui.L(bg)
+				ic := p.Muted
+				if on {
+					ic = p.Accent
+				}
+				if c.icon != "" {
+					l.T(c.icon, ic).Sp(2)
+				}
+				if on {
+					return l.B(c.title, p.Text).Pad(iw)
+				}
+				return l.T(c.title, p.Text).Pad(iw)
+			})
+			lead := 0
+			if c.icon != "" {
+				lead = ui.Width(c.icon) + 2
+			}
+			under := ui.RowLine(cw, on, bg, func(bg color.Color, iw int) string {
+				return ui.L(bg).Sp(lead).T(c.sub, p.Muted).Pad(iw)
+			})
+			id := "opt:" + string(rune('0'+i))
+			body.Hit(0, y, id, top).Hit(0, y+1, id, under)
+			y += 3
+		}
+		switch {
+		case g.err != "":
+			body.Put(0, y, ui.L(bg).T(core.Fit(g.err, cw), p.Coral).Pad(cw))
+			y++
+		case st.Updating != "":
+			body.Put(0, y, ui.L(bg).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(st.Updating, p.Muted).Pad(cw))
+			y++
+		default:
+			y--
+		}
+		win.Body = body
+		win.Fit(y, maxH)
+		return win
+	})
 }
 
 func (g *Gate) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "← →", Label: "choose"}, {Key: "enter", Label: "select"}}
+	return []core.Action{{Key: "↑↓", Label: "Choose"}, {Key: "esc", Label: "Quit"}}
 }
 
-func (g *Gate) Animating(st *core.State) bool { return g.mark.Animating(st.Now) || st.Updating != "" }
+func (g *Gate) Animating(st *core.State) bool { return g.stage.Moving() || st.Updating != "" }

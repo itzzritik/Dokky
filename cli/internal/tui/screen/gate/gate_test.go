@@ -3,7 +3,6 @@ package gate
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/client"
@@ -100,7 +99,7 @@ func TestSignInTabAndClicks(t *testing.T) {
 
 func TestGateTabFlips(t *testing.T) {
 	st := &core.State{}
-	g := New(time.Now())
+	g := New(st)
 	g.Update(core.Press("tab"), st)
 	require.Equal(t, 1, g.sel)
 	g.Update(core.Press("shift+tab"), st)

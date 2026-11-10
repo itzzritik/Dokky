@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/itzzritik/dokky/cli/internal/tui/brand"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
@@ -36,19 +35,30 @@ type Flow struct {
 	window bool
 	exit   exit
 	signin bool // the master password step of a sign in
-	mark   *brand.Mark
+	stage  *ui.Stage
 	done   func(*core.State) tea.Cmd
 }
 
 func newFlow(st *core.State, first form, window bool, ex exit) *Flow {
 	f := &Flow{forms: []form{first}, window: window, exit: ex}
 	if !window {
-		f.mark = brand.NewMark(st.Now)
+		f.stage = NewStage()
 	}
 	return f
 }
 
 func (f *Flow) top() form { return f.forms[len(f.forms)-1] }
+
+// a form that acts as soon as it shows, like the lock screen asking for Touch ID
+type starter interface{ start(*core.State) tea.Cmd }
+
+// Start runs the first form's opening move, if it has one
+func (f *Flow) Start(st *core.State) tea.Cmd {
+	if s, ok := f.top().(starter); ok {
+		return s.start(st)
+	}
+	return nil
+}
 
 func (f *Flow) push(fm form) { f.forms = append(f.forms, fm) }
 
@@ -120,8 +130,8 @@ func (f *Flow) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	return f, f.top().update(msg, f, st)
 }
 
-func (f *Flow) build(st *core.State, maxW, maxH int) *ui.Window {
-	win := &ui.Window{W: min(64, maxW), Active: -1}
+func (f *Flow) build(st *core.State, maxW, maxH int, hints []core.Action) *ui.Window {
+	win := &ui.Window{W: min(64, maxW), Active: -1, Hints: hints}
 	rows := f.top().view(st, win, maxH)
 	win.Fit(rows, maxH)
 	return win
@@ -129,39 +139,28 @@ func (f *Flow) build(st *core.State, maxW, maxH int) *ui.Window {
 
 func (f *Flow) View(st *core.State, w, h int) *lipgloss.Layer {
 	if f.window {
-		return f.build(st, w, h).Layer()
+		return f.build(st, w, h, nil).Layer()
 	}
 	return f.cover(st, w, h)
 }
 
-// the window centred under the dokky mark and clear of the footer; the mark becomes a word, then goes, when room is short
+// Forged's gate: the card under the wordmark, water below, and the keys inside the card since there is no footer
 func (f *Flow) cover(st *core.State, w, h int) *lipgloss.Layer {
-	p := ui.P()
-	room := h - 3
-	win := f.build(st, w-4, room)
-	b := ui.NewBox()
-	place := func(head int) int {
-		free := room - head - win.H
-		if free >= 2 {
-			return max(1, free/2)
-		}
-		return max(0, free/2)
-	}
-	x := (w - win.W) / 2
-	switch {
-	case win.H+brand.H+2 <= room:
-		y := place(brand.H + 2)
-		b.Put((w-brand.W)/2, y, f.mark.View(st.Now))
-		b.Add(x, y+brand.H+2, win.Layer())
-	case win.H+2 <= room:
-		y := place(2)
-		b.Put((w-5)/2, y, ui.Paint("dokky", p.Accent, nil, true))
-		b.Add(x, y+2, win.Layer())
-	default:
-		b.Add(x, place(0), win.Layer())
-	}
-	return b.Layer()
+	return f.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window {
+		return f.build(st, ui.CardWidth(w), maxH, cardHints(f.Actions(st)))
+	})
 }
+
+// what the card's own footer shows: every key but enter, which its button names
+func cardHints(acts []core.Action) []core.Action {
+	return slices.DeleteFunc(slices.Clone(acts), func(a core.Action) bool { return a.Key == "enter" })
+}
+
+// NewStage is the gate every full screen shares; the app sets the band
+func NewStage() *ui.Stage { return &ui.Stage{New: Band} }
+
+// Band makes the water under the gate; nil leaves it out
+var Band func(w, rows int) ui.Band
 
 func (f *Flow) Actions(st *core.State) []core.Action {
 	acts := f.top().actions(st)
@@ -180,7 +179,7 @@ func (f *Flow) Actions(st *core.State) []core.Action {
 }
 
 func (f *Flow) Animating(st *core.State) bool {
-	return f.top().animating(st) || f.mark != nil && f.mark.Animating(st.Now)
+	return f.top().animating(st) || f.stage != nil && f.stage.Moving()
 }
 
 // a vault step finished; the app checks again what covers the screen
