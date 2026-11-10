@@ -150,7 +150,7 @@ func invoke(t *testing.T, h map[string]ipc.Handler, method string, params, out a
 
 func TestLockedAnswersOnlyItsMethods(t *testing.T) {
 	l, _, h := newLocked(t, nil)
-	for _, m := range []string{"mount", "service.put", "login.start", "logout", api.MDriveAdd, api.MActivity, "settings.get", api.MVaultSetup, api.MVaultLock, api.MVaultAuthorize, api.MVaultJoin} {
+	for _, m := range []string{"mount", "service.put", "login.start", "logout", api.MDriveAdd, api.MActivity, "settings.get", api.MVaultSetup, api.MVaultLock, api.MVaultJoin} {
 		require.Equal(t, api.ErrLocked, codeOf(t, invoke(t, h, m, map[string]string{}, nil)), m)
 	}
 	var s api.State
@@ -176,42 +176,16 @@ func TestLockedAnswersOnlyItsMethods(t *testing.T) {
 	}
 }
 
-func TestWrongPasswordsCoolDown(t *testing.T) {
-	_, k, h := newLocked(t, nil)
-	clock := &testClock{t: time.Now()}
-	k.now = clock.now
-	now := clock.now()
+// argon2's second a try is the only brake: no number of wrong passwords keeps the right one out
+func TestWrongPasswordsNeverLockOut(t *testing.T) {
+	l, k, h := newLocked(t, nil)
 	wrong := api.UnlockParams{Method: api.AuthPassword, Password: "wrong guess 123"}
-	for range maxFails - 1 {
+	for range 8 {
 		require.Equal(t, api.ErrWrongPassword, codeOf(t, invoke(t, h, api.MVaultUnlock, wrong, nil)))
 	}
-	err := invoke(t, h, api.MVaultUnlock, wrong, nil)
-	require.Equal(t, api.ErrTooManyAttempts, codeOf(t, err))
-	require.ErrorContains(t, err, "30 seconds")
-	require.Equal(t, now.Add(firstCooldown), k.view(false).CooldownUntil)
-	right := api.UnlockParams{Method: api.AuthPassword, Password: testPassword}
-	require.Equal(t, api.ErrTooManyAttempts, codeOf(t, invoke(t, h, api.MVaultUnlock, right, nil)), "even the right password waits")
-
-	now = clock.add(firstCooldown)
-	for range maxFails {
-		_ = invoke(t, h, api.MVaultUnlock, wrong, nil)
-	}
-	require.Equal(t, now.Add(2*firstCooldown), k.view(false).CooldownUntil, "each cooldown doubles")
-	k.mu.Lock()
-	k.cooldown = maxCooldown
-	k.mu.Unlock()
-	now = clock.add(time.Hour)
-	for range maxFails {
-		_ = invoke(t, h, api.MVaultUnlock, wrong, nil)
-	}
-	require.Equal(t, now.Add(maxCooldown), k.view(false).CooldownUntil, "up to five minutes")
-
-	clock.add(maxCooldown)
-	require.NoError(t, invoke(t, h, api.MVaultUnlock, right, nil))
 	require.True(t, k.view(false).CooldownUntil.IsZero())
-	k.mu.Lock()
-	require.Zero(t, k.fails)
-	k.mu.Unlock()
+	require.NoError(t, invoke(t, h, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, nil))
+	require.Equal(t, testVault().ak, <-l.opened)
 }
 
 func TestSystemUnlock(t *testing.T) {
@@ -586,24 +560,18 @@ func TestKeyMismatchPausesSync(t *testing.T) {
 	require.Equal(t, int64(1), load(t, d.st).Services[0].Version)
 }
 
-func TestSettingsNeedAGrant(t *testing.T) {
+func TestPasswordDaysSetting(t *testing.T) {
 	d, _, _ := newTestDaemon(t, sample())
-	sys := offerSystem(d.vk, false)
+	for _, bad := range []int{0, 3, 14} {
+		require.Error(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{PasswordDays: &bad}, nil), "only the listed choices")
+	}
 	days := 15
-	require.Equal(t, api.ErrGrantRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{PasswordDays: &days}, nil)))
-	var g api.GrantReply
-	require.Equal(t, api.ErrWrongPassword, codeOf(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthPassword, Password: "nope nope nope"}, nil)))
-	require.NoError(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, &g))
-	bad := 3
-	require.Error(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &bad}, nil), "only the listed choices")
-	require.NoError(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &days}, nil))
+	require.NoError(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{PasswordDays: &days}, nil))
 	require.Equal(t, 15, vaultOf(d).PasswordDays)
-	require.Equal(t, api.ErrGrantRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &days}, nil)), "a grant works once")
-
-	sys.on.Store(true)
-	d.vk.prompt = func(context.Context, string) error { return nil }
-	require.NoError(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthSystem, Remote: false}, &g))
-	require.NotEmpty(t, g.Grant)
+	vf, err := vault.Load(d.vk.dir)
+	require.NoError(t, err)
+	require.Equal(t, 15, vf.PasswordDays)
+	require.NotContains(t, d.handlers(nil), api.MVaultAuthorize, "grants are gone")
 }
 
 // the password once makes a device key again for a vault without one, whatever an older dokky was set to

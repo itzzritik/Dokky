@@ -7,7 +7,7 @@ const (
 	MVaultUnlock         = "vault.unlock"
 	MVaultRecover        = "vault.recover"
 	MVaultLock           = "vault.lock"
-	MVaultAuthorize      = "vault.authorize"
+	MVaultAuthorize      = "vault.authorize" // Deprecated: removed with the TUI change; vault.settings needs a session
 	MVaultSettings       = "vault.settings"
 	MVaultChangePassword = "vault.changePassword"
 	MVaultNewRecoveryKey = "vault.newRecoveryKey"
@@ -55,10 +55,10 @@ const (
 	ErrPasswordRequired  = "password_required"
 	ErrSystemUnavailable = "system_unavailable"
 	ErrCancelled         = "cancelled"
-	ErrTooManyAttempts   = "too_many_attempts"
+	ErrTooManyAttempts   = "too_many_attempts" // Deprecated: removed with the TUI change, nothing cools down
 	ErrWeakPassword      = "weak_password"
 	ErrBadRecoveryKey    = "bad_recovery_key"
-	ErrGrantRequired     = "grant_required"
+	ErrGrantRequired     = "grant_required" // Deprecated: removed with the TUI change, see ErrSessionRequired
 	ErrSessionRequired   = "session_required"
 )
 
@@ -72,12 +72,12 @@ type Vault struct {
 	Need            string    `json:"need,omitempty"`
 	Unlock          string    `json:"unlock"` // Deprecated: removed with the TUI change
 	PasswordDays    int       `json:"passwordDays"`
-	IdleLockMinutes int       `json:"idleLockMinutes"`  // Deprecated: removed with the TUI change
-	PasswordDue     bool      `json:"passwordDue"`      // system auth is refused until the password is typed once, e.g. after it changed
-	System          string    `json:"system,omitempty"` // "" when unavailable, else "Touch ID", "Windows Hello", "your Mac password", "your system password"
-	Synced          bool      `json:"synced"`           // this device's key is the signed-in account's key
-	Legacy          int       `json:"legacy"`           // services on the server still waiting to be end-to-end encrypted
-	CooldownUntil   time.Time `json:"cooldownUntil,omitzero"`
+	IdleLockMinutes int       `json:"idleLockMinutes"`        // Deprecated: removed with the TUI change
+	PasswordDue     bool      `json:"passwordDue"`            // system auth is refused until the password is typed once, e.g. after it changed
+	System          string    `json:"system,omitempty"`       // "" when unavailable, else "Touch ID", "Windows Hello", "your Mac password", "your system password"
+	Synced          bool      `json:"synced"`                 // this device's key is the signed-in account's key
+	Legacy          int       `json:"legacy"`                 // services on the server still waiting to be end-to-end encrypted
+	CooldownUntil   time.Time `json:"cooldownUntil,omitzero"` // Deprecated: removed with the TUI change, always zero
 	KeyID           string    `json:"keyId,omitempty"`
 	Session         bool      `json:"session"` // a control session is live, so changes are allowed
 }
@@ -111,7 +111,7 @@ type ChangePasswordParams struct {
 }
 
 type VaultSettingsParams struct {
-	Grant           string  `json:"grant"`
+	Grant           string  `json:"grant"`            // Deprecated: removed with the TUI change, ignored
 	Unlock          *string `json:"unlock,omitempty"` // Deprecated: removed with the TUI change, ignored
 	PasswordDays    *int    `json:"passwordDays,omitempty"`
 	IdleLockMinutes *int    `json:"idleLockMinutes,omitempty"` // Deprecated: removed with the TUI change, ignored
@@ -121,6 +121,7 @@ type RecoveryKeyReply struct {
 	RecoveryKey string `json:"recoveryKey"`
 }
 
+// Deprecated: removed with the TUI change
 type GrantReply struct {
 	Grant string `json:"grant"`
 }

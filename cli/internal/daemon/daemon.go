@@ -672,9 +672,8 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		api.MVaultRecover: decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
 			return struct{}{}, d.vaultRecover(ctx, p)
 		}),
-		api.MVaultLock:      decode(func(struct{}) (struct{}, error) { return struct{}{}, d.vaultLock() }),
-		api.MVaultAuthorize: decodeCtx(d.vaultAuthorize),
-		api.MVaultSettings:  decode(func(p api.VaultSettingsParams) (struct{}, error) { return struct{}{}, d.vaultSettings(p) }),
+		api.MVaultLock:     decode(func(struct{}) (struct{}, error) { return struct{}{}, d.vaultLock() }),
+		api.MVaultSettings: decode(func(p api.VaultSettingsParams) (struct{}, error) { return struct{}{}, d.vaultSettings(p) }),
 		api.MVaultChangePassword: decodeCtx(func(ctx context.Context, p api.ChangePasswordParams) (struct{}, error) {
 			return struct{}{}, d.changePassword(ctx, p)
 		}),

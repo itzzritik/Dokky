@@ -14,10 +14,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-const (
-	statusVault   = "vault" // login.poll: the sign in waits for the master password step in state.vault.need
-	confirmReason = "Confirm it is you to change dokky's security"
-)
+const statusVault = "vault" // login.poll: the sign in waits for the master password step in state.vault.need
 
 var errVaultLocked = &codedError{api.ErrLocked, "dokky is locked: unlock it first."}
 
@@ -25,15 +22,6 @@ func (d *Daemon) acct() *store.Account {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.data.Account
-}
-
-// a wrong password publishes at once, so the app's cooldown countdown is live
-func (d *Daemon) told(err error) error {
-	var ce *codedError
-	if errors.As(err, &ce) && (ce.code == api.ErrWrongPassword || ce.code == api.ErrTooManyAttempts) {
-		d.publish()
-	}
-	return err
 }
 
 // vaultSetup creates the master password. a signed-in device whose account already has one is told to join it
@@ -117,7 +105,6 @@ func (d *Daemon) setupVault(ctx context.Context, password string) (string, bool,
 		vault.Zero(ak)
 		return "", false, fmt.Errorf("move the store to the master password: %w", err)
 	}
-	k.passed()
 	d.log.Info("created the master password", "keyId", f.KeyID)
 	if acct == nil {
 		return rec, false, nil
@@ -214,7 +201,7 @@ func (d *Daemon) vaultJoinRecover(ctx context.Context, recoveryKey, newPassword 
 func (d *Daemon) join(ctx context.Context, open func(dsync.RemoteVault) (ak, newPassword []byte, err error)) error {
 	pending, err := d.joinVault(ctx, open)
 	if err != nil {
-		return d.told(err)
+		return err
 	}
 	d.publish()
 	if !pending {
@@ -273,7 +260,6 @@ func (d *Daemon) joinVault(ctx context.Context, open func(dsync.RemoteVault) ([]
 		return false, err
 	}
 	k.linked(dsync.RemoteVault{Remote: nf.Remote(), Version: version})
-	k.passed()
 	d.log.Info("joined the account's vault", "keyId", nf.KeyID)
 	return acct.Pending, nil
 }
@@ -343,22 +329,7 @@ func (d *Daemon) vaultUnlockOpen(ctx context.Context, p api.UnlockParams) error 
 	if err == nil {
 		d.publish()
 	}
-	return d.told(err)
-}
-
-func (d *Daemon) vaultAuthorize(ctx context.Context, p api.UnlockParams) (api.GrantReply, error) {
-	k := d.vk
-	defer k.holdFor(p.Method)()
-	if k.state() != api.VaultUnlocked {
-		return api.GrantReply{}, errNoVault
-	}
-	ak, err := k.prove(ctx, p, confirmReason)
-	vault.Zero(ak)
-	if err != nil {
-		return api.GrantReply{}, d.told(err)
-	}
-	d.publish()
-	return api.GrantReply{Grant: k.grant()}, nil
+	return err
 }
 
 func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
@@ -371,9 +342,6 @@ func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 	}
 	if p.PasswordDays != nil && !slices.Contains(api.PasswordDayChoices, *p.PasswordDays) {
 		return fmt.Errorf("passwordDays must be one of %v", api.PasswordDayChoices)
-	}
-	if err := k.useGrant(p.Grant); err != nil {
-		return err
 	}
 	nf := f.Clone()
 	if p.PasswordDays != nil {
@@ -389,12 +357,12 @@ func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 // a rewrap only: the account key stays, so other devices keep working; the account changes first. the next
 // unlock asks for the new password once, so system auth trusts it again only after it is typed
 func (d *Daemon) changePassword(ctx context.Context, p api.ChangePasswordParams) error {
-	return d.told(d.rewrap(ctx, func(f *vault.File, ak []byte) error {
+	return d.rewrap(ctx, func(f *vault.File, ak []byte) error {
 		next := []byte(p.Next)
 		defer vault.Zero(next)
 		f.PasswordOnce = true
 		return vault.Rewrap(f, ak, next, d.vk.now())
-	}, p.Current, p.Next))
+	}, p.Current, p.Next)
 }
 
 func (d *Daemon) newRecoveryKey(ctx context.Context, password string) (api.RecoveryKeyReply, error) {
@@ -403,7 +371,7 @@ func (d *Daemon) newRecoveryKey(ctx context.Context, password string) (api.Recov
 		rec, err = vault.NewRecovery(f, ak)
 		return err
 	}, password, "")
-	return api.RecoveryKeyReply{RecoveryKey: rec}, d.told(err)
+	return api.RecoveryKeyReply{RecoveryKey: rec}, err
 }
 
 // rewrap checks the password, changes a copy of vault.json, saves it on the account's server vault when linked,
@@ -478,7 +446,6 @@ func (k *keeper) recovered(p api.RecoverParams) (*vault.File, []byte, error) {
 		return nil, nil, err
 	}
 	f.PasswordOnce = true
-	k.passed()
 	return f, ak, nil
 }
 

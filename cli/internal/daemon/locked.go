@@ -153,7 +153,7 @@ func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	h[api.MVaultUnlock] = decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
 		ak, err := l.unlock(ctx, p)
 		if err != nil {
-			return struct{}{}, l.told(err)
+			return struct{}{}, err
 		}
 		l.hand(ak)
 		return struct{}{}, nil
@@ -191,14 +191,6 @@ func (l *lockedPhase) publish() {
 	l.srv.Publish(ipc.Event{Event: "status", Data: raw})
 	raw, _ = json.Marshal(l.snapshot())
 	l.srv.Publish(ipc.Event{Event: api.EState, Data: raw})
-}
-
-func (l *lockedPhase) told(err error) error {
-	var ce *codedError
-	if errors.As(err, &ce) && (ce.code == api.ErrWrongPassword || ce.code == api.ErrTooManyAttempts) {
-		l.publish()
-	}
-	return err
 }
 
 // the reply goes out before the locked socket closes
