@@ -87,11 +87,11 @@ func TestSignInKeysAndClicks(t *testing.T) {
 func TestGateTabFlips(t *testing.T) {
 	st := &core.State{}
 	g := New(st)
-	g.Update(core.Press("tab"), st)
+	g.Update(core.Press("down"), st)
 	require.Equal(t, 1, g.sel)
-	g.Update(core.Press("shift+tab"), st)
+	g.Update(core.Press("up"), st)
 	require.Equal(t, 0, g.sel)
-	g.Update(core.Press("shift+tab"), st)
+	g.Update(core.Press("up"), st)
 	require.Equal(t, 1, g.sel)
 }
 
@@ -111,7 +111,7 @@ func TestClashesOneThingLit(t *testing.T) {
 
 	var seen []string
 	for range 3 {
-		c.Update(core.Press("tab"), st)
+		c.Update(core.Press("down"), st)
 		seen = append(seen, c.at)
 	}
 	require.Equal(t, []string{"chip:1", "btn:continue", "chip:0"}, seen)

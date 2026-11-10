@@ -53,12 +53,12 @@ func TestDevicesTabWalksCardsThenButtons(t *testing.T) {
 
 	var seen []string
 	for range 4 {
-		s.Update(core.Press("tab"), st)
+		s.Update(core.Press("down"), st)
 		seen = append(seen, s.at)
 	}
 	require.Equal(t, []string{"row:other", "btn:rename", "btn:remove", "row:self"}, seen)
 
-	s.Update(core.Press("shift+tab"), st)
+	s.Update(core.Press("up"), st)
 	require.Equal(t, "btn:remove", s.at)
 	require.Equal(t, 0, s.sel, "the buttons act on the last card focus left")
 	require.Equal(t, 1, s.window(st, 80, 40).Active)
@@ -89,8 +89,8 @@ func TestDevicesRemoveOther(t *testing.T) {
 	s, st := loaded(t)
 	s.Update(core.Click{ID: "row:other"}, st)
 	require.Equal(t, 1, s.sel)
-	s.Update(core.Press("tab"), st)
-	s.Update(core.Press("tab"), st)
+	s.Update(core.Press("down"), st)
+	s.Update(core.Press("down"), st)
 	require.Equal(t, "btn:remove", s.at)
 	_, cmd := s.Update(core.Press("enter"), st)
 	c := opened(t, cmd)
@@ -129,5 +129,5 @@ func TestDevicesOneDeviceSaysTab(t *testing.T) {
 	s := &Devices{}
 	s.load(st)
 	s.Update(core.Reply{Req: s.req, Val: []api.Device{{ID: "self", Name: "laptop", Current: true, LastSeenAt: now}}}, st)
-	require.Equal(t, []string{"enter", "tab", "esc"}, keys(s.Actions(st)))
+	require.Equal(t, []string{"enter", "↑↓", "esc"}, keys(s.Actions(st)))
 }

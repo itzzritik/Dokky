@@ -2,6 +2,7 @@ package add
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,15 +76,20 @@ func enter(acts []core.Action) string {
 func walk(t *testing.T, a *Add, st *core.State) []string {
 	t.Helper()
 	start := a.focused(st)
-	out := []string{start}
-	for range 20 {
-		key(a, st, "tab")
-		if a.focused(st) == start {
+	out, left := []string{start}, false
+	// down may move a list's selection before it moves focus
+	for range 40 {
+		key(a, st, "down")
+		at := a.focused(st)
+		if at == start && left {
 			return out
 		}
-		out = append(out, a.focused(st))
+		if at != start && !slices.Contains(out, at) {
+			left = true
+			out = append(out, at)
+		}
 	}
-	t.Fatal("tab never came back round")
+	t.Fatal("down never came back round")
 	return nil
 }
 
@@ -115,36 +121,40 @@ func TestChooseWalksTheSearchAndItsButtons(t *testing.T) {
 	require.Equal(t, "choose", enter(a.Actions(st)))
 	requireAllButtons(t, a, st)
 
-	key(a, st, "tab")
-	require.Equal(t, "btn:cancel", a.pick.at)
-	require.False(t, a.Capturing(), "? works on a button")
+	toButtons := func() {
+		for i := 0; a.pick.at == searchID && i < 99; i++ {
+			key(a, st, "down")
+		}
+	}
+	toButtons()
+	require.Equal(t, "btn:cancel", a.pick.at, "down past the last service reaches the buttons, never tab")
+	require.False(t, a.Capturing(), "m works on a button")
 	require.Equal(t, 0, active(a, st))
 	require.Equal(t, "cancel", enter(a.Actions(st)))
 	key(a, st, "right")
 	require.Equal(t, "btn:next", a.pick.at)
 	key(a, st, "right")
 	require.Equal(t, "btn:next", a.pick.at, "the bar does not wrap")
-	key(a, st, "tab")
-	require.Equal(t, searchID, a.pick.at)
-	key(a, st, "shift+tab", "shift+tab")
-	require.Equal(t, "btn:cancel", a.pick.at)
+	key(a, st, "up", "up")
+	require.Equal(t, searchID, a.pick.at, "up goes back to the search")
+	toButtons()
 	require.Contains(t, sent(key(a, st, "enter")), tea.Msg(core.CloseWindow{Screen: a}), "enter on Cancel closes")
 }
 
 func TestChooseNextAndClicks(t *testing.T) {
 	st := newState()
 	a := newAdd()
-	key(a, st, "down", "shift+tab")
-	require.Equal(t, "btn:next", a.pick.at)
+	key(a, st, "down")
+	a.pick.at = "btn:next"
 	require.NotNil(t, key(a, st, "enter"))
 	require.Equal(t, signin, a.step)
 	require.Equal(t, sftp.Type, a.prov.Type, "Next takes the highlighted service")
 
 	a = newAdd()
-	key(a, st, "tab")
+	key(a, st, "down")
 	click(a, st, searchID)
 	require.Equal(t, searchID, a.pick.at, "a click moves focus to what it hit")
-	key(a, st, "tab")
+	key(a, st, "down")
 	require.NotNil(t, click(a, st, "row:2"))
 	require.Equal(t, gdrive.Type, a.prov.Type)
 }
@@ -183,7 +193,7 @@ func TestSignInEnterGoesToTheNextEmptyField(t *testing.T) {
 	require.False(t, a.Capturing(), "nothing is typed while it checks")
 	require.Equal(t, []core.Action{{Key: "esc", Label: "back"}}, a.Actions(st))
 	require.Equal(t, 1, active(a, st))
-	require.Nil(t, key(a, st, "tab"), "keys wait for the check")
+	require.Nil(t, key(a, st, "down"), "keys wait for the check")
 
 	a.Update(core.Reply{Req: a.sign.req, Err: errors.New("no route to host")}, st)
 	require.Equal(t, "field:1", a.sign.at, "a failed check keeps focus")
@@ -193,9 +203,9 @@ func TestSignInEnterGoesToTheNextEmptyField(t *testing.T) {
 func TestSignInEnterSubmitsOnlyWhenNothingIsLeft(t *testing.T) {
 	st := newState()
 	a := signInForm(t, st, webdav, webdavOpts)
-	key(a, st, "tab")
+	key(a, st, "down")
 	typed(a, st, "me")
-	key(a, st, "shift+tab")
+	key(a, st, "up")
 	key(a, st, "enter")
 	require.Equal(t, "Fill in URL.", a.sign.err, "the field in hand is the only one left")
 	require.Equal(t, "field:0", a.sign.at)
@@ -205,7 +215,7 @@ func TestSignInEnterSubmitsOnlyWhenNothingIsLeft(t *testing.T) {
 func TestSignInBackButton(t *testing.T) {
 	st := newState()
 	a := signInForm(t, st, webdav, webdavOpts)
-	key(a, st, "shift+tab", "shift+tab")
+	key(a, st, "up", "up")
 	require.Equal(t, "btn:back", a.sign.at)
 	require.Equal(t, "back", enter(a.Actions(st)))
 	key(a, st, "enter")
@@ -219,7 +229,7 @@ func TestChipRowsSlideWithoutWrapping(t *testing.T) {
 	a := signInForm(t, st, sftp, opts)
 	require.Equal(t, []string{"field:0", "field:1", "field:2", "chip:3", "field:4"}, a.sign.stops())
 
-	key(a, st, "tab", "tab", "tab")
+	key(a, st, "down", "down", "down")
 	require.Equal(t, "chip:3", a.sign.at)
 	require.False(t, a.Capturing())
 	require.Contains(t, a.Actions(st), core.Action{Key: "← →", Label: "choose"})
@@ -319,7 +329,7 @@ func TestDetailsStops(t *testing.T) {
 	require.Equal(t, 1, active(a, st), "Add drive lights while a field has focus")
 	requireAllButtons(t, a, st)
 
-	key(a, st, "tab", "tab")
+	key(a, st, "down", "down")
 	require.Equal(t, "chip:login", a.named.at)
 	require.False(t, a.Capturing())
 	require.Equal(t, "add drive", enter(a.Actions(st)))
@@ -345,7 +355,7 @@ func TestDetailsEnterGoesToTheName(t *testing.T) {
 	st := newState()
 	a := details(t, st)
 	a.named.name.Input.SetValue("")
-	key(a, st, "tab")
+	key(a, st, "down")
 	require.Equal(t, "next", enter(a.Actions(st)))
 	key(a, st, "enter")
 	require.Equal(t, "field:0", a.named.at, "enter goes to the empty name")
@@ -358,7 +368,7 @@ func TestDetailsEnterGoesToTheName(t *testing.T) {
 func TestDetailsBackButton(t *testing.T) {
 	st := newState()
 	a := details(t, st)
-	key(a, st, "shift+tab", "shift+tab")
+	key(a, st, "up", "up")
 	require.Equal(t, "btn:back", a.named.at)
 	key(a, st, "space")
 	require.Equal(t, choose, a.step, "with sign in skipped, Back goes to Service")
@@ -408,7 +418,7 @@ func TestConnectFailed(t *testing.T) {
 	a.Update(core.Reply{Req: a.run.req, Err: errors.New("unreachable")}, st)
 	require.Equal(t, "btn:retry", a.run.at)
 	require.Equal(t, "try again", enter(a.Actions(st)))
-	key(a, st, "tab")
+	key(a, st, "down")
 	require.Equal(t, "btn:back", a.run.at)
 	key(a, st, "enter")
 	require.Equal(t, name, a.step)
@@ -429,7 +439,7 @@ func TestEditButtons(t *testing.T) {
 	require.Equal(t, []string{"item:0", "item:1", "item:2", "item:3", "item:4", "item:5", "btn:remove", "btn:signin", "btn:view", "btn:mount"}, a.stops(st))
 	requireAllButtons(t, a, st)
 
-	key(a, st, "shift+tab")
+	key(a, st, "up")
 	require.Equal(t, "btn:mount", a.ed.at)
 	require.Equal(t, 3, active(a, st))
 	require.Equal(t, "unmount", enter(a.Actions(st)))

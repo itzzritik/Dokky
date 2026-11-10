@@ -10,7 +10,8 @@ import (
 
 func IsBtn(id string) bool { return strings.HasPrefix(id, "btn:") }
 
-// tab and up/down walk every stop in order, wrapping; left and right walk the buttons along the bar.
+// up and down walk every stop in order, wrapping; left and right walk the buttons along the bar. tab is never
+// used: in a browser terminal it moves focus out of the terminal
 // Reports whether k moved focus, so the caller can hand other keys to the focused field.
 func Walk(stops []string, at *string, k string) bool {
 	n := len(stops)
@@ -19,9 +20,9 @@ func Walk(stops []string, at *string, k string) bool {
 	}
 	i := slices.Index(stops, *at)
 	switch k {
-	case "tab", "down":
+	case "down":
 		*at = stops[(i+1)%n]
-	case "shift+tab", "up":
+	case "up":
 		*at = stops[(max(i, 0)+n-1)%n]
 	case "left", "right":
 		if i < 0 || !IsBtn(*at) {

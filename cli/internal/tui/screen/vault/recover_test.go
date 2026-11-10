@@ -56,7 +56,7 @@ func TestRecoverChecksKeyFirst(t *testing.T) {
 	require.Equal(t, "Type your recovery key.", r.err)
 
 	typed(f, st, "DK1-ABCD")
-	key(f, st, "tab")
+	key(f, st, "down")
 	key(f, st, "enter")
 	require.Equal(t, "The recovery key is too short.", r.err)
 	require.Equal(t, "field:0", r.at)

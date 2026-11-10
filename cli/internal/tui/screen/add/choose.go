@@ -97,6 +97,10 @@ func (a *Add) updateChoose(msg tea.Msg, st *core.State) tea.Cmd {
 		case p.at == searchID && k == "up":
 			p.sel = max(0, p.sel-1)
 			return nil
+		// down past the last service reaches the buttons, as tab is never used
+		case p.at == searchID && k == "down" && len(opts) > 0 && p.sel >= len(opts)-1:
+			ui.Walk(a.stops(st), &p.at, k)
+			return nil
 		case p.at == searchID && k == "down":
 			p.sel = max(0, min(len(opts)-1, p.sel+1))
 			return nil

@@ -370,7 +370,7 @@ func (a *Add) window(st *core.State, maxW, maxH int) *ui.Window {
 	return win
 }
 
-var moveAction = core.Action{Key: "tab", Label: "move"}
+var moveAction = core.Action{Key: "↑↓", Label: "move"}
 
 func lowerFirst(s string) string { return strings.ToLower(s[:1]) + s[1:] }
 
@@ -411,7 +411,7 @@ func (a *Add) Actions(st *core.State) []core.Action {
 	case ui.IsBtn(at):
 		acts = a.pressing(st, at)
 	case a.step == choose:
-		acts = []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "choose"}, {Key: "tab", Label: "buttons"}}
+		acts = []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "choose"}}
 	case strings.HasPrefix(at, "chip:"):
 		acts = []core.Action{a.enterOnField(st, at), {Key: "← →", Label: "choose"}, moveAction}
 	default:

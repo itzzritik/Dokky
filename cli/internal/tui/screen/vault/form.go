@@ -53,7 +53,7 @@ func revealAction(on bool) core.Action {
 	return core.Action{Key: "ctrl+r", Label: "show"}
 }
 
-var moveAction = core.Action{Key: "tab", Label: "move"}
+var moveAction = core.Action{Key: "↑↓", Label: "move"}
 
 // a short error in the sub line, else the usual words
 func sub(win *ui.Window, usual, err string) {

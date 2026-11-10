@@ -36,7 +36,7 @@ func (g *Gate) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch m.String() {
 		// two choices, so every move lands on the other one
-		case "up", "down", "left", "right", "tab", "shift+tab":
+		case "up", "down", "left", "right":
 			g.sel = 1 - g.sel
 		case "enter", "space":
 			return g, g.choose(st)

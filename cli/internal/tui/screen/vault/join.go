@@ -135,7 +135,7 @@ func (j *join) actions(*core.State) []core.Action {
 	if j.at == "link:recover" {
 		enter.Label = "Use recovery key"
 	}
-	return []core.Action{enter, {Key: "tab", Label: "Recovery key"}}
+	return []core.Action{enter, {Key: "↓", Label: "Recovery key"}}
 }
 
 func (j *join) typing() bool  { return j.at == "field:pw" }

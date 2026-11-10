@@ -248,7 +248,7 @@ func (r *Remove) Actions(*core.State) []core.Action {
 	}
 	acts := []core.Action{enter}
 	if r.asks() {
-		acts = append(acts, core.Action{Key: "tab", Label: "move"})
+		acts = append(acts, core.Action{Key: "↑↓", Label: "move"})
 	}
 	if ui.IsBtn(r.at) && len(r.buttons()) > 1 {
 		acts = append(acts, core.Action{Key: "← →", Label: "choose"})

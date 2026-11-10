@@ -31,9 +31,9 @@ func TestRemoveUnderstandIsAFocusStop(t *testing.T) {
 	r := checked(st, elsewhere)
 	require.Equal(t, "btn:cancel", r.at, "Cancel has focus first")
 	require.Equal(t, 0, r.window(st, 80, 24).Active)
-	require.Equal(t, []string{"enter", "tab", "← →", "esc"}, keys(r.Actions(st)))
+	require.Equal(t, []string{"enter", "↑↓", "← →", "esc"}, keys(r.Actions(st)))
 
-	r.Update(core.Press("shift+tab"), st)
+	r.Update(core.Press("up"), st)
 	require.Equal(t, sureID, r.at)
 	require.Equal(t, -1, r.window(st, 80, 24).Active, "no button looks focused while the switch has it")
 	require.Equal(t, core.Action{Key: "enter", Label: "tick"}, r.Actions(st)[0])
@@ -47,8 +47,8 @@ func TestRemoveUnderstandIsAFocusStop(t *testing.T) {
 	r.Update(core.Press("space"), st)
 	require.True(t, r.sure)
 
-	r.Update(core.Press("tab"), st)
-	r.Update(core.Press("tab"), st)
+	r.Update(core.Press("down"), st)
+	r.Update(core.Press("down"), st)
 	require.Equal(t, "btn:do", r.at)
 	require.Equal(t, 1, r.window(st, 80, 24).Active)
 	require.Equal(t, core.Action{Key: "enter", Label: "remove anyway", Danger: true}, r.Actions(st)[0])
@@ -62,7 +62,7 @@ func TestRemoveTabWalksEveryStop(t *testing.T) {
 	r := checked(st, elsewhere)
 	var seen []string
 	for range 3 {
-		r.Update(core.Press("tab"), st)
+		r.Update(core.Press("down"), st)
 		seen = append(seen, r.at)
 	}
 	require.Equal(t, []string{"btn:do", sureID, "btn:cancel"}, seen)

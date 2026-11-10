@@ -137,7 +137,7 @@ func TestCreateThenKey(t *testing.T) {
 func TestKeyContinueTwiceSkipsTheDownload(t *testing.T) {
 	st := newState()
 	f := newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay)
-	key(f, st, "tab")
+	key(f, st, "down")
 	key(f, st, "enter")
 	require.True(t, f.Holding())
 	sent(key(f, st, "space"))
@@ -177,8 +177,8 @@ func TestUnlockStartsSystemAuth(t *testing.T) {
 	require.Zero(t, u.req, "esc stops waiting")
 	require.True(t, u.typing(), "and the password field takes over")
 
-	key(f, st, "tab")
-	require.True(t, u.system, "tab asks for Touch ID again")
+	key(f, st, "enter")
+	require.True(t, u.system, "enter on the empty field asks for Touch ID again")
 	key(f, st, "esc")
 
 	typed(f, st, "secret")
@@ -242,7 +242,7 @@ func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
 	j := f.top().(*join)
 	key(f, st, "enter")
 	require.Equal(t, "Type your master password.", j.err)
-	key(f, st, "tab")
+	key(f, st, "down")
 	key(f, st, "enter")
 	r, ok := f.top().(*recoverForm)
 	require.True(t, ok)
@@ -316,11 +316,11 @@ func TestFormsWalkToEveryButton(t *testing.T) {
 		var seen []string
 		for range c.stops {
 			seen = append(seen, focusOf(c.f.top()))
-			key(c.f, st, "tab")
+			key(c.f, st, "down")
 		}
 		require.ElementsMatch(t, c.stops, seen, name+": tab reaches every stop")
 		require.Equal(t, c.stops[0], focusOf(c.f.top()), name+": and wraps")
-		key(c.f, st, "shift+tab")
+		key(c.f, st, "up")
 		require.Equal(t, c.stops[len(c.stops)-1], focusOf(c.f.top()), name+": shift+tab goes back")
 	}
 }
@@ -331,7 +331,7 @@ func TestCancelButtonsByKeyboard(t *testing.T) {
 	for name, fm := range map[string]form{"change": newChange(), "new key": newAskKey()} {
 		f := newFlow(st, fm, true, exitClose)
 		for focusOf(f.top()) != "btn:cancel" {
-			key(f, st, "tab")
+			key(f, st, "down")
 		}
 		require.Equal(t, []tea.Msg{core.CloseWindow{Screen: f}}, sent(key(f, st, "enter")), name)
 	}

@@ -224,7 +224,7 @@ func (c *Clashes) Actions(*core.State) []core.Action {
 	if c.busy() {
 		return nil
 	}
-	move := core.Action{Key: "tab", Label: "move"}
+	move := core.Action{Key: "↑↓", Label: "move"}
 	if len(c.list) > 1 {
 		move.Key = "↑↓"
 	}

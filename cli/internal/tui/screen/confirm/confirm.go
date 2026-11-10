@@ -33,7 +33,7 @@ func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		case "esc":
 			return c, core.Close(c)
 		// two buttons, so every move lands on the other one
-		case "left", "right", "tab", "shift+tab":
+		case "left", "right", "up", "down":
 			c.active = 1 - c.active
 		case "enter", "space":
 			return c, c.press(st, c.active)

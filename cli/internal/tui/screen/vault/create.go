@@ -146,7 +146,7 @@ func (c *create) actions(*core.State) []core.Action {
 	if c.at == "field:0" && c.np.again.Len() == 0 {
 		next.Label = "Next"
 	}
-	return []core.Action{next, {Key: "tab", Label: "Next"}}
+	return []core.Action{next, {Key: "↑↓", Label: "Move"}}
 }
 
 func (c *create) typing() bool               { return fieldAt(c.at) >= 0 }

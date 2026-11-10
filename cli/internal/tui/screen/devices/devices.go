@@ -302,7 +302,7 @@ func (s *Devices) Actions(*core.State) []core.Action {
 	if s.at == "btn:remove" {
 		enter = core.Action{Key: "enter", Label: "remove", Danger: true}
 	}
-	move := core.Action{Key: "tab", Label: "move"}
+	move := core.Action{Key: "↑↓", Label: "move"}
 	if len(s.list) > 1 {
 		move.Key = "↑↓"
 	}

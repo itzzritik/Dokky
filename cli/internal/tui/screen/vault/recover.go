@@ -278,7 +278,7 @@ func (r *recoverForm) actions(*core.State) []core.Action {
 	if r.filled(fieldAt(r.at)) {
 		enter.Label = "Next"
 	}
-	return []core.Action{enter, {Key: "tab", Label: "Next"}}
+	return []core.Action{enter, {Key: "↑↓", Label: "Move"}}
 }
 
 func (r *recoverForm) typing() bool               { return fieldAt(r.at) >= 0 }

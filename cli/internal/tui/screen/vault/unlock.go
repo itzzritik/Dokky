@@ -11,7 +11,8 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-// Forged's unlock card: system auth starts by itself, esc falls back to the master password, tab asks again
+// Forged's unlock card: system auth starts by itself, esc falls back to the master password, enter on the empty
+// field asks again; tab is never used, it moves focus out of a browser terminal
 type unlock struct {
 	force  bool // the view was locked, so a live session is not enough
 	pw     *ui.Secret
@@ -74,8 +75,6 @@ func (u *unlock) click(id string, f *Flow, st *core.State) tea.Cmd {
 	switch {
 	case id == "key:esc":
 		return u.key(core.Press("esc"), f, st)
-	case id == "key:tab":
-		return u.key(core.Press("tab"), f, st)
 	case u.busy():
 		return nil
 	case id == "field:pw" || id == "link:forgot":
@@ -108,8 +107,6 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		return nil
 	case k == "esc":
 		return f.back()
-	case k == "tab" && offered(st):
-		return u.ask(st, api.AuthSystem)
 	case k == "ctrl+r":
 		u.reveal = !u.reveal
 		u.pw.Reveal = u.reveal
@@ -201,7 +198,12 @@ func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 	} else if u.at == "link:forgot" {
 		u.at = "field:pw"
 	}
-	win.Buttons = []ui.Btn{{ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, "Unlock", "Unlocking"), Primary: true}}
+	// the button says what enter does: system auth on the empty field, else unlock with what was typed
+	label := "Unlock"
+	if u.pw.Len() == 0 && offered(st) && !waiting {
+		label = upper(systemName(st.Snap.Vault))
+	}
+	win.Buttons = []ui.Btn{{ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, label, "Unlocking"), Primary: true}}
 	win.Active = 0
 	win.Body = body
 	return y
@@ -216,14 +218,13 @@ func (u *unlock) actions(st *core.State) []core.Action {
 		return nil
 	}
 	enter := core.Action{Key: "enter", Label: "Unlock"}
-	if u.at == "link:forgot" {
+	switch {
+	case u.at == "link:forgot":
 		enter.Label = "Reset password"
+	case u.pw.Len() == 0 && offered(st):
+		enter.Label = upper(systemName(st.Snap.Vault))
 	}
-	acts := []core.Action{enter}
-	if offered(st) {
-		acts = append(acts, core.Action{Key: "tab", Label: upper(systemName(st.Snap.Vault))})
-	}
-	return acts
+	return []core.Action{enter, {Key: "↓", Label: "Forgot password"}}
 }
 
 func (u *unlock) typing() bool  { return u.at == "field:pw" }
