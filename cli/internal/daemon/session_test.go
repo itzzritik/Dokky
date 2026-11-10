@@ -257,3 +257,12 @@ func TestDaemonTableIsGated(t *testing.T) {
 	require.Equal(t, api.ErrSessionRequired, codeOf(t, err))
 	require.EqualError(t, err, "Open dokky and create a master password to change this.")
 }
+
+// a lost device key can't open the vault after a prompt, so none is shown
+func TestNoPromptWithoutTheDeviceKey(t *testing.T) {
+	_, k, h := newLocked(t, nil)
+	require.NoError(t, k.device.Delete())
+	offerSystem(k, true)
+	k.prompt = func(context.Context, string) error { t.Error("prompted with no device key"); return nil }
+	require.Equal(t, api.ErrPasswordRequired, codeOf(t, invoke(t, h, api.MSessionOpen, api.SessionParams{Method: api.AuthSystem}, nil)))
+}

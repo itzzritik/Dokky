@@ -359,25 +359,32 @@ func (k *keeper) systemRefused(f *vault.File, remote bool) error {
 	return nil
 }
 
-// checkSystem shows the system prompt, then opens the account key with the device key
+// checkSystem opens the account key with the device key once the system prompt confirms the person
 func (k *keeper) checkSystem(ctx context.Context, f *vault.File, remote bool, reason string) ([]byte, error) {
 	if err := k.systemRefused(f, remote); err != nil {
 		return nil, err
 	}
-	switch err := k.prompt(ctx, reason); {
-	case errors.Is(err, sysauth.ErrCancelled):
-		return nil, &codedError{api.ErrCancelled, "The system prompt was cancelled."}
-	case errors.Is(err, sysauth.ErrUnavailable):
-		return nil, &codedError{api.ErrSystemUnavailable, "The system prompt could not open: type your master password."}
-	case err != nil:
-		return nil, &codedError{api.ErrSystemUnavailable, "The system prompt failed: " + err.Error()}
-	}
+	// opened first, so a lost device key asks for the password rather than for a prompt that can't open anything
 	ak, err := k.openWithDevice(f)
 	if err != nil {
 		return nil, &codedError{api.ErrPasswordRequired, "The key saved on this computer no longer opens dokky. Enter your master password to unlock it."}
 	}
+	if err := k.prompt(ctx, reason); err != nil {
+		vault.Zero(ak)
+		return nil, promptFailed(err)
+	}
 	k.stampSystem()
 	return ak, nil
+}
+
+func promptFailed(err error) error {
+	switch {
+	case errors.Is(err, sysauth.ErrCancelled):
+		return &codedError{api.ErrCancelled, "The system prompt was cancelled."}
+	case errors.Is(err, sysauth.ErrUnavailable):
+		return &codedError{api.ErrSystemUnavailable, "The system prompt could not open. Enter your master password to unlock dokky."}
+	}
+	return &codedError{api.ErrSystemUnavailable, "The system prompt failed: " + err.Error()}
 }
 
 // a system auth slides the password window. best effort: a vault change under way skips the stamp, which only
@@ -397,7 +404,8 @@ func (k *keeper) stampSystem() {
 }
 
 // holdFor takes the vault lock for a typed password, which saves vault.json; a system prompt can wait minutes
-// for the person and changes nothing, so it never holds up a password typed meanwhile. returns the release
+// for the person, so it never holds up a password typed meanwhile and stamps vault.json only if the lock is free.
+// returns the release
 func (k *keeper) holdFor(method string) func() {
 	if method == api.AuthSystem {
 		return func() {}
