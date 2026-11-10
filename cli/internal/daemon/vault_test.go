@@ -280,6 +280,10 @@ func TestLockAndUnlockRemountsDrives(t *testing.T) {
 
 	c, err := ipc.Connect(dir)
 	require.NoError(t, err)
+	var ie *ipc.Error
+	require.ErrorAs(t, c.Call(context.Background(), api.MVaultLock, nil, nil), &ie)
+	require.Equal(t, api.ErrSessionRequired, ie.Code, "the start opened the vault, not a session")
+	require.NoError(t, c.Call(context.Background(), api.MSessionOpen, api.SessionParams{Method: api.AuthPassword, Password: testPassword}, nil))
 	require.NoError(t, c.Call(context.Background(), api.MVaultLock, nil, nil))
 	c.Close()
 	require.Eventually(t, func() bool { return status().Locked }, 10*time.Second, 10*time.Millisecond)
@@ -619,6 +623,8 @@ func TestChangePasswordGoesToTheAccountFirst(t *testing.T) {
 	require.NoError(t, err)
 
 	var r api.RecoveryKeyReply
+	require.Equal(t, api.ErrSessionRequired, codeOf(t, call(t, d, api.MVaultNewRecoveryKey, api.PasswordParams{Password: next}, &r)), "the change ended the session")
+	require.NoError(t, call(t, d, api.MSessionOpen, api.SessionParams{Method: api.AuthPassword, Password: next}, nil))
 	require.NoError(t, call(t, d, api.MVaultNewRecoveryKey, api.PasswordParams{Password: next}, &r))
 	vf, err = vault.Load(dir)
 	require.NoError(t, err)
@@ -674,6 +680,7 @@ func TestPasswordWindow(t *testing.T) {
 	require.True(t, stamp().After(first))
 	clock.add(6 * 24 * time.Hour)
 	require.False(t, vaultOf(d).PasswordDue, "twelve days on, the last system auth keeps the seven day window open")
+	require.NoError(t, call(t, d, api.MVaultUnlock, sys, nil))
 
 	const next = "Saffron-Pebble-Drum-64"
 	require.NoError(t, call(t, d, api.MVaultChangePassword, api.ChangePasswordParams{Current: testPassword, Next: next}, nil))

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -13,7 +14,50 @@ import (
 // what the system prompt says when the vault is already open
 const sessionReason = "Unlock dokky"
 
-var errLockedMeanwhile = &codedError{api.ErrCancelled, "The screen locked before dokky unlocked. Try again."}
+// what works with no session: the lock screen, read-only views that hand out no secret, the launch handshake and
+// the daemon's own work on request. anything else changes something or hands out a secret, so a method added
+// later needs a session until it is listed here
+var withoutSession = []string{
+	"status", api.MState, api.MActivity, api.MEvents, api.MEventsSeen, "oauth.status", "providers", api.MCatalog,
+	api.MSyncKick, "sync.now", "update.check", "update.restart", "daemon.restart",
+	api.MSessionOpen, api.MSessionClose, api.MVaultUnlock, api.MVaultRecover,
+}
+
+// first run has no vault, so no session to give: signing in and creating or joining the master password work
+// until a vault exists, then they need one like everything else
+var beforeVault = []string{"login.start", "login.poll", "login.resolve", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
+
+var (
+	errLockedMeanwhile = &codedError{api.ErrCancelled, "The screen locked before dokky unlocked. Try again."}
+	errSessionRequired = &codedError{api.ErrSessionRequired, "Open dokky and unlock it to change this."}
+	errVaultFirst      = &codedError{api.ErrSessionRequired, "Open dokky and create a master password to change this."}
+)
+
+// sessionGate refuses h unless a session is live, or m works without one
+func sessionGate(k *keeper, m string, h ipc.Handler) ipc.Handler {
+	if slices.Contains(withoutSession, m) {
+		return h
+	}
+	first := slices.Contains(beforeVault, m)
+	return func(ctx context.Context, raw json.RawMessage) (any, error) {
+		if err := k.needSession(first); err != nil {
+			return nil, err
+		}
+		return h(ctx, raw)
+	}
+}
+
+func (k *keeper) needSession(beforeVault bool) error {
+	switch {
+	case k.live():
+		return nil
+	case k.state() != api.VaultSetup:
+		return errSessionRequired
+	case beforeVault:
+		return nil
+	}
+	return errVaultFirst
+}
 
 // the monotonic clock stops while the computer sleeps, so wall time also ends a session whose sleep event was
 // missed

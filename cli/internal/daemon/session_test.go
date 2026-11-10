@@ -2,11 +2,15 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
+	"github.com/itzzritik/dokky/cli/internal/store"
 	"github.com/itzzritik/dokky/cli/internal/sysauth"
 	"github.com/stretchr/testify/require"
 )
@@ -39,6 +43,7 @@ func sessionKeeper(t *testing.T) (*Daemon, *testClock, *atomic.Int32) {
 	d, _, _ := newTestDaemon(t, sample())
 	clock := &testClock{t: time.Now()}
 	d.vk.now = clock.now
+	d.vk.endSession("a fresh start")
 	var published atomic.Int32
 	d.vk.onPublish(func() { published.Add(1) })
 	return d, clock, &published
@@ -132,6 +137,7 @@ func TestSessionEnds(t *testing.T) {
 func TestProofsStartASession(t *testing.T) {
 	t.Run("creating the master password", func(t *testing.T) {
 		d, _, _ := newSetupDaemon(t, sample())
+		d.vk.endSession("a fresh start")
 		require.Equal(t, "no_vault", codeOf(t, call(t, d, api.MSessionOpen, api.SessionParams{Method: api.AuthPassword, Password: testPassword}, nil)))
 		require.Equal(t, api.ErrWeakPassword, codeOf(t, call(t, d, api.MVaultSetup, api.PasswordParams{Password: "short"}, nil)))
 		require.False(t, vaultOf(d).Session)
@@ -145,9 +151,13 @@ func TestProofsStartASession(t *testing.T) {
 		require.True(t, v.Session)
 		require.True(t, v.PasswordDue, "the next unlock still asks for the new password once")
 	})
-	t.Run("a new recovery key", func(t *testing.T) {
-		d, _, _ := sessionKeeper(t)
+	t.Run("a new recovery key starts the four hours again", func(t *testing.T) {
+		d, clock, _ := sessionKeeper(t)
+		require.Equal(t, api.ErrSessionRequired, codeOf(t, call(t, d, api.MVaultNewRecoveryKey, api.PasswordParams{Password: testPassword}, nil)))
+		require.NoError(t, call(t, d, api.MSessionOpen, api.SessionParams{Method: api.AuthPassword, Password: testPassword}, nil))
+		clock.add(3 * time.Hour)
 		require.NoError(t, call(t, d, api.MVaultNewRecoveryKey, api.PasswordParams{Password: testPassword}, nil))
+		clock.add(2 * time.Hour)
 		require.True(t, vaultOf(d).Session)
 	})
 }
@@ -187,4 +197,63 @@ func TestSessionPromptCancelled(t *testing.T) {
 	d.vk.prompt = func(context.Context, string) error { return sysauth.ErrCancelled }
 	require.Equal(t, api.ErrCancelled, codeOf(t, call(t, d, api.MSessionOpen, api.SessionParams{Method: api.AuthSystem}, nil)))
 	require.False(t, d.vk.live())
+}
+
+func TestSessionGate(t *testing.T) {
+	// reviewed one by one: the lock screen, read-only views that hand out no secret, the launch handshake
+	open := []string{"status", api.MState, api.MActivity, api.MEvents, api.MEventsSeen, "oauth.status", "providers", api.MCatalog,
+		api.MSyncKick, "sync.now", "update.check", "update.restart", "daemon.restart",
+		api.MSessionOpen, api.MSessionClose, api.MVaultUnlock, api.MVaultRecover}
+	first := []string{"login.start", "login.poll", "login.resolve", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
+	table := (&Daemon{}).handlers(nil)
+	for _, m := range append(slices.Clone(open), first...) {
+		require.Contains(t, table, m, "a listed method that does not exist")
+	}
+	ran := func(context.Context, json.RawMessage) (any, error) { return "ran", nil }
+	methods := append(slices.Collect(maps.Keys(table)), "a.method.added.later")
+	for _, state := range []string{api.VaultUnlocked, api.VaultSetup} {
+		t.Run(state, func(t *testing.T) {
+			d, _, _ := newTestDaemon(t, sample())
+			if state == api.VaultSetup {
+				d, _, _ = newSetupDaemon(t, sample())
+			}
+			k := d.vk
+			k.endSession("a fresh start")
+			for _, m := range methods {
+				_, err := sessionGate(k, m, ran)(context.Background(), nil)
+				if slices.Contains(open, m) || (state == api.VaultSetup && slices.Contains(first, m)) {
+					require.NoError(t, err, m)
+					continue
+				}
+				require.Equal(t, api.ErrSessionRequired, codeOf(t, err), m)
+			}
+			inSession(k)
+			for _, m := range methods {
+				_, err := sessionGate(k, m, ran)(context.Background(), nil)
+				require.NoError(t, err, "%s with a session", m)
+			}
+		})
+	}
+}
+
+func TestDaemonTableIsGated(t *testing.T) {
+	d, f, _ := newTestDaemon(t, sample("m1"))
+	d.vk.endSession("a fresh start")
+	d.start()
+	require.Contains(t, f.mounted, "m1", "the daemon's own work needs no session")
+
+	err := call(t, d, "mount.put", store.Mount{ID: "m9", Name: "later", ServiceID: "s1", VFS: store.DefaultVFS()}, nil)
+	require.Equal(t, api.ErrSessionRequired, codeOf(t, err))
+	require.EqualError(t, err, "Open dokky and unlock it to change this.")
+	require.Equal(t, api.ErrSessionRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{}, nil)))
+	require.Equal(t, api.ErrSessionRequired, codeOf(t, call(t, d, api.MVaultSetup, api.PasswordParams{Password: testPassword}, nil)), "a vault exists, so setup needs a session too")
+	require.NoError(t, call(t, d, "status", nil, nil))
+	require.NoError(t, call(t, d, api.MSessionOpen, api.SessionParams{Method: api.AuthPassword, Password: testPassword}, nil))
+	require.NoError(t, call(t, d, "mount.put", store.Mount{ID: "m9", Name: "later", ServiceID: "s1", VFS: store.DefaultVFS()}, nil))
+
+	s, _, _ := newSetupDaemon(t, sample())
+	s.vk.endSession("a fresh start")
+	err = call(t, s, "mount.put", store.Mount{ID: "m9", Name: "later", ServiceID: "s1", VFS: store.DefaultVFS()}, nil)
+	require.Equal(t, api.ErrSessionRequired, codeOf(t, err))
+	require.EqualError(t, err, "Open dokky and create a master password to change this.")
 }

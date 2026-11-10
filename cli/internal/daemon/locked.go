@@ -147,11 +147,6 @@ func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	k := l.e.k
 	h := map[string]ipc.Handler{}
-	refuse := func(context.Context, json.RawMessage) (any, error) { return nil, errVaultLocked }
-	// every method the unlocked daemon has, so each answers locked rather than unknown
-	for m := range (&Daemon{}).handlers(nil) {
-		h[m] = refuse
-	}
 	h["status"] = func(context.Context, json.RawMessage) (any, error) { return l.status(), nil }
 	h[api.MState] = func(context.Context, json.RawMessage) (any, error) { return l.snapshot(), nil }
 	open := func(ctx context.Context, p api.SessionParams) (struct{}, error) {
@@ -183,6 +178,16 @@ func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		return nil, nil
 	}
 	h["update.check"] = decodeCtx(func(ctx context.Context, _ struct{}) (checkReply, error) { return l.shell.updateCheck(ctx) })
+	for m, fn := range h {
+		h[m] = sessionGate(k, m, fn)
+	}
+	// every other method the unlocked daemon has answers locked rather than unknown
+	refuse := func(context.Context, json.RawMessage) (any, error) { return nil, errVaultLocked }
+	for m := range (&Daemon{}).handlers(nil) {
+		if _, ok := h[m]; !ok {
+			h[m] = refuse
+		}
+	}
 	return h
 }
 

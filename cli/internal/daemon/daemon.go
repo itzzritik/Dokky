@@ -704,6 +704,9 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		h[m] = proving(d.vk, h[m])
 	}
 	for m, fn := range h {
+		h[m] = sessionGate(d.vk, m, fn)
+	}
+	for m, fn := range h {
 		if !slices.Contains(whileRemoved, m) {
 			h[m] = d.refuseRemoved(fn)
 		}

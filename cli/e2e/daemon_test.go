@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/daemon"
 	"github.com/itzzritik/dokky/cli/internal/engine"
 	"github.com/itzzritik/dokky/cli/internal/ipc"
@@ -22,6 +23,8 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/store"
 	"github.com/stretchr/testify/require"
 )
+
+const e2ePassword = "Orchard-Signal-Ferry-62"
 
 type daemonProc struct {
 	cmd  *exec.Cmd
@@ -215,6 +218,8 @@ func setupDaemonMount(t *testing.T) (point string, d *daemonProc) {
 	point = engine.DefaultMountPoint(home, "Media", runtime.GOOS)
 	guardMount(t, point)
 	d = startDaemon(t)
+	// changes need a session, which creating the master password starts
+	require.NoError(t, ipcCall(api.MVaultSetup, api.PasswordParams{Password: e2ePassword}, nil))
 	addWebDAVMount(t, url, "media")
 	require.Contains(t, dokky(t, "mount", "media"), "Media is mounted")
 	readable(t, mountedAt(t, "media"), "hello.txt", "hello")
