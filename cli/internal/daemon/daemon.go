@@ -299,6 +299,8 @@ func runUnlocked(ctx context.Context, e phaseEnv, ak []byte) (err error) {
 	}
 	restart := make(chan struct{}, 1)
 	d.srv = ipc.NewServer(ln, d.handlers(restart))
+	k.onPublish(d.publish)
+	defer k.onPublish(nil)
 	srvCtx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- d.srv.Serve(srvCtx) }()
@@ -666,8 +668,16 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		api.MVaultSetup: decodeCtx(func(ctx context.Context, p api.PasswordParams) (api.RecoveryKeyReply, error) {
 			return d.vaultSetup(ctx, p.Password)
 		}),
+		api.MSessionOpen: decodeCtx(func(ctx context.Context, p api.SessionParams) (struct{}, error) {
+			return struct{}{}, d.sessionOpen(ctx, p)
+		}),
+		api.MSessionClose: func(context.Context, json.RawMessage) (any, error) {
+			d.vk.endSession("closed")
+			return nil, nil
+		},
+		// session.open with Force: it always proves the person
 		api.MVaultUnlock: decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
-			return struct{}{}, d.vaultUnlockOpen(ctx, p)
+			return struct{}{}, d.sessionOpen(ctx, api.SessionParams{Method: p.Method, Password: p.Password, Remote: p.Remote, Force: true})
 		}),
 		api.MVaultRecover: decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
 			return struct{}{}, d.vaultRecover(ctx, p)
@@ -690,6 +700,9 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	for _, m := range kickAfter {
 		h[m] = d.kicked(h[m])
 	}
+	for _, m := range provesIt {
+		h[m] = proving(d.vk, h[m])
+	}
 	for m, fn := range h {
 		if !slices.Contains(whileRemoved, m) {
 			h[m] = d.refuseRemoved(fn)
@@ -701,6 +714,10 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 // a change made here pulls right after, so this device also sees what others changed
 var kickAfter = []string{"mount", "unmount", "service.put", "service.delete", "mount.put", "mount.delete", "service.configure", "settings.set", "devices.revoke", "devices.rename",
 	api.MDriveAdd, api.MDriveUpdate, api.MDriveRemove, api.MDriveConnect, api.MDriveDisconnect}
+
+// a call that checks the master password or recovery key starts a session; session.open and vault.unlock start
+// their own
+var provesIt = []string{api.MVaultSetup, api.MVaultRecover, api.MVaultJoin, api.MVaultJoinRecover, api.MVaultNewRecoveryKey}
 
 func (d *Daemon) kicked(h ipc.Handler) ipc.Handler {
 	return func(ctx context.Context, raw json.RawMessage) (any, error) {

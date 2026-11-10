@@ -213,6 +213,7 @@ func (d *Daemon) follow(ctx context.Context, acct *store.Account, ref *dsync.Vau
 			return
 		}
 		d.log.Info("the master password changed on another device")
+		k.endSession("the master password changed on another device")
 		d.publish()
 	}
 	k.setServerVersion(remote.Version)

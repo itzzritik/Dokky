@@ -25,8 +25,8 @@ const (
 	lockedNote   = "dokky is locked. Open dokky to unlock your drives."
 )
 
-// keeper holds the vault for the whole process. the key outlives a lock and unlock, each of which starts a new
-// Daemon. lock order: op, then the Daemon's syncMu, opMu and mu, then mu here
+// keeper holds the vault for the whole process. the key and the control session outlive a lock and unlock, each
+// of which starts a new Daemon. lock order: op, then the Daemon's syncMu, opMu and mu, then mu here
 type keeper struct {
 	dir     string
 	log     *slog.Logger
@@ -54,6 +54,11 @@ type keeper struct {
 	sysName       string
 	sysAt         time.Time
 	sysBusy       bool
+	// the control session: changes need it live, drives never do. gen goes up whenever one ends, so a prompt
+	// answered after a screen lock opens nothing
+	sessionUntil time.Time
+	sessionGen   uint64
+	published    func() // the running phase's publish
 }
 
 func newKeeper(dir string, log *slog.Logger) *keeper {
@@ -163,6 +168,7 @@ func (k *keeper) lock() {
 	defer k.mu.Unlock()
 	vault.Zero(k.ak)
 	k.ak = nil
+	k.endLocked()
 }
 
 // swap puts a saved file in place, with its key when that changed
@@ -207,6 +213,7 @@ func (k *keeper) erase() error {
 	vault.Zero(k.ak)
 	k.file, k.ak, k.need, k.paused = nil, nil, "", false
 	k.serverKeyID, k.serverVersion, k.legacyCount = "", 0, 0
+	k.endLocked()
 	k.mu.Unlock()
 	err := os.Remove(filepath.Join(k.dir, vault.FileName))
 	if errors.Is(err, os.ErrNotExist) {
@@ -273,7 +280,7 @@ func (k *keeper) view(signedIn bool) api.Vault {
 	now := k.now()
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	v := api.Vault{State: k.stateLocked(), Need: k.need, System: name}
+	v := api.Vault{State: k.stateLocked(), Need: k.need, System: name, Session: sessionLive(k.sessionUntil, now)}
 	f := k.file
 	if f == nil {
 		return v

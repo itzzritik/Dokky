@@ -81,6 +81,8 @@ func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 	}
 	restart := make(chan struct{}, 1)
 	l.srv = ipc.NewServer(ln, l.handlers(restart))
+	e.k.onPublish(l.publish)
+	defer e.k.onPublish(nil)
 	srvCtx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- l.srv.Serve(srvCtx) }()
@@ -140,8 +142,10 @@ func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 	}
 }
 
-// locked answers state, status, vault.unlock, vault.recover, daemon.restart, update.check and the event stream
+// locked answers state, status, session.open and close, vault.unlock, vault.recover, daemon.restart,
+// update.check and the event stream. opening the session opens the vault, which starts the unlocked phase
 func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
+	k := l.e.k
 	h := map[string]ipc.Handler{}
 	refuse := func(context.Context, json.RawMessage) (any, error) { return nil, errVaultLocked }
 	// every method the unlocked daemon has, so each answers locked rather than unknown
@@ -150,22 +154,30 @@ func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	}
 	h["status"] = func(context.Context, json.RawMessage) (any, error) { return l.status(), nil }
 	h[api.MState] = func(context.Context, json.RawMessage) (any, error) { return l.snapshot(), nil }
-	h[api.MVaultUnlock] = decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
-		ak, err := l.unlock(ctx, p)
-		if err != nil {
-			return struct{}{}, err
+	open := func(ctx context.Context, p api.SessionParams) (struct{}, error) {
+		ak, err := k.openSession(ctx, p, unlockReason)
+		// nil with no error: a session opened moments ago, whose key is already on its way
+		if ak != nil {
+			l.hand(ak)
 		}
-		l.hand(ak)
-		return struct{}{}, nil
+		return struct{}{}, err
+	}
+	h[api.MSessionOpen] = decodeCtx(open)
+	h[api.MSessionClose] = func(context.Context, json.RawMessage) (any, error) {
+		k.endSession("closed")
+		return nil, nil
+	}
+	h[api.MVaultUnlock] = decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
+		return open(ctx, api.SessionParams{Method: p.Method, Password: p.Password, Remote: p.Remote, Force: true})
 	})
-	h[api.MVaultRecover] = decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
+	h[api.MVaultRecover] = proving(k, decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
 		ak, err := l.recover(ctx, p)
 		if err != nil {
 			return struct{}{}, err
 		}
 		l.hand(ak)
 		return struct{}{}, nil
-	})
+	}))
 	h["daemon.restart"] = func(context.Context, json.RawMessage) (any, error) {
 		requestRestart(restart)
 		return nil, nil
@@ -202,12 +214,6 @@ func (l *lockedPhase) hand(ak []byte) {
 			vault.Zero(ak)
 		}
 	})
-}
-
-func (l *lockedPhase) unlock(ctx context.Context, p api.UnlockParams) ([]byte, error) {
-	k := l.e.k
-	defer k.holdFor(p.Method)()
-	return k.prove(ctx, p, unlockReason)
 }
 
 // recover works locked too. a device linked to an account changes the account's password first, reading the

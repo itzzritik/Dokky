@@ -317,21 +317,6 @@ func (d *Daemon) takeKey(nf *vault.File, ak []byte) error {
 	return nil
 }
 
-// vaultUnlockOpen is vault.unlock while already unlocked: a typed password restarts the password interval
-func (d *Daemon) vaultUnlockOpen(ctx context.Context, p api.UnlockParams) error {
-	k := d.vk
-	defer k.holdFor(p.Method)()
-	if k.state() == api.VaultSetup {
-		return errNoVault
-	}
-	ak, err := k.prove(ctx, p, unlockReason)
-	vault.Zero(ak)
-	if err == nil {
-		d.publish()
-	}
-	return err
-}
-
 func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 	k := d.vk
 	k.op.Lock()
@@ -354,15 +339,19 @@ func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 	return nil
 }
 
-// a rewrap only: the account key stays, so other devices keep working; the account changes first. the next
-// unlock asks for the new password once, so system auth trusts it again only after it is typed
+// a rewrap only: the account key stays, so other devices keep working; the account changes first. the session
+// ends and the next unlock asks for the new password once, so system auth trusts it again only after it is typed
 func (d *Daemon) changePassword(ctx context.Context, p api.ChangePasswordParams) error {
-	return d.rewrap(ctx, func(f *vault.File, ak []byte) error {
+	err := d.rewrap(ctx, func(f *vault.File, ak []byte) error {
 		next := []byte(p.Next)
 		defer vault.Zero(next)
 		f.PasswordOnce = true
 		return vault.Rewrap(f, ak, next, d.vk.now())
 	}, p.Current, p.Next)
+	if err == nil {
+		d.vk.endSession("the master password changed")
+	}
+	return err
 }
 
 func (d *Daemon) newRecoveryKey(ctx context.Context, password string) (api.RecoveryKeyReply, error) {
