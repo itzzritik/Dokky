@@ -13,7 +13,12 @@ const (
 	MVaultNewRecoveryKey = "vault.newRecoveryKey"
 	MVaultJoin           = "vault.join"
 	MVaultJoinRecover    = "vault.joinRecover"
+	MSessionOpen         = "session.open"
+	MSessionClose        = "session.close"
 )
+
+// SessionFor is how long one control session lasts; drives never need one, changes do
+const SessionFor = 4 * time.Hour
 
 // vault states
 const (
@@ -52,6 +57,7 @@ const (
 	ErrWeakPassword      = "weak_password"
 	ErrBadRecoveryKey    = "bad_recovery_key"
 	ErrGrantRequired     = "grant_required"
+	ErrSessionRequired   = "session_required"
 )
 
 var (
@@ -71,6 +77,15 @@ type Vault struct {
 	Legacy          int       `json:"legacy"`           // services on the server still waiting to be end-to-end encrypted
 	CooldownUntil   time.Time `json:"cooldownUntil,omitzero"`
 	KeyID           string    `json:"keyId,omitempty"`
+	Session         bool      `json:"session"` // a control session is live, so changes are allowed
+}
+
+// SessionParams opens a control session. a live one is reused unless Force, which the app sets after a lock
+type SessionParams struct {
+	Method   string `json:"method"`
+	Password string `json:"password,omitempty"`
+	Force    bool   `json:"force,omitempty"`
+	Remote   bool   `json:"remote,omitempty"` // the TUI runs over SSH, so no system prompt on this screen
 }
 
 type PasswordParams struct {
