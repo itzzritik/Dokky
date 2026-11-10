@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
+	"github.com/itzzritik/dokky/cli/internal/tui/water"
 )
 
 // one step of a vault screen, drawn into the flow's window
@@ -160,11 +161,8 @@ func cardHints(acts []core.Action) []core.Action {
 	return slices.DeleteFunc(slices.Clone(acts), func(a core.Action) bool { return a.Key == "enter" })
 }
 
-// NewStage is the gate every full screen shares; the app sets the band
-func NewStage() *ui.Stage { return &ui.Stage{New: Band} }
-
-// Band makes the water under the gate; nil leaves it out
-var Band func(w, rows int) ui.Band
+// NewStage is the gate every full screen shares, water along its bottom
+func NewStage() *ui.Stage { return &ui.Stage{New: water.NewBand} }
 
 func (f *Flow) Actions(st *core.State) []core.Action {
 	acts := f.top().actions(st)

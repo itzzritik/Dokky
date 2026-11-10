@@ -35,7 +35,7 @@ type Band interface {
 	Size() (w, rows int)
 	Step()
 	Lines() []string
-	// Particles above the band; top is the band's first screen row
+	// Particles in the air, above the band or above its waterline; top is the band's first screen row
 	Particles(top int) []Particle
 }
 
@@ -93,10 +93,10 @@ func (s *Stage) Layer(w, h int, now time.Time, card func(maxH int) *Window) *lip
 	if top >= 0 {
 		lim = top
 	}
-	win := card(lim - 2)
-	if win.H > lim-2 && top >= 0 {
+	// the card at its own height; when that needs the band's rows, the band goes
+	win := card(h - 2)
+	if win.H > lim-2 {
 		top, lim = -1, h
-		win = card(h - 2)
 	}
 	cardY := (h - win.H) / 2
 	if cardY+win.H > lim-1 {
@@ -128,7 +128,7 @@ func (s *Stage) Layer(w, h int, now time.Time, card func(maxH int) *Window) *lip
 	cr := rect{cardX, cardY, win.W, win.H}
 	if top >= 0 {
 		for _, pt := range s.band.Particles(top) {
-			if pt.X < 0 || pt.X >= w || pt.Row < 0 || pt.Row >= top || cr.has(pt.X, pt.Row) || mark.has(pt.X, pt.Row) {
+			if pt.X < 0 || pt.X >= w || pt.Row < 0 || pt.Row >= h || cr.has(pt.X, pt.Row) || mark.has(pt.X, pt.Row) {
 				continue
 			}
 			b.Put(pt.X, pt.Row, Paint(pt.Glyph, pt.Fg, nil, false))
