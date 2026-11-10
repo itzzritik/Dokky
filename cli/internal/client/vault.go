@@ -28,6 +28,7 @@ func (c *Client) VaultLock(ctx context.Context) error {
 	return c.call(ctx, slow, api.MVaultLock, nil, nil)
 }
 
+// Deprecated: removed with the TUI change; the daemon no longer answers vault.authorize
 func (c *Client) VaultAuthorize(ctx context.Context, p api.UnlockParams) (string, error) {
 	r, err := get[api.GrantReply](c, ctx, long, api.MVaultAuthorize, p)
 	return r.Grant, err

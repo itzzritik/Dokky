@@ -36,11 +36,6 @@ const STATUS_DEMO: TerminalStep[] = [
   {
     command: "cp ~/Movies/trip.mov ~/dokky/Work\\ OneDrive/",
     output: [],
-    pauseAfter: 1400,
-  },
-  {
-    command: 'dokky mount "Photos S3"',
-    output: ["Photos S3 is mounted at /Users/ritik/dokky/Photos S3"],
     pauseAfter: 3200,
   },
 ];
@@ -304,8 +299,9 @@ function TerminalSection() {
             Your clouds, from the terminal.
           </h2>
           <p className="mb-10 max-w-2xl text-lg leading-relaxed text-[#a1a1aa] lg:text-xl">
-            Run dokky for a full-screen app, or script it. Drives mount at login
-            and come back on their own after sleep, Wi-Fi changes and updates.
+            Run dokky for a full-screen app, or dokky status for a quick look.
+            Drives mount at login and come back on their own after sleep, Wi-Fi
+            changes and updates.
           </p>
           <div className="flex flex-wrap items-center gap-4">
             <GlitchButton className="h-12 px-8 text-sm" href="/docs">

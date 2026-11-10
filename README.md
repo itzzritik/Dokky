@@ -17,7 +17,7 @@ The first time you run `dokky`, the program is saved at `~/.local/bin/dokky` (on
 3. Add a mount: pick the service, choose a folder, give it a name.
 4. Mount it. Your files show up in `~/dokky/<name>`.
 
-You can also run `dokky mount <name>`, `dokky unmount <name>` and `dokky status`.
+To see every drive and the background service from a terminal, run `dokky status`. Everything that changes dokky happens in the app, unlocked.
 
 ## macOS, Linux and Windows
 
@@ -31,19 +31,23 @@ You can also run `dokky mount <name>`, `dokky unmount <name>` and `dokky status`
 
 ## Sync
 
-Sync is optional. Run `dokky login` to sign in with GitHub.
+Sync is optional. Open `dokky` and choose Sign in to sign in with GitHub.
 
 - Syncs: your services, your mounts and their saved logins, across all your devices.
 - Does not sync: your files and the cache.
-- `dokky logout` removes your account's data from this device and clears the local cache. It waits for queued uploads first. If a mount that is not mounted still has files waiting to upload, it stops and asks you to mount it so they can finish. `--force` skips all of this, and any uploads that have not been sent are lost.
+- Removing this device in Settings signs it out, then removes your account's data from this device and clears the local cache once its transfers finish.
 - If you revoke a device from another device, it unmounts everything and wipes its dokky data the next time it talks to the server.
 - Signing in on another device asks for the same master password.
 
-Privacy: saved logins are end-to-end encrypted. dokky seals them on your device with XChaCha20-Poly1305, using a key that only your master password (stretched with Argon2id) or your recovery key can open. The server stores only ciphertext and can't decrypt it. It does see the names of your services and mounts, their folders and cache settings, so the dashboard can show them. Nobody can reset your master password, so keep the recovery key dokky shows you somewhere safe. By default dokky unlocks by itself at startup so drives mount at login. You can ask for Touch ID, Windows Hello, your system password or the master password instead.
+Privacy: saved logins are end-to-end encrypted. dokky seals them on your device with XChaCha20-Poly1305, using a key that only your master password (stretched with Argon2id) or your recovery key can open. The server stores only ciphertext and can't decrypt it. It does see the names of your services and mounts, their folders and cache settings, so the dashboard can show them. Nobody can reset your master password, so keep the recovery key dokky shows you somewhere safe.
+
+## Locking
+
+Your drives always open by themselves at startup and keep working whether the app is open, closed or locked. Changes are different: adding, editing or removing drives, settings and your account all need the app open and unlocked with Touch ID, Windows Hello, your system password or the master password. One unlock lasts 4 hours, and ends sooner when your screen locks, the computer sleeps, you press `l`, the app sits idle for 4 minutes or the master password changes. So you don't forget the master password, dokky asks for it instead when you haven't unlocked for 7, 15 or 30 days (7 by default, set in Settings), at least every 90 days, and once after it changes.
 
 ## Updates
 
-dokky updates itself in the background with npm: every hour it checks for a new version, runs `npm i -g dokky@latest` with the npm that installed it, downloads the new program, and switches once nothing is uploading. Turn it off in Settings, Automatic updates. You can also update with `npm i -g dokky` yourself; the next time you run `dokky` it switches to the new version. To update right now, run `dokky update`. To go back to a specific version, run `dokky update --to <version>`. That also turns auto update off until you run a plain `dokky update`. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
+dokky updates itself in the background with npm: every hour it checks for a new version, runs `npm i -g dokky@latest` with the npm that installed it, downloads the new program, and switches once nothing is uploading. Turn it off in Settings, Automatic updates. You can also update with `npm i -g dokky` yourself; the next time you run `dokky` it switches to the new version. To update right now, press `u` in the app when it says an update is ready. Setting `DOKKY_NO_UPDATE=1` also turns auto update off, but only when it is set in the environment of the dokky background service, not in your shell.
 
 ## Uninstall
 

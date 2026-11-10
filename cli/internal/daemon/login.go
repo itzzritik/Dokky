@@ -67,7 +67,7 @@ func (d *Daemon) loginStart(ctx context.Context) (loginStartReply, error) {
 		if acct.Pending {
 			return loginStartReply{Resume: true}, nil
 		}
-		return loginStartReply{}, errors.New("already logged in, run dokky logout first")
+		return loginStartReply{}, errors.New("already logged in, sign out in dokky first")
 	}
 	base := dsync.APIBase()
 	r, err := (&dsync.Client{Base: base}).LoginStart(ctx, deviceInfo())
@@ -98,7 +98,7 @@ func (d *Daemon) loginPoll(ctx context.Context) (loginPollReply, error) {
 	d.mu.Unlock()
 	if acct == nil {
 		if flow == nil {
-			return loginPollReply{}, errors.New("no login in progress, run dokky login")
+			return loginPollReply{}, errors.New("no login in progress, sign in from dokky")
 		}
 		r, err := (&dsync.Client{Base: flow.base}).LoginPoll(ctx, flow.deviceCode)
 		if err != nil {

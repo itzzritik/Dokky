@@ -112,21 +112,12 @@ function Steps({ items }: { items: [string, ReactNode][] }) {
 }
 
 const COMMANDS: [string, string][] = [
-  ["dokky", "Open the app"],
-  ["dokky login", "Sign this computer in to your dokky account"],
-  [
-    "dokky logout",
-    "Remove this computer from your account and erase dokky's data on it",
-  ],
-  ['dokky mount "<name>"', "Mount a drive"],
-  ['dokky unmount "<name>"', "Unmount a drive"],
+  ["dokky", "Open the app, where every change happens"],
   ["dokky status", "Show every drive and the background service"],
   [
     "dokky doctor",
     "Check this computer and show the exact fix for anything wrong",
   ],
-  ["dokky fix", "Find and fix problems on this computer"],
-  ["dokky update", "Update dokky now"],
   [
     "dokky completion",
     "Print shell completion for bash, zsh, fish or PowerShell",
@@ -251,12 +242,6 @@ export default function DocsPage() {
               </a>
               .
             </p>
-            <p>
-              To sign in from the terminal, run <Code>dokky login</Code>. It
-              shows a code and opens dokky in your browser; approve the code to
-              sign this computer in.
-            </p>
-            <CodeBlock title="Sign in from the terminal">dokky login</CodeBlock>
           </Section>
 
           <Section id="add-drive" title="Add a drive">
@@ -302,9 +287,6 @@ export default function DocsPage() {
               In Drives, select a drive and press <Code>m</Code> to mount or
               unmount it. Press <Code>enter</Code> for its details and settings.
             </p>
-            <CodeBlock title="From the terminal">
-              {'dokky mount "Home NAS"\ndokky unmount "Home NAS"'}
-            </CodeBlock>
             <p>
               A drive never unmounts while it still has files uploading.
               Ejecting it in Finder or Explorer waits for them too.
@@ -323,11 +305,10 @@ export default function DocsPage() {
               its uploads, then erases its dokky data the next time it is
               online.
             </p>
-            <CodeBlock title="Remove this computer">
-              {
-                "dokky logout          # waits for uploads to finish\ndokky logout --force  # erases right away"
-              }
-            </CodeBlock>
+            <p>
+              To remove this computer, choose Remove this device in Settings. It
+              signs out and erases its dokky data once its uploads finish.
+            </p>
             <Note title="Lost or stolen">
               Remove the computer from the dashboard and tick Lost or stolen. It
               erases itself the moment it comes online, without waiting for
@@ -355,16 +336,21 @@ export default function DocsPage() {
                 ],
                 [
                   "Unlock",
-                  "By default dokky unlocks by itself when your computer starts, so drives mount at login with no prompt. You can ask for Touch ID, Windows Hello or your system password instead, or the master password every time.",
+                  "Your drives open by themselves when your computer starts and keep working whether the app is open, closed or locked. Changes need the app unlocked with Touch ID, Windows Hello, your system password or the master password.",
                 ],
               ]}
             />
             <p>
-              In Settings, Security you can also lock dokky (this unmounts your
-              drives), lock the window when you step away, choose how often the
-              master password is needed instead of Touch ID or Windows Hello,
-              change the master password and make a new recovery key. dokky asks
-              you to confirm it's you before any of these change.
+              One unlock lasts 4 hours. It ends sooner when your screen locks,
+              the computer sleeps, you press <Code>l</Code>, the app sits idle
+              for 4 minutes or the master password changes. So you don't forget
+              the master password, dokky asks for it instead of Touch ID or
+              Windows Hello when you haven't unlocked for 7, 15 or 30 days (7
+              by default), at least every 90 days, and once after it changes.
+            </p>
+            <p>
+              In Settings, Security you can choose that interval, change the
+              master password and make a new recovery key.
             </p>
             <Note title="What the server can see">
               The names of your accounts and drives, which kind of storage each
@@ -399,8 +385,7 @@ export default function DocsPage() {
               (press <Code>3</Code>). Unmounting, removing a drive, and signing
               a computer out all wait for uploads to finish first, and an upload
               that keeps failing is shown so you can retry it. Erasing right
-              away (<Code>dokky logout --force</Code>, Lost or stolen,
-              uninstall) drops what has not uploaded yet.
+              away (Lost or stolen, uninstall) drops what has not uploaded yet.
             </p>
           </Section>
 
@@ -409,12 +394,9 @@ export default function DocsPage() {
               Health (press <Code>5</Code>) checks dokky, its background service
               and every drive. Press <Code>f</Code> to fix everything it can.
             </p>
-            <CodeBlock title="From the terminal">
-              {"dokky doctor\ndokky fix"}
-            </CodeBlock>
+            <CodeBlock title="From the terminal">dokky doctor</CodeBlock>
             <p>
-              <Code>doctor</Code> shows what is wrong and the exact fix.{" "}
-              <Code>fix</Code> finds and repairs problems on this computer.
+              <Code>doctor</Code> shows what is wrong and the exact fix.
             </p>
           </Section>
 
@@ -423,12 +405,9 @@ export default function DocsPage() {
               dokky updates itself in the background and switches once nothing
               is uploading. Turn this off in Settings, Automatic updates.
             </p>
-            <CodeBlock title="Update by hand">
-              {"dokky update\ndokky update --to 0.1.23"}
-            </CodeBlock>
             <p>
-              <Code>--to</Code> installs a specific version and turns automatic
-              updates off until you run a plain <Code>dokky update</Code>.
+              With them off, dokky says when a new version is out. Press{" "}
+              <Code>u</Code> in the app to update right away.
             </p>
           </Section>
 
