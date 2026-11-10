@@ -30,7 +30,7 @@ const results: Record<string, Result> = {
   invalid: {
     color: CORAL,
     icon: CircleXIcon,
-    text: "It's invalid, expired or already used. Run dokky login again.",
+    text: "It's invalid, expired or already used. Sign in from dokky again.",
     title: "Code not valid",
   },
 };
@@ -115,7 +115,7 @@ export default async function ApprovePage({
 
   return (
     <Frame text="A device wants to join your account." title="Approve login">
-      <Card aside="dokky login" label="Device // Login">
+      <Card aside="dokky sign in" label="Device // Login">
         <CodeBox code={login.userCode} />
         <dl className="mt-6 grid grid-cols-[auto_1fr] items-baseline gap-x-6 gap-y-2 font-mono text-[13px]">
           <dt className="text-[10px] tracking-widest text-[#52525b] uppercase">
@@ -142,7 +142,7 @@ export default async function ApprovePage({
           />
         </div>
         <p className="mt-6 text-center font-mono text-[11px] text-[#71717a]">
-          Didn't just run dokky login? Deny.
+          Didn't just sign in from dokky? Deny.
         </p>
       </Card>
     </Frame>

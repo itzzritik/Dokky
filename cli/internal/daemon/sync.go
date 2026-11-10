@@ -363,7 +363,7 @@ func (d *Daemon) serverFirst(save func(*dsync.Client) error) error {
 		return nil
 	}
 	if acct.Pending {
-		return &codedError{"login_pending", "finish logging in first: run dokky login"}
+		return &codedError{"login_pending", "finish logging in first: open dokky to finish signing in"}
 	}
 	d.mu.Lock()
 	why := d.syncBlocked()
@@ -416,7 +416,7 @@ func coded(err error) error {
 	case errors.Is(err, dsync.ErrRevoked):
 		return &codedError{"revoked", "This device was removed from your dokky account"}
 	case errors.Is(err, dsync.ErrUnauthorized):
-		return &codedError{"signed_out", "signed out on the server: run dokky logout, then dokky login"}
+		return &codedError{"signed_out", "signed out on the server: sign out in dokky, then sign in again"}
 	case errors.Is(err, dsync.ErrNameTaken):
 		return &codedError{"name_taken", "that name is already used in your dokky account"}
 	case errors.Is(err, dsync.ErrKeyMismatch):

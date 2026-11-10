@@ -170,6 +170,14 @@ func guardMount(t *testing.T, point string) {
 	})
 }
 
+// mount or unmount, as the app does; the daemon still takes a drive's name
+func mountByName(t *testing.T, method, name string) {
+	t.Helper()
+	var ms daemon.MountStatus
+	require.NoError(t, ipcCall(method, map[string]string{"name": name}, &ms))
+	require.True(t, strings.EqualFold(name, ms.Name), ms.Name)
+}
+
 func addWebDAVMount(t *testing.T, url, name string) {
 	t.Helper()
 	svc := store.Service{ID: "svc-" + name, Name: name, Type: "webdav", Options: map[string]string{"url": url, "vendor": "other"}}
@@ -221,7 +229,7 @@ func setupDaemonMount(t *testing.T) (point string, d *daemonProc) {
 	// changes need a session, which creating the master password starts
 	require.NoError(t, ipcCall(api.MVaultSetup, api.PasswordParams{Password: e2ePassword}, nil))
 	addWebDAVMount(t, url, "media")
-	require.Contains(t, dokky(t, "mount", "media"), "Media is mounted")
+	mountByName(t, "mount", "media")
 	readable(t, mountedAt(t, "media"), "hello.txt", "hello")
 	return point, d
 }
@@ -256,11 +264,11 @@ func TestStartupClearsStaleMount(t *testing.T) {
 func TestMountUnmountMountAgain(t *testing.T) {
 	point, _ := setupDaemonMount(t)
 
-	dokky(t, "unmount", "media")
+	mountByName(t, "unmount", "media")
 	require.False(t, isMounted(point))
 	require.NoDirExists(t, point)
 
-	dokky(t, "mount", "media")
+	mountByName(t, "mount", "media")
 	mp := mountedAt(t, "media")
 	// time for rclone's second unmount to knock the new mount off
 	time.Sleep(2 * time.Second)

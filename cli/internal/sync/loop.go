@@ -70,7 +70,7 @@ func Resolve(ctx context.Context, c *Client, d store.Data, cl Clash, keep string
 	out.Services = slices.Clone(d.Services)
 	out.Mounts = slices.Clone(d.Mounts)
 	u := &uploader{ctx: ctx, c: c, local: d.Services}
-	gone := fmt.Errorf("%s %q is no longer in the account, run dokky login again", cl.Kind, cl.Name)
+	gone := fmt.Errorf("%s %q is no longer in the account, sign in again from dokky", cl.Kind, cl.Name)
 
 	switch cl.Kind {
 	case KindService:

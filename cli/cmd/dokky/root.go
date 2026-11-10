@@ -54,7 +54,8 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate("dokky {{.Version}}\n")
-	cmd.AddCommand(newDaemonCmd(), newMountCmd(), newUnmountCmd(), newStatusCmd(), newDoctorCmd(), newLoginCmd(), newLogoutCmd(), newSelftestCmd(), newUpdateCmd(), newFixCmd())
+	// everything that changes dokky happens in the app, unlocked; the command line only looks
+	cmd.AddCommand(newDaemonCmd(), newStatusCmd(), newDoctorCmd(), newSelftestCmd())
 	return cmd
 }
 
