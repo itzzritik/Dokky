@@ -24,6 +24,9 @@ type Screen interface {
 // a screen that is typing into a field gets every key, tabs and quit included
 type Capturer interface{ Capturing() bool }
 
+// a window drawn as a whole screen of its own, like Forged's sign in card: nothing shows under it, no footer
+type Full interface{ Full() bool }
+
 // a window placed in the body (bw by bh) instead of centred, with nothing dimmed under it
 type Placer interface {
 	Place(bw, bh, w, h int) (x, y int)

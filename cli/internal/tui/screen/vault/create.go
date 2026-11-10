@@ -24,7 +24,9 @@ type create struct {
 }
 
 func newCreate(title, sub, toast string) *create {
-	return &create{np: makeNew("", ""), at: "field:0", title: title, sub: sub, toast: toast}
+	np := makeNew("", "")
+	np.pw.Hint, np.again.Hint = "", ""
+	return &create{np: np, at: "field:0", title: title, sub: sub, toast: toast}
 }
 
 func (c *create) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
@@ -120,21 +122,31 @@ func (c *create) view(st *core.State, win *ui.Window, maxH int) int {
 	if c.req != 0 {
 		focus = -1
 	}
+	p, cw := ui.P(), win.Inner()
 	body := ui.NewBox()
-	rows := c.np.place(body, 0, win.Inner(), win.Room(maxH), [2]string{"field:0", "field:1"}, focus)
+	rows := c.np.labelled(body, 0, cw, [2]string{"Master password", "Confirm master password"}, [2]string{"field:0", "field:1"}, focus)
+	if rows+3 <= win.Room(maxH) {
+		for _, l := range ui.Wrap(warning, cw) {
+			rows++
+			body.Put(0, rows, ui.L(p.Window).T(l, p.Buoy).Pad(cw))
+		}
+	}
 	win.Body = body
-	return rows
+	return rows + 1
 }
+
+// Forged warns that a lost password loses the keys; dokky has a recovery key to fall back on
+const warning = "If you lose this password, only your recovery key can open your drives."
 
 func (c *create) actions(*core.State) []core.Action {
 	if c.req != 0 {
 		return nil
 	}
-	next := core.Action{Key: "enter", Label: "create"}
+	next := core.Action{Key: "enter", Label: "Create"}
 	if c.at == "field:0" && c.np.again.Len() == 0 {
-		next.Label = "next"
+		next.Label = "Next"
 	}
-	return []core.Action{next, moveAction, revealAction(c.reveal)}
+	return []core.Action{next, {Key: "tab", Label: "Next"}}
 }
 
 func (c *create) typing() bool               { return fieldAt(c.at) >= 0 }

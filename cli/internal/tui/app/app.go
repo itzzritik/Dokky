@@ -446,7 +446,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		if s == "q" && len(a.windows) == 0 && !a.capturing() {
 			return a.quit()
 		}
-		if _, open := a.top().(*menu); (s == "m" || s == "?") && len(a.windows) > 0 && !open && !a.capturing() {
+		if _, open := a.top().(*menu); (s == "m" || s == "?") && len(a.windows) > 0 && !open && !a.capturing() && !full(a.top()) {
 			return a.openMenu()
 		}
 		return a.updateTop(k)

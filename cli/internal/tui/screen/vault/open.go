@@ -37,7 +37,8 @@ func SignIn(st *core.State, need string, resume func(*core.State) tea.Cmd) *Flow
 	if need == api.NeedJoin {
 		first = newJoin("")
 	}
-	f := newFlow(st, first, true, exitStay)
+	// the whole sign in happens on the gate, as Forged's does
+	f := newFlow(st, first, false, exitStay)
 	f.signin, f.done = true, resume
 	return f
 }

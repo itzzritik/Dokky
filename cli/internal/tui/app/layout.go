@@ -69,6 +69,13 @@ func (a *App) render() string {
 		if a.updatingNow() {
 			break
 		}
+		if full(win) {
+			passes = append(passes, ui.Pass{Layer: a.blank(w, h), Modal: true}, ui.Pass{Layer: win.View(a.st, w, h), Modal: true})
+			if i == len(a.windows)-1 {
+				keys = footerNone
+			}
+			continue
+		}
 		l := win.View(a.st, w-4, h-4)
 		b := lipgloss.NewCompositor(l).Bounds()
 		x, y := (w-b.Dx())/2, max(1, min(windowY, (h-3-b.Dy())/2))
@@ -98,6 +105,11 @@ func (a *App) render() string {
 }
 
 var moreKey = core.Action{Key: "m", Label: "More", Icon: ui.G.Icon.Details}
+
+func full(s core.Screen) bool {
+	f, ok := s.(core.Full)
+	return ok && f.Full()
+}
 
 // what the footer's right side may hold
 type footerKind int

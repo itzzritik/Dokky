@@ -119,3 +119,6 @@ func Capital(s string) string {
 	}
 	return string(unicode.ToUpper(r)) + s[n:]
 }
+
+// Wrap breaks plain text into lines at most w cells wide, on spaces where it can
+func Wrap(s string, w int) []string { return strings.Split(ansi.Wordwrap(s, max(1, w), ""), "\n") }

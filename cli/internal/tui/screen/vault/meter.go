@@ -59,6 +59,24 @@ func (n *newPassword) problem() (int, string) {
 }
 
 // the two fields with a blank row between when there is room; each says how it is doing at its right end
+// labelled puts each field under its label, as Forged's create card does; returns the rows used
+func (n *newPassword) labelled(body *ui.Box, y, w int, labels, ids [2]string, focus int) int {
+	p := ui.P()
+	bg := p.Window
+	for i, f := range []*ui.Secret{n.pw, n.again} {
+		body.Put(0, y+3*i, ui.L(bg).T(labels[i], p.Muted).Pad(w))
+		body.Add(0, y+3*i+1, f.View(ids[i], w, focus == i, bg))
+		m := n.count(focus == 0)
+		if i == 1 {
+			m = n.match(focus == 1)
+		}
+		if m != "" {
+			body.Put(w-ui.Width(m)-1, y+3*i+1, m)
+		}
+	}
+	return 5
+}
+
 func (n *newPassword) place(body *ui.Box, y, w, room int, ids [2]string, focus int) int {
 	bg := ui.P().Window
 	g := 1

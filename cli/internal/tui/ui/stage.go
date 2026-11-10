@@ -78,10 +78,13 @@ func (s *Stage) advance(now time.Time) {
 }
 
 // Moving says whether the band animates, so the app keeps ticking
-func (s *Stage) Moving() bool { return s.band != nil && !Reduced() }
+func (s *Stage) Moving() bool { return s != nil && s.band != nil && !Reduced() }
 
 // Layer places the card, built for at most maxH rows, above the band, and the wordmark above the card
 func (s *Stage) Layer(w, h int, now time.Time, card func(maxH int) *Window) *lipgloss.Layer {
+	if s == nil {
+		s = &Stage{}
+	}
 	top := -1
 	if s.New != nil && w >= 40 && h >= 16 {
 		top = h - int(float64(h)*0.33+0.5)

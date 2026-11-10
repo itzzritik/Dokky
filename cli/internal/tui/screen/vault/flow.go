@@ -93,7 +93,8 @@ func (f *Flow) finish(st *core.State) tea.Cmd {
 	if f.done != nil {
 		cmd = f.done(st)
 	}
-	if f.window {
+	// a window, or the sign in's step opened like one, closes itself
+	if f.window || f.signin {
 		return tea.Batch(core.Close(f), cmd)
 	}
 	return tea.Batch(cmd, core.Send(Settled{}))
@@ -110,6 +111,9 @@ func (f *Flow) Holding() bool { return f.top().holding() }
 
 // the master password step of a sign in, so the app opens only one
 func (f *Flow) SignInStep() bool { return f.signin }
+
+// a full screen flow opened as a window, like the sign in's master password step, covers everything
+func (f *Flow) Full() bool { return !f.window }
 
 // every key comes here; q quits only where it isn't typed
 func (f *Flow) Capturing() bool { return true }
