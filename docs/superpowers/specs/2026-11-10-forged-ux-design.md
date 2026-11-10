@@ -71,6 +71,14 @@ The cards:
 - **Settings rows.** An icon, a text toggle (`● On` / `○ Off`) and a value with `▾` that opens a small dropdown anchored under its row, in place of a full window.
 - **Wording.** Hints start with a capital. Toasts are short past tense ("Drive removed").
 
+## Calls made while building
+
+- **`l` ends the session.** Locking with `l`, the menu or the idle timer closes the control session too, not only the view. Nothing in Dokky's background needs it, unlike Forged's SSH agent, so a locked Dokky can't be controlled until someone authenticates again. Quitting Dokky keeps the session, so reopening within 4 hours goes straight in, as in Forged.
+- **Sign-in on the gate.** The sign-in card and its master password step are full-screen cards on the gate, opened as windows that cover everything (`core.Full`), whether they start from the welcome card or from Settings.
+- **Forgot password and recovery key.** "Forgot password?" is reached with down from the password field, because tab means system auth as in Forged. The recovery and join cards also put labels above their fields.
+- **Settings rows removed.** "Unlock at startup", "Lock dokky after" and "Lock dokky now" are gone. The password reminder is a dropdown.
+- **Window colour.** Windows use `Palette.Window`: the screen colour on light and a shade raised on dark, as Forged's `Surface` is. Fields are a tint of it.
+
 ## 5. Kept as Dokky
 
 Item numbers in brackets:
