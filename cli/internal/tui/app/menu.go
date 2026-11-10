@@ -159,7 +159,7 @@ func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 			icons = 2 + ui.Width(it.Icon)
 		}
 	}
-	var lines []ui.ListLine
+	lines := []ui.ListLine{{Text: ui.L(bg).Pad(iw), Item: -1}}
 	for i, it := range m.items {
 		if it.sep() {
 			lines = append(lines, ui.ListLine{Text: ui.L(bg).Sp(2).T(strings.Repeat(ui.G.H, iw-4), p.Line).Pad(iw), Item: -1})
@@ -187,6 +187,7 @@ func (m *menu) View(_ *core.State, maxW, maxH int) *lipgloss.Layer {
 		})
 		lines = append(lines, ui.ListLine{Text: row, Item: i, ID: "menu:" + strconv.Itoa(i)})
 	}
+	lines = append(lines, ui.ListLine{Text: ui.L(bg).Pad(iw), Item: -1})
 	rows := min(len(lines), win.Room(maxH))
 	body := ui.NewBox()
 	ui.List(body, 0, rows, &m.top, m.cursor, lines)

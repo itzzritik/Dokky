@@ -42,12 +42,15 @@ type Window struct {
 	Body            *Box
 	Buttons         []Btn
 	Active          int
-	Flush           bool // the body spans the border to border, for rows that draw their own selection bar
+	Flush           bool // the body spans border to border with no padding, for rows that draw their own bar
 }
 
 func (w *Window) Inner() int { return w.W - 2*WindowPad }
 
 func (w *Window) top() int {
+	if w.Flush {
+		return 1
+	}
 	t := 2
 	if len(w.Steps) > 0 {
 		t += 2
@@ -59,8 +62,11 @@ func (w *Window) top() int {
 }
 
 func (w *Window) bottom() int {
-	if len(w.Buttons) > 0 {
+	switch {
+	case len(w.Buttons) > 0:
 		return 3
+	case w.Flush:
+		return 1
 	}
 	return 2
 }
@@ -97,7 +103,10 @@ func (w *Window) Layer() *lipgloss.Layer {
 		tc = p.Coral
 	}
 	title.B(core.Fit(w.Title, w.W-10), tc)
-	tl := L(bg).Sp(1).Raw(title.String()).Sp(1)
+	tl := L(bg)
+	if w.Title != "" {
+		tl.Sp(1).Raw(title.String()).Sp(1)
+	}
 	rl := L(bg)
 	if w.Corner != "" {
 		rl.Sp(1).Raw(w.Corner).Sp(1)

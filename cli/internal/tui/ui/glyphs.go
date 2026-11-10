@@ -17,6 +17,7 @@ type Glyphs struct {
 type Icons struct {
 	Edit, Mount, Unmount, Files, Add, Find, SignIn, SignOut, Copy, Open, Retry, Fix string
 	Lock, Quit, Update, Remove, Details, Devices, Clock, Key, Cache, Sync, Health   string
+	Recovery, Notify                                                                string
 }
 
 var G = pick()
@@ -31,5 +32,5 @@ func pick() Glyphs {
 		Spinner: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		Icon: Icons{Edit: "✎", Mount: "↧", Unmount: "⏏", Files: "⎕", Add: "⊕", Find: "⌕", SignIn: "⇥", SignOut: "⎋", Copy: "❐", Open: "↗",
 			Retry: "↺", Fix: "✚", Lock: "⊡", Quit: "⊗", Update: "↥", Remove: "⌫", Details: "⌸", Devices: "⇄", Clock: "◷", Key: "✱",
-			Cache: "◍", Sync: "↻", Health: "✚"}}
+			Cache: "◍", Sync: "↻", Health: "✚", Recovery: "❖", Notify: "◎"}}
 }

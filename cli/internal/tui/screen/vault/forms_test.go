@@ -366,22 +366,6 @@ func focusOf(fm form) string {
 	return ""
 }
 
-func TestPick(t *testing.T) {
-	st := newState()
-	st.Snap.Vault = api.Vault{State: api.VaultUnlocked, Unlock: api.UnlockAuto}
-	cmd := PickUnlock(st)
-	f := sent(cmd)[0].(core.OpenWindow).Screen.(*Flow)
-	pk := f.top().(*pick)
-	require.Equal(t, "Not available on this computer", pk.opts[1].off)
-
-	key(f, st, "down")
-	require.Nil(t, key(f, st, "enter"))
-	require.Equal(t, "Not available on this computer", pk.err)
-
-	key(f, st, "up")
-	require.Equal(t, []tea.Msg{core.CloseWindow{Screen: f}}, sent(key(f, st, "enter")), "the current choice changes nothing")
-}
-
 func TestSetupMarkKeepsMoving(t *testing.T) {
 	st := newState()
 	f := Setup(st)

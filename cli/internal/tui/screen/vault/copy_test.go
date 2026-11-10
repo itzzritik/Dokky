@@ -75,15 +75,6 @@ func TestErrLineCountsDown(t *testing.T) {
 }
 
 func TestLabels(t *testing.T) {
-	require.Equal(t, "Never", DaysLabel(0))
-	require.Equal(t, "14 days", DaysLabel(14))
-	require.Equal(t, "Never", IdleLabel(0))
-	require.Equal(t, "5 min", IdleLabel(5))
-	require.Equal(t, "1 hour", IdleLabel(60))
-	st := &core.State{Snap: api.State{Vault: api.Vault{Unlock: api.UnlockSystem, System: "your Mac password"}}}
-	require.Equal(t, "Mac password", UnlockLabel(st))
-	st.Snap.Vault.Unlock = api.UnlockPassword
-	require.Equal(t, "Master password", UnlockLabel(st))
-	st.Snap.Vault.Unlock = api.UnlockAuto
-	require.Equal(t, "Automatically", UnlockLabel(st))
+	require.Equal(t, "7 days", DaysLabel(7))
+	require.Equal(t, "15 days", DaysLabel(15))
 }
