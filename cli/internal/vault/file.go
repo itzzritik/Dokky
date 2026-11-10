@@ -19,24 +19,12 @@ const (
 	maxWrap     = 512 // the server refuses bigger wraps too
 )
 
-// how the daemon opens the vault when it starts
-const (
-	UnlockAuto     = "auto"     // the device key, no prompt
-	UnlockSystem   = "system"   // Touch ID, Windows Hello or polkit, then the device key
-	UnlockPassword = "password" // the master password every time
-)
+var PasswordDayChoices = []int{7, 14, 30, 0}
 
-var (
-	PasswordDayChoices = []int{7, 14, 30, 0}
-	IdleLockChoices    = []int{5, 10, 30, 60, 0}
-)
+const defaultPasswordDays = 14
 
-const (
-	defaultPasswordDays = 14
-	defaultIdleLock     = 10
-)
-
-// File is vault.json: the account key wrapped three ways plus the unlock settings
+// File is vault.json: the account key wrapped three ways plus the password reminder. an older dokky also wrote
+// unlock and idleLockMinutes, which are ignored now: the device key always opens the vault at startup
 type File struct {
 	Version            int       `json:"version"`
 	KeyID              string    `json:"keyId"`
@@ -44,9 +32,7 @@ type File struct {
 	WrappedKey         string    `json:"wrappedKey"`
 	RecoveryWrappedKey string    `json:"recoveryWrappedKey"`
 	DeviceWrappedKey   string    `json:"deviceWrappedKey,omitempty"` // empty when this device has no saved key
-	Unlock             string    `json:"unlock"`
 	PasswordDays       int       `json:"passwordDays"`
-	IdleLockMinutes    int       `json:"idleLockMinutes"`
 	PasswordAt         time.Time `json:"passwordAt"`
 	CreatedAt          time.Time `json:"createdAt"`
 	Account            bool      `json:"account"` // these wraps match the signed-in account's server vault
@@ -97,20 +83,10 @@ func (f *File) Validate() error {
 			return fmt.Errorf("device key wrap: %w", err)
 		}
 	}
-	if !ValidUnlock(f.Unlock) {
-		return fmt.Errorf("unlock %q should be auto, system or password", f.Unlock)
-	}
 	if !slices.Contains(PasswordDayChoices, f.PasswordDays) {
 		return fmt.Errorf("passwordDays %d should be 0, 7, 14 or 30", f.PasswordDays)
 	}
-	if !slices.Contains(IdleLockChoices, f.IdleLockMinutes) {
-		return fmt.Errorf("idleLockMinutes %d should be 0, 5, 10, 30 or 60", f.IdleLockMinutes)
-	}
 	return nil
-}
-
-func ValidUnlock(s string) bool {
-	return s == UnlockAuto || s == UnlockSystem || s == UnlockPassword
 }
 
 // PasswordDue says system auth is no longer accepted until the password is typed once

@@ -33,7 +33,9 @@ const (
 	NeedJoin   = "join"   // the account has a vault: type its password or recovery key
 )
 
-// how the daemon opens the vault when it starts
+// how the daemon opened the vault when it started; it always uses the device key now
+//
+// Deprecated: removed with the TUI change
 const (
 	UnlockAuto     = "auto"     // the device key in the OS keychain, no prompt
 	UnlockSystem   = "system"   // Touch ID, Windows Hello or polkit, then the device key
@@ -60,17 +62,17 @@ const (
 	ErrSessionRequired   = "session_required"
 )
 
-var (
-	PasswordDayChoices = []int{7, 14, 30, 0}
-	IdleLockChoices    = []int{5, 10, 30, 60, 0}
-)
+var PasswordDayChoices = []int{7, 14, 30, 0}
+
+// Deprecated: removed with the TUI change; the app locks itself after 4 minutes
+var IdleLockChoices = []int{5, 10, 30, 60, 0}
 
 type Vault struct {
 	State           string    `json:"state"`
 	Need            string    `json:"need,omitempty"`
-	Unlock          string    `json:"unlock"`
+	Unlock          string    `json:"unlock"` // Deprecated: removed with the TUI change
 	PasswordDays    int       `json:"passwordDays"`
-	IdleLockMinutes int       `json:"idleLockMinutes"`
+	IdleLockMinutes int       `json:"idleLockMinutes"`  // Deprecated: removed with the TUI change
 	PasswordDue     bool      `json:"passwordDue"`      // system auth is refused until the password is typed once
 	System          string    `json:"system,omitempty"` // "" when unavailable, else "Touch ID", "Windows Hello", "your Mac password", "your system password"
 	Synced          bool      `json:"synced"`           // this device's key is the signed-in account's key
@@ -110,9 +112,9 @@ type ChangePasswordParams struct {
 
 type VaultSettingsParams struct {
 	Grant           string  `json:"grant"`
-	Unlock          *string `json:"unlock,omitempty"`
+	Unlock          *string `json:"unlock,omitempty"` // Deprecated: removed with the TUI change, ignored
 	PasswordDays    *int    `json:"passwordDays,omitempty"`
-	IdleLockMinutes *int    `json:"idleLockMinutes,omitempty"`
+	IdleLockMinutes *int    `json:"idleLockMinutes,omitempty"` // Deprecated: removed with the TUI change, ignored
 }
 
 type RecoveryKeyReply struct {

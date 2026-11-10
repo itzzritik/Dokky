@@ -113,8 +113,7 @@ func (k *keeper) current() *vault.File {
 	return k.file.Clone()
 }
 
-// startPhase decides how the process starts: setup on the old store, unlocked by the device key in auto mode,
-// else locked
+// startPhase decides how the process starts: setup on the old store, unlocked by the device key, else locked
 func (k *keeper) startPhase() (string, []byte) {
 	if ak := k.startKey(); ak != nil {
 		return api.VaultUnlocked, ak
@@ -122,10 +121,11 @@ func (k *keeper) startPhase() (string, []byte) {
 	return k.state(), nil
 }
 
-// the device key opens the vault at startup only in auto mode; anything else waits in the locked phase
+// the device key always opens the vault at startup, so drives mount after a reboot with no prompt. only a
+// computer with no keychain, or a lost device key, waits in the locked phase
 func (k *keeper) startKey() []byte {
 	f := k.current()
-	if f == nil || f.Unlock != vault.UnlockAuto {
+	if f == nil {
 		return nil
 	}
 	ak, err := k.openWithDevice(f)
@@ -293,7 +293,7 @@ func (k *keeper) view(signedIn bool) api.Vault {
 	if f == nil {
 		return v
 	}
-	v.Unlock, v.PasswordDays, v.IdleLockMinutes, v.KeyID = f.Unlock, f.PasswordDays, f.IdleLockMinutes, f.KeyID
+	v.PasswordDays, v.KeyID = f.PasswordDays, f.KeyID
 	v.PasswordDue = f.PasswordDue(now)
 	v.Synced = signedIn && f.Account && !k.paused && (k.serverKeyID == "" || k.serverKeyID == f.KeyID)
 	if signedIn {
@@ -403,7 +403,7 @@ func (k *keeper) systemRefused(f *vault.File, remote bool) error {
 	case remote:
 		why = "Over SSH, type your master password."
 	case f.DeviceWrappedKey == "":
-		why = "dokky is set to open with the master password only."
+		why = "This computer has no saved key for dokky: type your master password."
 	}
 	if why != "" {
 		return &codedError{api.ErrPasswordRequired, why}
@@ -469,11 +469,9 @@ func (k *keeper) prove(ctx context.Context, p api.UnlockParams, reason string) (
 	return nil, fmt.Errorf("method must be %q or %q", api.AuthPassword, api.AuthSystem)
 }
 
-// a device key lost from the keychain is made again once the password is typed, so the next start opens alone
+// a device key lost from the keychain, or never made, is made once the password is typed, so the next start
+// opens alone
 func (k *keeper) mendDevice(f *vault.File, ak []byte) {
-	if f.Unlock == vault.UnlockPassword {
-		return
-	}
 	if opened, err := k.openWithDevice(f); err == nil {
 		vault.Zero(opened)
 		return

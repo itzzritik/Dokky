@@ -44,7 +44,8 @@ type Env struct {
 	Version         string
 	KeyringFallback bool
 	KeyringErr      error
-	// how dokky opens: "" before a master password exists (the old store key), else the vault's unlock mode
+	// how dokky opens: "" before a master password exists (the old store key), "auto" with a device key and
+	// "password" when this computer keeps none
 	Unlock       string
 	FreeBytes    uint64
 	MinFreeBytes uint64

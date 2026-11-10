@@ -246,10 +246,7 @@ func (d *Daemon) joinVault(ctx context.Context, open func(dsync.RemoteVault) ([]
 		return false, err
 	}
 	local := k.current()
-	var dk []byte
-	if local == nil || local.Unlock != vault.UnlockPassword {
-		dk = k.deviceKey()
-	}
+	dk := k.deviceKey()
 	defer vault.Zero(dk)
 	nf, err := vault.AdoptRemote(local, remote.Remote, ak, dk, k.now())
 	if err == nil && newPassword != nil {
@@ -366,22 +363,12 @@ func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 	k := d.vk
 	k.op.Lock()
 	defer k.op.Unlock()
-	f, ak := k.current(), k.key()
-	if f == nil || ak == nil {
+	f := k.current()
+	if f == nil || k.key() == nil {
 		return errNoVault
 	}
-	switch {
-	case p.Unlock != nil && !vault.ValidUnlock(*p.Unlock):
-		return fmt.Errorf("unlock must be %s, %s or %s", api.UnlockAuto, api.UnlockSystem, api.UnlockPassword)
-	case p.PasswordDays != nil && !slices.Contains(api.PasswordDayChoices, *p.PasswordDays):
+	if p.PasswordDays != nil && !slices.Contains(api.PasswordDayChoices, *p.PasswordDays) {
 		return fmt.Errorf("passwordDays must be one of %v", api.PasswordDayChoices)
-	case p.IdleLockMinutes != nil && !slices.Contains(api.IdleLockChoices, *p.IdleLockMinutes):
-		return fmt.Errorf("idleLockMinutes must be one of %v", api.IdleLockChoices)
-	}
-	if p.Unlock != nil && *p.Unlock == api.UnlockSystem {
-		if _, ok := k.system(false); !ok {
-			return &codedError{api.ErrSystemUnavailable, "Touch ID, Windows Hello or a system password prompt is not available on this computer."}
-		}
 	}
 	if err := k.useGrant(p.Grant); err != nil {
 		return err
@@ -390,34 +377,8 @@ func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 	if p.PasswordDays != nil {
 		nf.PasswordDays = *p.PasswordDays
 	}
-	if p.IdleLockMinutes != nil {
-		nf.IdleLockMinutes = *p.IdleLockMinutes
-	}
-	dropDevice := false
-	if p.Unlock != nil && *p.Unlock != f.Unlock {
-		nf.Unlock = *p.Unlock
-		if nf.Unlock == vault.UnlockPassword {
-			// nothing on this computer opens the vault any more
-			nf.DeviceWrappedKey, dropDevice = "", true
-		} else {
-			dk := k.deviceKey()
-			if dk == nil {
-				return errors.New("this computer has no keychain to keep a key in, so dokky can only open with the master password")
-			}
-			err := nf.SetDevice(ak, dk)
-			vault.Zero(dk)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	if err := k.save(nf); err != nil {
 		return err
-	}
-	if dropDevice {
-		if err := k.device.Delete(); err != nil {
-			d.log.Warn("remove the device key", "err", err)
-		}
 	}
 	d.publish()
 	return nil

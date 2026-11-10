@@ -19,7 +19,7 @@ import (
 	"github.com/rclone/rclone/lib/diskusage"
 )
 
-// the prompt waits for the desktop to settle after login
+// the notification waits for the desktop to settle after login
 var promptDelay = 5 * time.Second
 
 var errLocking = errors.New("dokky is locking")
@@ -67,7 +67,7 @@ type lockedPhase struct {
 }
 
 // runLocked serves until the vault opens and returns its key, or returns nil with the error that ends the
-// process. ask shows the system prompt (or a notification) once, as at login; a manual lock does not
+// process. ask shows a notification once, as at login; a manual lock does not
 func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 	shell := newDaemon(e.eng, nil, store.Fresh(), e.home, e.p.Cache, e.log, e.k)
 	if e.adjust != nil {
@@ -260,34 +260,15 @@ func (l *lockedPhase) pushAccount(ctx context.Context, nf *vault.File, ak []byte
 	return err
 }
 
-// once, about five seconds after start: the system prompt when dokky unlocks that way, else a notification
+// once, about five seconds after start: only a lost device key gets here, and a system prompt can't open the vault
+// without it, so the person is told to open dokky and type the master password
 func (l *lockedPhase) ask(ctx context.Context) {
-	k := l.e.k
-	f := k.current()
-	if f == nil {
+	if l.e.k.current() == nil {
 		return
 	}
 	select {
 	case <-ctx.Done():
-		return
 	case <-time.After(promptDelay):
-	}
-	if f.Unlock == vault.UnlockSystem && k.systemRefused(f, false) == nil {
-		ak, err := k.checkSystem(ctx, f, false, unlockReason)
-		if err == nil {
-			select {
-			case l.opened <- ak:
-			default:
-				vault.Zero(ak)
-			}
-			return
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		l.e.log.Info("the unlock prompt was dismissed", "err", err)
-	}
-	if ctx.Err() == nil {
 		notifyLocked(l.e.log, l.shell.notify)
 	}
 }

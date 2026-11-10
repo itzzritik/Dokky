@@ -96,10 +96,9 @@ func TestStartupPhases(t *testing.T) {
 		deviceKey bool
 		want      string
 	}{
-		"auto opens with the device key":        {deviceKey: true, want: api.VaultUnlocked},
-		"auto without the device key waits":     {want: api.VaultLocked},
-		"system waits for the prompt":           {change: func(f *vault.File) { f.Unlock = vault.UnlockSystem }, deviceKey: true, want: api.VaultLocked},
-		"password waits for the password":       {change: func(f *vault.File) { f.Unlock, f.DeviceWrappedKey = vault.UnlockPassword, "" }, want: api.VaultLocked},
+		"the device key opens":                  {deviceKey: true, want: api.VaultUnlocked},
+		"a lost device key waits":               {want: api.VaultLocked},
+		"no device wrap waits for the password": {change: passwordOnly, want: api.VaultLocked},
 		"a device key that does not open waits": {change: func(f *vault.File) { f.DeviceWrappedKey = otherVault().file.DeviceWrappedKey }, deviceKey: true, want: api.VaultLocked},
 	}
 	for name, c := range cases {
@@ -219,7 +218,7 @@ func TestSystemUnlock(t *testing.T) {
 	sys := api.UnlockParams{Method: api.AuthSystem}
 	t.Run("refused while the password is due, over SSH or with no prompt", func(t *testing.T) {
 		_, k, h := newLocked(t, func(f *vault.File) {
-			f.Unlock, f.PasswordDays, f.PasswordAt = vault.UnlockSystem, 7, time.Now().Add(-8*24*time.Hour)
+			f.PasswordDays, f.PasswordAt = 7, time.Now().Add(-8*24*time.Hour)
 		})
 		prompted := false
 		sys := offerSystem(k, true)
@@ -236,7 +235,7 @@ func TestSystemUnlock(t *testing.T) {
 		require.False(t, prompted, "no prompt is shown when it would not count")
 	})
 	t.Run("a confirmed prompt opens with the device key", func(t *testing.T) {
-		l, k, h := newLocked(t, func(f *vault.File) { f.Unlock = vault.UnlockSystem })
+		l, k, h := newLocked(t, nil)
 		offerSystem(k, true)
 		var reason string
 		k.prompt = func(_ context.Context, r string) error { reason = r; return sysauth.ErrCancelled }
@@ -246,19 +245,17 @@ func TestSystemUnlock(t *testing.T) {
 		require.NoError(t, invoke(t, h, api.MVaultUnlock, sys, nil))
 		require.Equal(t, testVault().ak, <-l.opened)
 	})
-	t.Run("the login prompt, then a notification when dismissed", func(t *testing.T) {
+	t.Run("at login only a notification, never a prompt", func(t *testing.T) {
 		promptDelay = time.Millisecond
 		t.Cleanup(func() { promptDelay = 5 * time.Second })
-		l, k, _ := newLocked(t, func(f *vault.File) { f.Unlock = vault.UnlockSystem })
+		l, k, _ := newLocked(t, nil)
 		offerSystem(k, true)
-		k.prompt = func(context.Context, string) error { return sysauth.ErrCancelled }
+		k.prompt = func(context.Context, string) error { t.Error("prompted at login"); return nil }
 		notes := make(chan string, 1)
 		l.shell.notify = func(_, body string) error { notes <- body; return nil }
 		l.ask(context.Background())
 		require.Equal(t, lockedNote, <-notes)
-		k.prompt = func(context.Context, string) error { return nil }
-		l.ask(context.Background())
-		require.Equal(t, testVault().ak, <-l.opened)
+		require.Empty(t, l.opened)
 	})
 }
 
@@ -353,7 +350,6 @@ func TestSetupMovesTheOldStore(t *testing.T) {
 
 	v := vaultOf(d)
 	require.Equal(t, api.VaultUnlocked, v.State)
-	require.Equal(t, api.UnlockAuto, v.Unlock)
 	require.Empty(t, v.Need)
 	format, _ := store.FormatOf(dir)
 	require.Equal(t, 2, format)
@@ -592,7 +588,6 @@ func TestKeyMismatchPausesSync(t *testing.T) {
 
 func TestSettingsNeedAGrant(t *testing.T) {
 	d, _, _ := newTestDaemon(t, sample())
-	dir := d.vk.dir
 	sys := offerSystem(d.vk, false)
 	days := 7
 	require.Equal(t, api.ErrGrantRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{PasswordDays: &days}, nil)))
@@ -605,32 +600,26 @@ func TestSettingsNeedAGrant(t *testing.T) {
 	require.Equal(t, 7, vaultOf(d).PasswordDays)
 	require.Equal(t, api.ErrGrantRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &days}, nil)), "a grant works once")
 
-	system := api.UnlockSystem
-	require.NoError(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, &g))
-	require.Equal(t, api.ErrSystemUnavailable, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, Unlock: &system}, nil)))
-
-	password := api.UnlockPassword
-	require.NoError(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, Unlock: &password}, nil))
-	vf, err := vault.Load(dir)
-	require.NoError(t, err)
-	require.Empty(t, vf.DeviceWrappedKey, "nothing on this computer opens the vault now")
-	require.NoFileExists(t, filepath.Join(dir, "device.key"))
-
 	sys.on.Store(true)
 	d.vk.prompt = func(context.Context, string) error { return nil }
-	require.Equal(t, api.ErrPasswordRequired, codeOf(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthSystem}, nil)), "no device key to open with")
-	require.NoError(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, &g))
-	require.NoError(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, Unlock: &system}, nil))
-	vf, err = vault.Load(dir)
-	require.NoError(t, err)
-	require.Equal(t, vault.UnlockSystem, vf.Unlock)
-	k := testKeeper(dir)
-	require.NoError(t, k.load())
-	ak, err := k.openWithDevice(vf)
-	require.NoError(t, err)
-	require.Equal(t, testVault().ak, ak, "a new device key opens it again")
 	require.NoError(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthSystem, Remote: false}, &g))
 	require.NotEmpty(t, g.Grant)
+}
+
+// the password once makes a device key again for a vault without one, whatever an older dokky was set to
+func TestPasswordMendsTheDeviceKey(t *testing.T) {
+	l, k, h := newLocked(t, passwordOnly)
+	require.NoError(t, k.device.Delete())
+	require.NoError(t, invoke(t, h, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, nil))
+	require.Equal(t, testVault().ak, <-l.opened)
+	vf, err := vault.Load(k.dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, vf.DeviceWrappedKey)
+	next := testKeeper(k.dir)
+	require.NoError(t, next.load())
+	phase, ak := next.startPhase()
+	require.Equal(t, api.VaultUnlocked, phase, "the next start opens alone")
+	require.Equal(t, testVault().ak, ak)
 }
 
 func TestChangePasswordGoesToTheAccountFirst(t *testing.T) {

@@ -52,12 +52,10 @@ func TestFileJSONMatchesSpec(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &m))
 	require.ElementsMatch(t, []string{
 		"version", "keyId", "kdf", "wrappedKey", "recoveryWrappedKey", "deviceWrappedKey",
-		"unlock", "passwordDays", "idleLockMinutes", "passwordAt", "createdAt", "account",
+		"passwordDays", "passwordAt", "createdAt", "account",
 	}, keys(m))
 	require.Equal(t, "2026-11-09T02:00:00Z", m["passwordAt"])
-	require.Equal(t, "auto", m["unlock"])
 	require.InDelta(t, 14, m["passwordDays"], 0)
-	require.InDelta(t, 10, m["idleLockMinutes"], 0)
 	require.Equal(t, false, m["account"])
 }
 
@@ -75,10 +73,7 @@ func TestLoadRejectsBadFiles(t *testing.T) {
 		"hostile memory": func(f *File) { f.KDF.M = 1 << 30 },
 		"hostile time":   func(f *File) { f.KDF.T = 1000 },
 		"other kdf":      func(f *File) { f.KDF.Alg = "pbkdf2" },
-		"unlock":         func(f *File) { f.Unlock = "sometimes" },
-		"empty unlock":   func(f *File) { f.Unlock = "" },
 		"password days":  func(f *File) { f.PasswordDays = 3 },
-		"idle minutes":   func(f *File) { f.IdleLockMinutes = 15 },
 		"no wrapped key": func(f *File) { f.WrappedKey = "" },
 		"no recovery":    func(f *File) { f.RecoveryWrappedKey = "" },
 		"garbage wrap":   func(f *File) { f.WrappedKey = "!!!" },
@@ -112,7 +107,6 @@ func TestLoadRejectsBadFiles(t *testing.T) {
 func TestFileWithoutDeviceWrapIsValid(t *testing.T) {
 	f, _ := newFile(t)
 	f.DeviceWrappedKey = ""
-	f.Unlock = UnlockPassword
 	require.NoError(t, f.Validate())
 }
 
@@ -129,16 +123,12 @@ func TestCloneIsDeep(t *testing.T) {
 	f, _ := newFile(t)
 	c := f.Clone()
 	c.KDF.Salt[0] ^= 0xff
-	c.Unlock = UnlockSystem
+	c.PasswordDays = 30
 	require.NotEqual(t, f.KDF.Salt[0], c.KDF.Salt[0])
-	require.Equal(t, UnlockAuto, f.Unlock)
+	require.Equal(t, 14, f.PasswordDays)
 }
 
 // the daemon speaks api's names; vault must agree with them
 func TestNamesMatchAPI(t *testing.T) {
-	require.Equal(t, api.UnlockAuto, UnlockAuto)
-	require.Equal(t, api.UnlockSystem, UnlockSystem)
-	require.Equal(t, api.UnlockPassword, UnlockPassword)
 	require.Equal(t, api.PasswordDayChoices, PasswordDayChoices)
-	require.Equal(t, api.IdleLockChoices, IdleLockChoices)
 }

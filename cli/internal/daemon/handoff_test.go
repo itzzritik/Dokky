@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -16,7 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func passwordOnly(f *vault.File) { f.Unlock, f.DeviceWrappedKey = vault.UnlockPassword, "" }
+func passwordOnly(f *vault.File) { f.DeviceWrappedKey = "" }
+
+// a computer with nowhere to keep the device key
+type noKeychain struct{}
+
+func (noKeychain) Get() ([]byte, error) { return nil, store.ErrNotFound }
+func (noKeychain) Set([]byte) error     { return errors.New("no keychain") }
+func (noKeychain) Delete() error        { return nil }
 
 func handoffFiles(t *testing.T, dir string) (note, key bool) {
 	t.Helper()
@@ -39,6 +47,7 @@ func TestRestartHandsTheKeyToTheNextStart(t *testing.T) {
 	t.Setenv("DOKKY_NO_UPDATE", "1")
 	dir := t.TempDir()
 	k := diskKeeper(t, dir, passwordOnly, false)
+	k.device = noKeychain{}
 	st, err := store.OpenWithKey(dir, testVault().ak)
 	require.NoError(t, err)
 	require.NoError(t, st.Save(sample("m1")))
@@ -71,7 +80,7 @@ func TestRestartHandsTheKeyToTheNextStart(t *testing.T) {
 	f1 := newFakeEngine()
 	done := make(chan error, 1)
 	go func() { done <- runPhases(context.Background(), env(k, f1)) }()
-	require.Eventually(t, vaultIs(api.VaultLocked), 10*time.Second, 10*time.Millisecond, "password mode starts locked")
+	require.Eventually(t, vaultIs(api.VaultLocked), 10*time.Second, 10*time.Millisecond, "no device key starts locked")
 	unlock()
 	require.Eventually(t, mounted(f1), 10*time.Second, 10*time.Millisecond)
 
@@ -100,6 +109,7 @@ func TestRestartHandsTheKeyToTheNextStart(t *testing.T) {
 
 	// the next process: nothing is unlocked by hand and no prompt may show
 	next := testKeeper(dir)
+	next.device = noKeychain{}
 	next.prompt = func(context.Context, string) error { t.Error("prompted after a restart"); return nil }
 	require.NoError(t, next.load())
 	f2 := newFakeEngine()
