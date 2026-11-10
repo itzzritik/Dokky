@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -40,8 +39,9 @@ func explain(err error, v api.Vault, now time.Time) string {
 	case api.ErrSystemUnavailable:
 		return systemChoice(v) + " isn't available right now."
 	case api.ErrPasswordRequired:
-		if v.PasswordDays > 0 {
-			return "It's been " + strconv.Itoa(v.PasswordDays) + " days. Type your master password this time."
+		// the daemon says why: the reminder, a changed password, SSH or no system prompt here
+		if msg := daemonSays(err); msg != "" {
+			return msg
 		}
 		return "Type your master password this time."
 	case api.ErrWeakPassword:

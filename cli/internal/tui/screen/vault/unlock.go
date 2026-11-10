@@ -2,7 +2,6 @@ package vault
 
 import (
 	"context"
-	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -166,8 +165,9 @@ func (u *unlock) stop() {
 func (u *unlock) prompt(st *core.State) string {
 	v := st.Snap.Vault
 	switch {
+	// the reminder ran out, or the password changed: either way it is typed once before system auth works again
 	case v.PasswordDue && v.System != "" && !st.Deps.Remote:
-		return "It's been " + strconv.Itoa(v.PasswordDays) + " days. Enter your master password this time."
+		return "Enter your master password this time."
 	case v.State == api.VaultLocked:
 		return "Your drives mount once dokky is unlocked."
 	case offered(st):
