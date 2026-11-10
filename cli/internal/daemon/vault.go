@@ -392,24 +392,27 @@ func (k *keeper) checkPassword(r vault.Remote, password string) ([]byte, error) 
 	return ak, nil
 }
 
-// systemRefused says why the system prompt may not stand in for the password right now
+// systemRefused says why the system prompt may not stand in for the password right now. the message is the
+// prompt the app shows above the password field
 func (k *keeper) systemRefused(f *vault.File, remote bool) error {
 	why := ""
 	switch {
 	case f == nil:
 		return errNoVault
+	case f.PasswordOnce:
+		why = "Your master password changed. Enter the new one to unlock dokky."
 	case f.PasswordDue(k.now()):
-		why = fmt.Sprintf("It has been %d days: type your master password this time.", f.PasswordDays)
+		why = "It has been a while. Enter your master password to unlock dokky."
 	case remote:
-		why = "Over SSH, type your master password."
+		why = "Over SSH, enter your master password to unlock dokky."
 	case f.DeviceWrappedKey == "":
-		why = "This computer has no saved key for dokky: type your master password."
+		why = "This computer has no saved key for dokky. Enter your master password to unlock it."
 	}
 	if why != "" {
 		return &codedError{api.ErrPasswordRequired, why}
 	}
 	if _, ok := k.system(remote); !ok {
-		return &codedError{api.ErrPasswordRequired, "No system prompt is available here: type your master password."}
+		return &codedError{api.ErrPasswordRequired, "No system prompt is available here. Enter your master password to unlock dokky."}
 	}
 	return nil
 }
@@ -429,9 +432,26 @@ func (k *keeper) checkSystem(ctx context.Context, f *vault.File, remote bool, re
 	}
 	ak, err := k.openWithDevice(f)
 	if err != nil {
-		return nil, &codedError{api.ErrPasswordRequired, "The key saved on this computer no longer opens dokky: type your master password."}
+		return nil, &codedError{api.ErrPasswordRequired, "The key saved on this computer no longer opens dokky. Enter your master password to unlock it."}
 	}
+	k.stampSystem()
 	return ak, nil
+}
+
+// a system auth slides the password window. best effort: a vault change under way skips the stamp, which only
+// brings the next password a little sooner
+func (k *keeper) stampSystem() {
+	if !k.op.TryLock() {
+		return
+	}
+	defer k.op.Unlock()
+	f := k.current()
+	if f == nil || !f.StampSystem(k.now()) {
+		return
+	}
+	if err := k.save(f); err != nil {
+		k.log.Warn("save vault.json", "err", err)
+	}
 }
 
 // holdFor takes the vault lock for a typed password, which saves vault.json; a system prompt can wait minutes
@@ -445,7 +465,7 @@ func (k *keeper) holdFor(method string) func() {
 }
 
 // prove checks the person by password or system prompt and returns the account key. a typed password restarts
-// the password interval, so passwordAt moves forward
+// the password window, a system prompt slides it
 func (k *keeper) prove(ctx context.Context, p api.UnlockParams, reason string) ([]byte, error) {
 	f := k.current()
 	if f == nil {
@@ -457,7 +477,7 @@ func (k *keeper) prove(ctx context.Context, p api.UnlockParams, reason string) (
 		if err != nil {
 			return nil, err
 		}
-		f.PasswordAt = k.now().UTC()
+		f.Typed(k.now())
 		k.mendDevice(f, ak)
 		if err := k.save(f); err != nil {
 			k.log.Warn("save vault.json", "err", err)

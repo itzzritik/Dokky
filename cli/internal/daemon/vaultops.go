@@ -177,7 +177,8 @@ func (d *Daemon) link(ctx context.Context, acct *store.Account) (string, error) 
 	return "", nil
 }
 
-// the same account key with other wraps: the master password changed on another device
+// the same account key with other wraps: the master password changed on another device, so this one asks for
+// the new password once too
 func followRemote(f *vault.File, r vault.Remote) (*vault.File, bool) {
 	same := f.WrappedKey == r.WrappedKey && f.RecoveryWrappedKey == r.RecoveryWrappedKey && f.KDF.Alg == r.KDF.Alg &&
 		slices.Equal(f.KDF.Salt, r.KDF.Salt) && f.KDF.T == r.KDF.T && f.KDF.M == r.KDF.M && f.KDF.P == r.KDF.P
@@ -187,6 +188,7 @@ func followRemote(f *vault.File, r vault.Remote) (*vault.File, bool) {
 	nf := f.Clone()
 	nf.KDF, nf.WrappedKey, nf.RecoveryWrappedKey = r.KDF, r.WrappedKey, r.RecoveryWrappedKey
 	nf.KDF.Salt = slices.Clone(r.KDF.Salt)
+	nf.PasswordOnce = true
 	return nf, true
 }
 
@@ -384,11 +386,13 @@ func (d *Daemon) vaultSettings(p api.VaultSettingsParams) error {
 	return nil
 }
 
-// a rewrap only: the account key stays, so other devices keep working; the account changes first
+// a rewrap only: the account key stays, so other devices keep working; the account changes first. the next
+// unlock asks for the new password once, so system auth trusts it again only after it is typed
 func (d *Daemon) changePassword(ctx context.Context, p api.ChangePasswordParams) error {
 	return d.told(d.rewrap(ctx, func(f *vault.File, ak []byte) error {
 		next := []byte(p.Next)
 		defer vault.Zero(next)
+		f.PasswordOnce = true
 		return vault.Rewrap(f, ak, next, d.vk.now())
 	}, p.Current, p.Next))
 }
@@ -423,11 +427,10 @@ func (d *Daemon) rewrap(ctx context.Context, change func(*vault.File, []byte) er
 	}
 	defer vault.Zero(ak)
 	nf := f.Clone()
+	nf.Typed(k.now())
 	if err := change(nf, ak); err != nil {
 		return err
 	}
-	// the password was just typed
-	nf.PasswordAt = k.now().UTC()
 	if err := d.pushLinked(ctx, nf); err != nil {
 		return err
 	}
@@ -454,7 +457,8 @@ func (d *Daemon) vaultRecover(ctx context.Context, p api.RecoverParams) error {
 	return nil
 }
 
-// recovered opens the vault with the recovery key and rewraps a copy with the new password
+// recovered opens the vault with the recovery key and rewraps a copy with the new password, which the next
+// unlock asks for once
 func (k *keeper) recovered(p api.RecoverParams) (*vault.File, []byte, error) {
 	if err := weak(p.NewPassword); err != nil {
 		return nil, nil, err
@@ -473,6 +477,7 @@ func (k *keeper) recovered(p api.RecoverParams) (*vault.File, []byte, error) {
 		vault.Zero(ak)
 		return nil, nil, err
 	}
+	f.PasswordOnce = true
 	k.passed()
 	return f, ak, nil
 }

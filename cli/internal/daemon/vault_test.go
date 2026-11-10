@@ -589,7 +589,7 @@ func TestKeyMismatchPausesSync(t *testing.T) {
 func TestSettingsNeedAGrant(t *testing.T) {
 	d, _, _ := newTestDaemon(t, sample())
 	sys := offerSystem(d.vk, false)
-	days := 7
+	days := 15
 	require.Equal(t, api.ErrGrantRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{PasswordDays: &days}, nil)))
 	var g api.GrantReply
 	require.Equal(t, api.ErrWrongPassword, codeOf(t, call(t, d, api.MVaultAuthorize, api.UnlockParams{Method: api.AuthPassword, Password: "nope nope nope"}, nil)))
@@ -597,7 +597,7 @@ func TestSettingsNeedAGrant(t *testing.T) {
 	bad := 3
 	require.Error(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &bad}, nil), "only the listed choices")
 	require.NoError(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &days}, nil))
-	require.Equal(t, 7, vaultOf(d).PasswordDays)
+	require.Equal(t, 15, vaultOf(d).PasswordDays)
 	require.Equal(t, api.ErrGrantRequired, codeOf(t, call(t, d, api.MVaultSettings, api.VaultSettingsParams{Grant: g.Grant, PasswordDays: &days}, nil)), "a grant works once")
 
 	sys.on.Store(true)
@@ -676,7 +676,50 @@ func TestPasswordChangedElsewhereIsFollowed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, changed.WrappedKey, vf.WrappedKey)
 	require.NotEmpty(t, vf.DeviceWrappedKey, "this device still opens on its own")
+	require.True(t, vf.PasswordOnce, "the new password is asked for here too")
 	require.NoError(t, call(t, d, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: next}, nil))
+}
+
+// system auth slides the password window, saved once an hour; a changed password is typed once before it counts
+func TestPasswordWindow(t *testing.T) {
+	d, _, _ := newTestDaemon(t, sample())
+	k, dir := d.vk, d.vk.dir
+	clock := &testClock{t: time.Now()}
+	k.now = clock.now
+	offerSystem(k, true)
+	k.prompt = func(context.Context, string) error { return nil }
+	sys := api.UnlockParams{Method: api.AuthSystem}
+	stamp := func() time.Time {
+		vf, err := vault.Load(dir)
+		require.NoError(t, err)
+		return vf.SystemAt
+	}
+
+	require.NoError(t, call(t, d, api.MVaultUnlock, sys, nil))
+	first := stamp()
+	require.WithinDuration(t, clock.now(), first, time.Second)
+	clock.add(30 * time.Minute)
+	require.NoError(t, call(t, d, api.MVaultUnlock, sys, nil))
+	require.Equal(t, first, stamp(), "not saved again within the hour")
+	clock.add(6 * 24 * time.Hour)
+	require.NoError(t, call(t, d, api.MVaultUnlock, sys, nil))
+	require.True(t, stamp().After(first))
+	clock.add(6 * 24 * time.Hour)
+	require.False(t, vaultOf(d).PasswordDue, "twelve days on, the last system auth keeps the seven day window open")
+
+	const next = "Saffron-Pebble-Drum-64"
+	require.NoError(t, call(t, d, api.MVaultChangePassword, api.ChangePasswordParams{Current: testPassword, Next: next}, nil))
+	require.True(t, vaultOf(d).PasswordDue)
+	err := call(t, d, api.MVaultUnlock, sys, nil)
+	require.Equal(t, api.ErrPasswordRequired, codeOf(t, err))
+	require.ErrorContains(t, err, "changed")
+	require.Equal(t, api.ErrWrongPassword, codeOf(t, call(t, d, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, nil)))
+	require.NoError(t, call(t, d, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: next}, nil))
+	require.False(t, vaultOf(d).PasswordDue)
+	require.NoError(t, call(t, d, api.MVaultUnlock, sys, nil), "system auth counts again")
+
+	require.NoError(t, call(t, d, api.MVaultRecover, api.RecoverParams{RecoveryKey: testVault().recovery, NewPassword: testPassword}, nil))
+	require.True(t, vaultOf(d).PasswordDue, "a recovery asks for the new password once too")
 }
 
 func TestRecoverWhileUnlocked(t *testing.T) {

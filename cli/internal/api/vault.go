@@ -62,7 +62,7 @@ const (
 	ErrSessionRequired   = "session_required"
 )
 
-var PasswordDayChoices = []int{7, 14, 30, 0}
+var PasswordDayChoices = []int{7, 15, 30}
 
 // Deprecated: removed with the TUI change; the app locks itself after 4 minutes
 var IdleLockChoices = []int{5, 10, 30, 60, 0}
@@ -73,7 +73,7 @@ type Vault struct {
 	Unlock          string    `json:"unlock"` // Deprecated: removed with the TUI change
 	PasswordDays    int       `json:"passwordDays"`
 	IdleLockMinutes int       `json:"idleLockMinutes"`  // Deprecated: removed with the TUI change
-	PasswordDue     bool      `json:"passwordDue"`      // system auth is refused until the password is typed once
+	PasswordDue     bool      `json:"passwordDue"`      // system auth is refused until the password is typed once, e.g. after it changed
 	System          string    `json:"system,omitempty"` // "" when unavailable, else "Touch ID", "Windows Hello", "your Mac password", "your system password"
 	Synced          bool      `json:"synced"`           // this device's key is the signed-in account's key
 	Legacy          int       `json:"legacy"`           // services on the server still waiting to be end-to-end encrypted

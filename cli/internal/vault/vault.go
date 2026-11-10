@@ -197,7 +197,7 @@ func AdoptRemote(local *File, remote Remote, ak, deviceKey []byte, now time.Time
 	f.KeyID, f.KDF, f.WrappedKey, f.RecoveryWrappedKey = remote.KeyID, remote.KDF, remote.WrappedKey, remote.RecoveryWrappedKey
 	f.KDF.Salt = slices.Clone(remote.KDF.Salt)
 	f.DeviceWrappedKey = ""
-	f.PasswordAt = now.UTC()
+	f.Typed(now)
 	f.Account = true
 	if len(deviceKey) > 0 {
 		if err := f.SetDevice(ak, deviceKey); err != nil {
