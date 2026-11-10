@@ -25,6 +25,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/ipc"
 	"github.com/itzzritik/dokky/cli/internal/logx"
 	"github.com/itzzritik/dokky/cli/internal/platform"
+	"github.com/itzzritik/dokky/cli/internal/platform/lockwatch"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	dsync "github.com/itzzritik/dokky/cli/internal/sync"
 	"github.com/rclone/rclone/fs"
@@ -220,6 +221,8 @@ func Run(ctx context.Context, p Paths) (err error) {
 	if err := k.load(); err != nil {
 		return err
 	}
+	// for the life of the process: a screen lock or a sleep ends the control session, never the drives
+	go lockwatch.Watch(ctx, func() { k.endSession("the screen locked or the computer slept") })
 	return runPhases(ctx, phaseEnv{p: p, eng: eng, ejected: eng.Ejected(), k: k, home: home, log: log, cur: &cur, watchdog: &watchdog})
 }
 
