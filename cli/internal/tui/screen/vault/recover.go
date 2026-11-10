@@ -30,9 +30,11 @@ type recoverForm struct {
 }
 
 func newRecover(join bool) *recoverForm {
-	k := ui.NewSecret("Recovery key", "DK1-XXXX-XXXX-"+ui.G.Ellipsis, 96)
+	k := ui.NewSecret("", "DK1-XXXX-XXXX-"+ui.G.Ellipsis, 96)
 	k.Reveal, k.Show = true, groupKey
-	return &recoverForm{key: k, np: makeNew("New password", "Confirm"), at: "field:0", join: join}
+	np := makeNew("", "")
+	np.pw.Hint, np.again.Hint = "", ""
+	return &recoverForm{key: k, np: np, at: "field:0", join: join}
 }
 
 // checked on each change, not each frame
@@ -118,7 +120,7 @@ func checkKey(rs []rune) (keyState, int) {
 
 func keyLine(s keyState, n, w int, bg color.Color) string {
 	p := ui.P()
-	l := ui.L(bg).Sp(ui.LabelW)
+	l := ui.L(bg)
 	switch s {
 	case keyEmpty:
 		l.T("Any case, with or without the dashes.", p.Faint)
@@ -254,19 +256,16 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Active = 0
 	cw, bg := win.Inner(), p.Window
 	idle := r.req == 0
-	room := win.Room(maxH)
-	g := 1
-	if room >= 6 {
-		g = 2
-	}
 	focus := fieldAt(r.at) - 1
 	if !idle {
 		focus = -1
 	}
+	// labels above the fields, as on the gate's other cards
 	body := ui.NewBox()
-	body.Add(0, 0, r.key.View("field:0", cw, r.at == "field:0" && idle, bg))
-	body.Put(0, 1, keyLine(r.ks, r.kn, cw, bg))
-	rows := 1 + g + r.np.place(body, 1+g, cw, room-1-g, [2]string{"field:1", "field:2"}, focus)
+	body.Put(0, 0, ui.L(bg).T("Recovery key", p.Muted).Pad(cw))
+	body.Add(0, 1, r.key.View("field:0", cw, r.at == "field:0" && idle, bg))
+	body.Put(0, 2, keyLine(r.ks, r.kn, cw, bg))
+	rows := 4 + r.np.labelled(body, 4, cw, [2]string{"New master password", "Confirm new master password"}, [2]string{"field:1", "field:2"}, focus)
 	win.Body = body
 	return rows
 }
@@ -275,11 +274,11 @@ func (r *recoverForm) actions(*core.State) []core.Action {
 	if r.req != 0 {
 		return nil
 	}
-	enter := core.Action{Key: "enter", Label: "reset"}
+	enter := core.Action{Key: "enter", Label: "Reset"}
 	if r.filled(fieldAt(r.at)) {
-		enter.Label = "next"
+		enter.Label = "Next"
 	}
-	return []core.Action{enter, moveAction, revealAction(r.reveal)}
+	return []core.Action{enter, {Key: "tab", Label: "Next"}}
 }
 
 func (r *recoverForm) typing() bool               { return fieldAt(r.at) >= 0 }
