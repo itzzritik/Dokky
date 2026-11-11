@@ -45,7 +45,7 @@ type Flow struct {
 func newFlow(st *core.State, first form, window bool, ex exit) *Flow {
 	f := &Flow{forms: []form{first}, window: window, exit: ex}
 	if !window {
-		f.stage = NewStage()
+		f.stage = Stage()
 	}
 	return f
 }
@@ -172,8 +172,11 @@ func (f *Flow) cover(st *core.State, w, h int) *lipgloss.Layer {
 	})
 }
 
-// NewStage is the gate every full screen shares, the breathing contour map along its bottom
-func NewStage() *ui.Stage { return &ui.Stage{New: contour.NewBand} }
+// every full screen draws on this one stage, so the contour lines carry on as one screen gives way to the next
+var stage = &ui.Stage{New: contour.NewBand}
+
+// Stage is the splash every full screen shares: the wordmark, one card and the breathing contour map below
+func Stage() *ui.Stage { return stage }
 
 func (f *Flow) Actions(st *core.State) []core.Action {
 	acts := f.top().actions(st)

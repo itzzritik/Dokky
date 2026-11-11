@@ -250,11 +250,24 @@ func TestUpdatingThenUnlockOnALockedDaemon(t *testing.T) {
 	require.Equal(t, []core.Toast{{Text: "Fixed 1 problem"}}, a.pending)
 }
 
+// the lock screen waits on Touch ID, so its card offers the password instead
+func asking(a *App) bool {
+	out, _, _ := ui.Compose(100, 30, ui.Pass{Layer: a.gate.(*vault.Flow).View(a.st, 100, 30)})
+	return strings.Contains(out, "Use password")
+}
+
+// opening dokky on a lock set with l: the reconnect notice goes out first, so it can't cancel the new request
+func TestOpeningOnALockAsksForTouchID(t *testing.T) {
+	a := New(core.Deps{})
+	a.updateChecked = true
+	a.st.W, a.st.H = 100, 30
+	ended := vaultIn(api.VaultUnlocked)
+	ended.Session = false
+	a.onConnected(connected{snap: api.State{Vault: ended, Settings: api.Settings{Chosen: true}}})
+	require.True(t, asking(a), "Touch ID shows by itself as dokky opens")
+}
+
 func TestLockScreenAsksByItselfUnlessLockedByHand(t *testing.T) {
-	asking := func(a *App) bool {
-		out, _, _ := ui.Compose(100, 30, ui.Pass{Layer: a.gate.(*vault.Flow).View(a.st, 100, 30)})
-		return strings.Contains(out, "Use password")
-	}
 	chosen := api.Settings{Chosen: true}
 	v := vaultIn(api.VaultLocked)
 	v.System = ""

@@ -100,7 +100,9 @@ func (a *App) onConnected(m connected) tea.Cmd {
 		a.kicked = true
 		kick = a.syncKick()
 	}
-	return tea.Batch(a.setSnap(m.snap), a.next(), a.broadcast(core.Reconnected{}), a.runChecks(), a.listen(quietFor), kick, a.fetchLog())
+	// screens drop what they asked the old connection first; a lock screen built by setSnap then keeps its Touch ID
+	rec := a.broadcast(core.Reconnected{})
+	return tea.Batch(rec, a.setSnap(m.snap), a.next(), a.runChecks(), a.listen(quietFor), kick, a.fetchLog())
 }
 
 // a reply from before a reconnect, or an event from an old stream, is dropped

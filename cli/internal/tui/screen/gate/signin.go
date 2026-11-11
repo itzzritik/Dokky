@@ -37,7 +37,7 @@ var openURL = platform.OpenURL
 
 // opens the sign-in window and starts the device code flow
 func Open(st *core.State) tea.Cmd {
-	s := &SignIn{stage: vault.NewStage()}
+	s := &SignIn{stage: vault.Stage()}
 	cmd := s.begin(st)
 	s.at = s.primary()
 	return tea.Sequence(core.Open(s), cmd)
@@ -64,7 +64,7 @@ func (s *SignIn) poll(st *core.State) tea.Cmd {
 
 // after the master password step: the sign in that waited for it uploads, then settles clashes as usual
 func Resume(st *core.State) tea.Cmd {
-	s := &SignIn{stage: vault.NewStage(), req: core.NextReq(), status: "waiting"}
+	s := &SignIn{stage: vault.Stage(), req: core.NextReq(), status: "waiting"}
 	s.at = s.primary()
 	return tea.Sequence(core.Open(s), s.poll(st))
 }

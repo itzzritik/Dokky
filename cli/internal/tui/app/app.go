@@ -11,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/client"
-	"github.com/itzzritik/dokky/cli/internal/tui/brand"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/activity"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/drives"
@@ -39,8 +38,7 @@ type App struct {
 	pendingRestart string // an installed dokky this TUI restarts onto once uploads finish
 	restartOpen    bool
 	restartAt      time.Time
-	carry          *carry      // the update the window before this one was restarting onto
-	mark           *brand.Mark // the splash's logo, new each time the splash shows so it fills again
+	carry          *carry // the update the window before this one was restarting onto
 	everConnected  bool
 	autoStarted    bool
 	relaunched     bool
@@ -90,9 +88,9 @@ func New(deps core.Deps) *App {
 	if deps.Reopened {
 		a.carry = carried()
 	}
-	// Updating was on screen a moment ago, so it shows at once with the mark already full
+	// Updating was on screen a moment ago, so it shows at once
 	if a.carry != nil {
-		a.veil, a.mark = false, brand.NewMark(now.Add(-4*time.Second))
+		a.veil = false
 	}
 	return a
 }

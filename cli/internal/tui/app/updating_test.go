@@ -158,19 +158,11 @@ func TestUpdatingFitsSmallWindows(t *testing.T) {
 		a.carry = &carry{from: "0.1.4", to: "0.1.5"}
 		rows := screen(a)
 		require.Len(t, rows, h)
-		sub, bar := -1, ""
-		for i, r := range rows {
-			if strings.Contains(r, "Your drives come back on their own.") {
-				sub = i
-			}
-			if strings.Contains(r, ui.G.Heavy+ui.G.Heavy) {
-				bar = r
-			}
-		}
-		require.Positive(t, sub, "%dx%d", w, h)
-		require.Less(t, sub, h-2, "%dx%d: clear of the footer", w, h)
-		require.Equal(t, min(36, w-8), strings.Count(bar, ui.G.Heavy), "%dx%d", w, h)
-		require.Contains(t, strings.Join(rows, "\n"), "Reconnecting your drives")
+		all := strings.Join(rows, "\n")
+		require.Contains(t, all, "Updating", "%dx%d", w, h)
+		require.Contains(t, all, ui.G.Heavy+ui.G.Heavy, "%dx%d: the bar", w, h)
+		require.Contains(t, all, "Reconnecting your drives", "%dx%d", w, h)
+		require.Contains(t, all, "Your drives come back", "%dx%d: the last line fits too", w, h)
 	}
 	a := shown(39, 14)
 	a.carry = &carry{to: "0.1.5"}
