@@ -49,7 +49,7 @@ All of this follows Forged's `screen/gate` layout:
 - No footer bar.
 - Dokky's still wordmark at the top.
 - A centred card, `min(52, w-4)` wide.
-- A breathing topographic contour map filling the bottom third, in place of Forged's fire. Picked from more than a hundred options, ahead of water.
+- React Bits' Topography ported to braille: a contour map of mountains the camera glides over, filling the whole screen behind the lock screen, its cards, the startup screen and Updating, in place of Forged's fire. Lines fade to a whisper wherever text sits, so everything in the middle keeps its contrast.
 
 The cards:
 

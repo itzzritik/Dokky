@@ -1,6 +1,7 @@
 package app
 
 import (
+	"image"
 	"slices"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
@@ -44,10 +46,12 @@ func (a *App) render() string {
 	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
 	case a.updatingNow():
-		passes = append(passes, ui.Pass{Layer: a.updatingLayer(a.updating(), w, h)})
+		l := a.updatingLayer(a.updating(), w, h)
+		passes = append(passes, a.behind(l, w, h), ui.Pass{Layer: l})
 		keys = footerNone
 	case !a.st.Connected || a.removedNow():
-		passes = append(passes, ui.Pass{Layer: a.splashLayer(a.splash(), w, h)})
+		l := a.splashLayer(a.splash(), w, h)
+		passes = append(passes, a.behind(l, w, h), ui.Pass{Layer: l})
 		if a.failed {
 			acts = []core.Action{{Key: "enter", Label: "start dokky"}}
 		}
@@ -105,6 +109,11 @@ func (a *App) render() string {
 }
 
 var moreKey = core.Action{Key: "m", Label: "More", Icon: ui.G.Icon.Details}
+
+// the lock screen's contour map behind a full screen of its own, quiet behind its words and the footer
+func (a *App) behind(l *lipgloss.Layer, w, h int) ui.Pass {
+	return ui.Pass{Layer: vault.Backdrop().Behind(w, h, a.st.Now, ui.Ink(l, w, h), image.Rect(0, h-2, w, h-1))}
+}
 
 func full(s core.Screen) bool {
 	f, ok := s.(core.Full)

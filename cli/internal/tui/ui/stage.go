@@ -1,7 +1,8 @@
 package ui
 
 import (
-	"image/color"
+	"image"
+	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
@@ -23,24 +24,19 @@ func Wordmark() []string {
 	return rows
 }
 
-// a speck drawn above the band, like a star over the map
-type Particle struct {
-	X, Row int
-	Glyph  string
-	Fg     color.Color
-}
-
-// Band is the animated strip along the bottom of a stage
+// Band is the animated backdrop behind a stage, filling the whole screen
 type Band interface {
 	Size() (w, rows int)
 	Step()
 	Lines() []string
-	// Particles in the air, above the band or above its waterline; top is the band's first screen row
-	Particles(top int) []Particle
 }
 
-// Stage is Forged's gate layout: the wordmark, one card in the middle and a band filling the bottom third.
-// New makes the band for a size; nil, or a screen too small, leaves the band out
+// a band that keeps quiet where text sits: the rectangles are in cells
+type Calmer interface{ Calm([]image.Rectangle) }
+
+// Stage is Forged's gate layout over a full-screen band: the wordmark, and one card in the middle. New makes the
+// band for a size; nil, or a screen too small, leaves the band out. One stage can sit behind every full screen,
+// so the band carries on as screens change
 type Stage struct {
 	New  func(w, rows int) Band
 	band Band
@@ -49,10 +45,6 @@ type Stage struct {
 
 // the band moves at 20 frames a second whatever the redraw rate
 const bandFrame = 50 * time.Millisecond
-
-type rect struct{ x, y, w, h int }
-
-func (r rect) has(x, y int) bool { return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h }
 
 // CardWidth is how wide the stage's card is on a screen w wide
 func CardWidth(w int) int { return min(52, w-4) }
@@ -80,59 +72,50 @@ func (s *Stage) advance(now time.Time) {
 // Moving says whether the band animates, so the app keeps ticking
 func (s *Stage) Moving() bool { return s != nil && s.band != nil && !Reduced() }
 
-// Layer places the card, built for at most maxH rows, above the band, and the wordmark above the card
-func (s *Stage) Layer(w, h int, now time.Time, card func(maxH int) *Window) *lipgloss.Layer {
-	if s == nil {
-		s = &Stage{}
-	}
-	top := -1
-	if s.New != nil && w >= 40 && h >= 16 {
-		top = h - int(float64(h)*0.33+0.5)
-	}
-	lim := h
-	if top >= 0 {
-		lim = top
-	}
-	// the card at its own height; when that needs the band's rows, the band goes
-	win := card(h - 2)
-	if win.H > lim-2 {
-		top, lim = -1, h
-	}
-	cardY := (h - win.H) / 2
-	if cardY+win.H > lim-1 {
-		cardY = lim - 1 - win.H
-	}
-	cardY = max(1, cardY)
-	cardX := (w - win.W) / 2
-	b := NewBox()
-	if top >= 0 {
-		if bw, br := s.bandSize(); bw != w || br != h-top {
-			s.band = s.New(w, h-top)
+// Behind draws the band across a w by h screen, quiet in the calm rectangles where text sits; nil when there is
+// no band or the screen is too small for one
+func (s *Stage) Behind(w, h int, now time.Time, calm ...image.Rectangle) *lipgloss.Layer {
+	if s == nil || s.New == nil || w < 40 || h < 16 {
+		if s != nil {
+			s.band = nil
 		}
-		s.advance(now)
-		b.Lines(0, top, s.band.Lines())
-	} else {
-		s.band = nil
+		return nil
 	}
-	var mark rect
+	if bw, bh := s.bandSize(); bw != w || bh != h {
+		s.band = s.New(w, h)
+	}
+	if c, ok := s.band.(Calmer); ok {
+		c.Calm(calm)
+	}
+	s.advance(now)
+	// beneath everything, windows' own fill included
+	return lipgloss.NewLayer(strings.Join(s.band.Lines(), "\n")).Z(-100)
+}
+
+// Layer places the card, built for at most maxH rows, in the middle, the wordmark above it and the band behind
+func (s *Stage) Layer(w, h int, now time.Time, card func(maxH int) *Window) *lipgloss.Layer {
+	win := card(h - 2)
+	cardY, cardX := max(1, (h-win.H)/2), (w-win.W)/2
+	calm := []image.Rectangle{image.Rect(cardX, cardY, cardX+win.W, cardY+win.H)}
+	b := NewBox()
+	var wm []string
+	var mx, my int
 	switch room := cardY - 1; {
 	case room >= 6:
-		wm := Wordmark()
-		mw := Width(wm[0])
-		mark = rect{(w - mw) / 2, max(1, max((cardY-3)/2, cardY-7)), mw, len(wm)}
-		b.Lines(mark.x, mark.y, wm)
+		wm = Wordmark()
+		mx, my = (w-Width(wm[0]))/2, max(1, max((cardY-3)/2, cardY-7))
 	case room >= 3:
-		mark = rect{(w - 5) / 2, cardY - 2, 5, 1}
-		b.Put(mark.x, mark.y, Paint("dokky", P().Text, nil, true))
+		wm = []string{Paint("dokky", P().Text, nil, true)}
+		mx, my = (w-5)/2, cardY-2
 	}
-	cr := rect{cardX, cardY, win.W, win.H}
-	if top >= 0 {
-		for _, pt := range s.band.Particles(top) {
-			if pt.X < 0 || pt.X >= w || pt.Row < 0 || pt.Row >= h || cr.has(pt.X, pt.Row) || mark.has(pt.X, pt.Row) {
-				continue
-			}
-			b.Put(pt.X, pt.Row, Paint(pt.Glyph, pt.Fg, nil, false))
-		}
+	if wm != nil {
+		calm = append(calm, image.Rect(mx, my, mx+Width(wm[0]), my+len(wm)))
+	}
+	if l := s.Behind(w, h, now, calm...); l != nil {
+		b.Add(0, 0, l)
+	}
+	if wm != nil {
+		b.Lines(mx, my, wm)
 	}
 	b.Add(cardX, cardY, win.Layer())
 	return b.Layer()
@@ -143,4 +126,20 @@ func (s *Stage) bandSize() (int, int) {
 		return 0, 0
 	}
 	return s.band.Size()
+}
+
+// Ink is the smallest rectangle, in cells, holding everything l draws on a w by h screen, so a band can keep
+// quiet behind it; empty when l draws nothing
+func Ink(l *lipgloss.Layer, w, h int) image.Rectangle {
+	c := lipgloss.NewCanvas(w, h)
+	c.Compose(lipgloss.NewCompositor(l))
+	r := image.Rectangle{}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if cell := c.CellAt(x, y); cell != nil && cell.Content != "" && cell.Content != " " {
+				r = r.Union(image.Rect(x, y, x+1, y+1))
+			}
+		}
+	}
+	return r
 }
