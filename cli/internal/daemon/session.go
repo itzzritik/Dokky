@@ -15,11 +15,11 @@ import (
 const sessionReason = "Unlock dokky"
 
 // what works with no session: the lock screen, read-only views that hand out no secret, the launch handshake and
-// the daemon's own work on request. anything else changes something or hands out a secret, so a method added
-// later needs a session until it is listed here
+// the daemon's own work on request, such as installing the newest release, which auto update does anyway. anything
+// else changes something or hands out a secret, so a method added later needs a session until it is listed here
 var withoutSession = []string{
 	"status", api.MState, api.MActivity, api.MEvents, api.MEventsSeen, "oauth.status", "providers", api.MCatalog,
-	api.MSyncKick, "sync.now", "update.check", "update.restart", "daemon.restart",
+	api.MSyncKick, "sync.now", "update.check", "update.install", "update.restart", "daemon.restart",
 	api.MSessionOpen, api.MSessionClose, api.MVaultUnlock, api.MVaultRecover,
 }
 

@@ -143,7 +143,7 @@ func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 }
 
 // locked answers state, status, session.open and close, vault.unlock, vault.recover, daemon.restart,
-// update.check and the event stream. opening the session opens the vault, which starts the unlocked phase
+// update.check, update.install and the event stream. opening the session opens the vault, which starts the unlocked phase
 func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 	k := l.e.k
 	h := map[string]ipc.Handler{}
@@ -178,6 +178,7 @@ func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 		return nil, nil
 	}
 	h["update.check"] = decodeCtx(func(ctx context.Context, _ struct{}) (checkReply, error) { return l.shell.updateCheck(ctx) })
+	h["update.install"] = decodeCtx(func(ctx context.Context, _ struct{}) (installReply, error) { return l.shell.installNow(ctx) })
 	for m, fn := range h {
 		h[m] = sessionGate(k, m, fn)
 	}
