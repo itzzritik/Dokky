@@ -19,7 +19,7 @@ Drives and file use never stop. Changes need Dokky open and unlocked.
 
   Wall time matters because the monotonic clock stops during sleep.
 - **Gating.** Every daemon method that changes anything refuses with code `session_required` unless a session is live.
-  - Open without a session: methods the lock screen needs, read-only views, and the launch handshake. That means `state`, `status`, `activity`, `events`, `events.seen`, `sync.kick`, `update.check`, `update.restart`, `oauth.status`, `providers` and `catalog`, plus `session.open`, `vault.unlock`, `vault.recover` and `vault.setup` when there is no vault yet.
+  - Open without a session: methods the lock screen needs, read-only views, and the launch handshake. That means `state`, `status`, `activity`, `events`, `events.seen`, `sync.kick`, `update.check`, `update.install`, `update.restart`, `oauth.status`, `providers` and `catalog`, plus `session.open`, `vault.unlock`, `vault.recover` and `vault.setup` when there is no vault yet.
   - Anything that returns secrets or changes state needs the session.
   - The daemon's own work (auto mount at start, sync, auto update) never needs one.
 - **Command line.** `dokky mount`, `unmount`, `login`, `logout`, `update` and `fix` are removed. `dokky` (the TUI), `status`, `doctor`, `daemon` and `selftest` stay.

@@ -202,7 +202,7 @@ func TestSessionPromptCancelled(t *testing.T) {
 func TestSessionGate(t *testing.T) {
 	// reviewed one by one: the lock screen, read-only views that hand out no secret, the launch handshake
 	open := []string{"status", api.MState, api.MActivity, api.MEvents, api.MEventsSeen, "oauth.status", "providers", api.MCatalog,
-		api.MSyncKick, "sync.now", "update.check", "update.restart", "daemon.restart",
+		api.MSyncKick, "sync.now", "update.check", "update.install", "update.restart", "daemon.restart",
 		api.MSessionOpen, api.MSessionClose, api.MVaultUnlock, api.MVaultRecover}
 	first := []string{"settings.set", "login.start", "login.poll", "login.resolve", "login.cancel", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
 	table := (&Daemon{}).handlers(nil)

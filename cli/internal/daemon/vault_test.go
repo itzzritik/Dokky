@@ -165,6 +165,9 @@ func TestLockedAnswersOnlyItsMethods(t *testing.T) {
 	require.Equal(t, api.VaultLocked, st.Vault)
 	require.Contains(t, h, "update.check")
 	require.Contains(t, h, "daemon.restart")
+	l.shell.upd.blocked = "a test, so nothing reaches npm"
+	var r installReply
+	require.NoError(t, invoke(t, h, "update.install", nil, &r), "the newest release installs while locked, as auto update does")
 
 	require.Equal(t, api.ErrWrongPassword, codeOf(t, invoke(t, h, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: "not it at all"}, nil)))
 	require.NoError(t, invoke(t, h, api.MVaultUnlock, api.UnlockParams{Method: api.AuthPassword, Password: testPassword}, nil))
