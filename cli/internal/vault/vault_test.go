@@ -14,7 +14,6 @@ func TestCreateOpensEveryWay(t *testing.T) {
 	require.NoError(t, err)
 	require.Regexp(t, recoveryShape, text)
 	require.Equal(t, KeyID(ak), f.KeyID)
-	require.Equal(t, UnlockAuto, f.Unlock)
 	require.False(t, f.Account)
 	require.Equal(t, now, f.PasswordAt)
 	require.NoError(t, f.Validate())
@@ -57,7 +56,6 @@ func TestCreateWithoutDeviceKey(t *testing.T) {
 	f, ak, _, err := Create(pw, nil, now)
 	require.NoError(t, err)
 	require.Empty(t, f.DeviceWrappedKey)
-	require.Equal(t, UnlockPassword, f.Unlock)
 	_, err = OpenWithDevice(f, key(5))
 	require.ErrorIs(t, err, ErrNoDeviceKey)
 
@@ -157,7 +155,7 @@ func TestAdoptRemote(t *testing.T) {
 
 	b, _, _, err := Create([]byte("device b password"), key(2), now)
 	require.NoError(t, err)
-	b.Unlock, b.PasswordDays, b.IdleLockMinutes = UnlockSystem, 30, 60
+	b.PasswordDays = 30
 	before := b.Clone()
 
 	joined, err := OpenRemoteWithPassword(remote, pw)
@@ -173,9 +171,7 @@ func TestAdoptRemote(t *testing.T) {
 	require.True(t, f.Account)
 	require.Equal(t, later, f.PasswordAt)
 	require.Equal(t, before.CreatedAt, f.CreatedAt)
-	require.Equal(t, UnlockSystem, f.Unlock)
 	require.Equal(t, 30, f.PasswordDays)
-	require.Equal(t, 60, f.IdleLockMinutes)
 
 	for _, open := range []func() ([]byte, error){
 		func() ([]byte, error) { return OpenWithPassword(f, pw) },
@@ -201,25 +197,24 @@ func TestAdoptRemoteWithoutLocalVault(t *testing.T) {
 	f, err := AdoptRemote(nil, a.Remote(), ak, key(3), now)
 	require.NoError(t, err)
 	require.NoError(t, f.Validate())
-	require.Equal(t, UnlockAuto, f.Unlock)
 	got, err := OpenWithDevice(f, key(3))
 	require.NoError(t, err)
 	require.Equal(t, ak, got)
 
 	f, err = AdoptRemote(nil, a.Remote(), ak, nil, now)
 	require.NoError(t, err)
-	require.Equal(t, UnlockPassword, f.Unlock)
-	require.Empty(t, f.DeviceWrappedKey)
+	require.Empty(t, f.DeviceWrappedKey, "no keychain, so it opens with the password only")
 }
 
-func TestAdoptRemoteKeepsPasswordOnlyUnlock(t *testing.T) {
-	a, ak, _, err := Create(pw, key(1), now)
+// a device once set to open with the password only gets a device wrap like any other
+func TestAdoptRemoteAlwaysWrapsForTheDevice(t *testing.T) {
+	a, ak, _, err := Create(pw, nil, now)
 	require.NoError(t, err)
-	local := a.Clone()
-	local.Unlock = UnlockPassword
-	f, err := AdoptRemote(local, a.Remote(), ak, key(3), now)
+	f, err := AdoptRemote(a.Clone(), a.Remote(), ak, key(3), now)
 	require.NoError(t, err)
-	require.Empty(t, f.DeviceWrappedKey, "password-only unlock keeps no key on the device")
+	got, err := OpenWithDevice(f, key(3))
+	require.NoError(t, err)
+	require.Equal(t, ak, got)
 }
 
 func TestRemoteValidation(t *testing.T) {

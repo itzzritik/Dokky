@@ -24,6 +24,7 @@ type polled struct {
 }
 
 type SignIn struct {
+	stage  *ui.Stage
 	at     string // the focused button
 	req    core.Req
 	start  client.LoginStart
@@ -36,7 +37,7 @@ var openURL = platform.OpenURL
 
 // opens the sign-in window and starts the device code flow
 func Open(st *core.State) tea.Cmd {
-	s := &SignIn{}
+	s := &SignIn{stage: vault.NewStage()}
 	cmd := s.begin(st)
 	s.at = s.primary()
 	return tea.Sequence(core.Open(s), cmd)
@@ -63,7 +64,7 @@ func (s *SignIn) poll(st *core.State) tea.Cmd {
 
 // after the master password step: the sign in that waited for it uploads, then settles clashes as usual
 func Resume(st *core.State) tea.Cmd {
-	s := &SignIn{req: core.NextReq(), status: "waiting"}
+	s := &SignIn{stage: vault.NewStage(), req: core.NextReq(), status: "waiting"}
 	s.at = s.primary()
 	return tea.Sequence(core.Open(s), s.poll(st))
 }
@@ -122,45 +123,48 @@ func (s *SignIn) update(msg tea.Msg, st *core.State) tea.Cmd {
 			}
 		}
 	case core.Click:
-		if slices.Contains(s.stops(), m.ID) {
+		switch {
+		case m.ID == "key:esc":
+			return s.press("btn:cancel", st)
+		case m.ID == "key:c":
+			return s.letter("c", st)
+		case slices.Contains(s.stops(), m.ID):
 			s.at = m.ID
 			return s.press(m.ID, st)
 		}
 	case tea.KeyPressMsg:
-		switch k := m.String(); {
-		case k == "esc":
+		switch k := m.String(); k {
+		case "esc":
 			return s.press("btn:cancel", st)
-		case k == "c" || k == "o":
+		case "c", "o":
 			return s.letter(k, st)
-		case ui.Pressed(k, s.at):
-			return s.press(s.at, st)
-		case ui.Walk(s.stops(), &s.at, k):
+		case "enter", "space":
+			return s.press(s.primary(), st)
 		}
 	}
 	return nil
 }
 
-// c and o press the link buttons while they show
+// c copies the link and o opens it while there is one
 func (s *SignIn) letter(k string, st *core.State) tea.Cmd {
-	id := "btn:copy"
-	if k == "o" {
-		id = "btn:open"
-	}
-	if !slices.Contains(s.stops(), id) {
+	if s.status != "waiting" || s.start.VerifyURL == "" {
 		return nil
 	}
-	s.at = id
-	return s.press(id, st)
+	if k == "o" {
+		return s.press("btn:open", st)
+	}
+	return s.press("btn:copy", st)
 }
 
+// one button, as Forged's card has: open the link, or try again; esc cancels and c copies
 func (s *SignIn) buttons() []ui.Btn {
 	switch {
 	case s.status != "waiting":
-		return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "retry", Label: "Try again", Primary: true}}
+		return []ui.Btn{{ID: "retry", Label: "Try again", Primary: true}}
 	case s.start.VerifyURL == "":
-		return []ui.Btn{{ID: "cancel", Label: "Cancel"}}
+		return nil
 	}
-	return []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "copy", Label: "Copy link"}, {ID: "open", Label: "Open browser", Primary: true}}
+	return []ui.Btn{{ID: "open", Label: "Open link", Primary: true}}
 }
 
 // the bar, also listed by the actions menu
@@ -177,15 +181,12 @@ func (s *SignIn) stops() []string {
 // which buttons show, to see when they change
 func (s *SignIn) set() string { return strings.Join(s.stops(), " ") }
 
-// the primary button, else the only one
+// the one button, else cancel
 func (s *SignIn) primary() string {
-	btns := s.buttons()
-	for _, b := range btns {
-		if b.Primary {
-			return "btn:" + b.ID
-		}
+	if btns := s.buttons(); len(btns) > 0 {
+		return "btn:" + btns[0].ID
 	}
-	return "btn:" + btns[len(btns)-1].ID
+	return "btn:cancel"
 }
 
 func (s *SignIn) press(id string, st *core.State) tea.Cmd {
@@ -209,15 +210,18 @@ func (s *SignIn) press(id string, st *core.State) tea.Cmd {
 	return nil
 }
 
-func (s *SignIn) window(st *core.State, maxW, maxH int) *ui.Window {
+// Forged's sign in card: the code on a strip, the wait, the link, c to copy and one button
+func (s *SignIn) card(st *core.State, w, maxH int) *ui.Window {
 	p := ui.P()
-	win := &ui.Window{W: min(68, maxW), Title: "Finish in your browser", Sub: "Check that it shows this code.", Buttons: s.buttons()}
-	win.Active = win.Index(s.at)
-	if win.Active < 0 {
-		win.Active = win.Index(s.primary())
-	}
+	win := &ui.Window{W: ui.CardWidth(w), Title: "Sign in to dokky", Sub: "Approve this code in your browser.", Buttons: s.buttons(), Active: 0,
+		Hints: ui.WindowKeys(s.Actions(st))}
+	cw, bg := win.Inner(), p.Window
 	body := ui.NewBox()
 	rows := 0
+	line := func(l string) {
+		body.Put(0, rows, l)
+		rows++
+	}
 	switch {
 	case s.status == "denied":
 		win.Title, win.Sub, win.Bad = "The sign-in was denied", "Press enter to try again.", true
@@ -225,50 +229,47 @@ func (s *SignIn) window(st *core.State, maxW, maxH int) *ui.Window {
 		win.Title, win.Sub, win.Bad = "The code expired", "Press enter to get a new one.", true
 	case s.status == "failed":
 		win.Title, win.Sub, win.Bad = "Could not sign in", "Press enter to try again.", true
-		body.Put(0, 0, win.Text(s.err, p.Coral))
-		rows = 1
-	case s.start.UserCode == "":
-		win.Title, win.Sub = "Signing in", ""
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for dokky.ritik.me", p.Muted).Pad(win.Inner()))
-		rows = 1
-	default:
-		code := ui.L(p.Surface)
-		for _, c := range s.start.UserCode {
-			if c == '-' {
-				code.T(" - ", p.Faint)
-				continue
-			}
-			code.Raw(ui.Paint(" "+string(c)+" ", p.Ramp[5], p.Cap, true)).Sp(1)
+		for _, l := range ui.Wrap(s.err, cw) {
+			line(ui.L(bg).T(l, p.Coral).Pad(cw))
 		}
-		body.Put(0, 0, code.Pad(win.Inner()))
-		body.Put(0, 3, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for you to approve", p.Muted).Pad(win.Inner()))
-		rows = 4
+	case s.start.UserCode == "":
+		win.Sub = ""
+		line(ui.L(bg).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for dokky.ritik.me", p.Muted).Pad(cw))
+	default:
+		code := strings.Join(strings.Split(s.start.UserCode, ""), " ")
+		left := max(0, (cw-ui.Width(code))/2)
+		line(ui.L(p.Sel).Sp(left).B(code, p.Text).Pad(cw))
+		rows++
+		line(ui.L(bg).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for approval", p.Muted).Pad(cw))
+		for _, l := range ui.Wrap(s.start.VerifyURL, cw) {
+			line(ui.L(bg).T(l, p.Accent).Pad(cw))
+		}
 	}
-	win.Fit(rows, maxH)
 	win.Body = body
+	win.Fit(rows, maxH)
 	return win
 }
 
-func (s *SignIn) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
-	return s.window(st, maxW, maxH).Layer()
+func (s *SignIn) View(st *core.State, w, h int) *lipgloss.Layer {
+	return s.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window { return s.card(st, w, maxH) })
 }
 
-// enter names the focused button; the letters show while their buttons do
+// the gate's card covers the screen
+func (s *SignIn) Full() bool { return true }
+
+// enter presses the one button; c copies the link; esc cancels
 func (s *SignIn) Actions(*core.State) []core.Action {
-	enter := core.Action{Key: "enter", Label: "cancel"}
-	for _, b := range s.buttons() {
-		if "btn:"+b.ID == s.at {
-			enter = core.Action{Key: "enter", Label: strings.ToLower(b.Label), Accent: b.Primary}
-		}
+	enter := core.Action{Key: "enter", Label: "Cancel"}
+	if btns := s.buttons(); len(btns) > 0 {
+		enter.Label = btns[0].Label
 	}
 	acts := []core.Action{enter}
-	if len(s.buttons()) > 1 {
-		acts = append(acts, core.Action{Key: "← →", Label: "choose"})
+	if s.status == "waiting" && s.start.VerifyURL != "" {
+		acts = append(acts, core.Action{Key: "c", Label: "Copy link"})
 	}
-	if slices.Contains(s.stops(), "btn:open") {
-		acts = append(acts, core.Action{Key: "c", Label: "copy link"}, core.Action{Key: "o", Label: "open browser"})
-	}
-	return append(acts, core.Action{Key: "esc", Label: "cancel"})
+	return append(acts, core.Action{Key: "esc", Label: "Cancel"})
 }
 
-func (s *SignIn) Animating(*core.State) bool { return s.status == "waiting" && !ui.Reduced() }
+func (s *SignIn) Animating(*core.State) bool {
+	return s.status == "waiting" && !ui.Reduced() || s.stage.Moving()
+}

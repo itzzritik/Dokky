@@ -23,8 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const e2ePassword = "Orchard-Signal-Ferry-62"
-
 type device struct {
 	state string
 }

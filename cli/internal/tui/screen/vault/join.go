@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -11,30 +12,22 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-// the account already has a master password, set on another device: type it to use it here
+// the account already has a master password, set on another device: type it to use it here, or use the recovery key
 type join struct {
-	pw     *ui.Secret
-	at     string // the focused stop
-	reveal bool
-	err    string
-	cool   bool
-	req    core.Req
-	toast  string
+	pw    *ui.Secret
+	at    string // the focused stop
+	err   string
+	req   core.Req
+	toast string
 }
 
 func newJoin(toast string) *join {
-	return &join{pw: ui.NewSecret("Password", "", vault.MaxPassword), at: "field:pw", toast: toast}
+	pw := ui.NewSecret("", "", vault.MaxPassword)
+	pw.Eye = true
+	return &join{pw: pw, at: "field:pw", toast: toast}
 }
 
-var joinStops = []string{"field:pw", "link:recover", "btn:join"}
-
-// "For you@example.com. You set it on another device."
-func joinSub(st *core.State) string {
-	if e := st.Snap.Account.Email; e != "" {
-		return "For " + e + ". You set it on another device."
-	}
-	return "Your account has one. You set it on another device."
-}
+var joinStops = []string{"field:pw", ui.EyeID("field:pw"), "btn:recover", "btn:join"}
 
 func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch m := msg.(type) {
@@ -46,7 +39,7 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		j.req = 0
 		if m.Err != nil {
-			j.err, j.cool, j.at = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts, "field:pw"
+			j.err, j.at = Explain(m.Err, st), "field:pw"
 			if code(m.Err) == api.ErrWrongPassword {
 				j.pw.Wipe()
 			}
@@ -61,16 +54,10 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		if j.req != 0 {
 			return nil
 		}
-		switch m.ID {
-		case "field:pw":
+		if slices.Contains(joinStops, m.ID) {
 			j.at = m.ID
-		case "link:recover":
-			j.at = m.ID
-			f.push(newRecover(true))
-		case "btn:join":
-			j.at = m.ID
-			return j.submit(st)
 		}
+		return j.press(m.ID, f, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
 		if j.req != 0 {
 			return nil
@@ -81,13 +68,10 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		switch {
 		case k == "esc":
-			return f.back()
-		case k == "ctrl+r":
-			j.reveal = !j.reveal
-			j.pw.Reveal = j.reveal
-		case (k == "enter" || k == "space") && j.at == "link:recover":
-			f.push(newRecover(true))
-		case k == "enter" || ui.Pressed(k, j.at):
+			return f.back(st)
+		case ui.Pressed(k, j.at):
+			return j.press(j.at, f, st)
+		case k == "enter":
 			return j.submit(st)
 		case ui.Walk(joinStops, &j.at, k):
 		case j.at == "field:pw" && j.pw.Type(msg):
@@ -97,10 +81,19 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	return nil
 }
 
-func (j *join) submit(st *core.State) tea.Cmd {
-	if coolingFor(st) > 0 {
-		return nil
+func (j *join) press(id string, f *Flow, st *core.State) tea.Cmd {
+	switch id {
+	case ui.EyeID("field:pw"):
+		j.pw.Reveal = !j.pw.Reveal
+	case "btn:recover":
+		f.push(newRecover(true))
+	case "btn:join":
+		return j.submit(st)
 	}
+	return nil
+}
+
+func (j *join) submit(st *core.State) tea.Cmd {
 	if j.pw.Len() == 0 {
 		j.at, j.err = "field:pw", "Type your master password."
 		return nil
@@ -110,40 +103,28 @@ func (j *join) submit(st *core.State) tea.Cmd {
 	return core.Do(st, j.req, func(ctx context.Context, c *client.Client) (any, error) { return nil, c.VaultJoin(ctx, pw) })
 }
 
+// just the title, the field and two buttons; the line under the title shows only a problem
 func (j *join) view(st *core.State, win *ui.Window, maxH int) int {
-	p := ui.P()
 	win.Title = "Enter your master password"
-	sub(win, joinSub(st), errLine(j.err, j.cool, st))
-	win.Buttons = []ui.Btn{{ID: "join", Label: busyLabel(st, j.req != 0, "Continue", "Checking"), Primary: true}}
-	if j.at != "link:recover" {
-		win.Active = 0
-	}
-	cw, bg := win.Inner(), p.Surface
+	sub(win, "", j.err)
+	win.Buttons = []ui.Btn{{ID: "recover", Label: "Recovery key"}, {ID: "join", Label: busyLabel(st, j.req != 0, "Continue", "Checking"), Primary: true}}
+	win.Active = lit(win, j.at, "btn:join")
 	body := ui.NewBox()
-	body.Add(0, 0, j.pw.View("field:pw", cw, j.at == "field:pw" && j.req == 0, bg))
-	rows := 1
-	if win.Room(maxH) >= 3 {
-		body.Add(0, 2, link("link:recover", "Use recovery key instead", j.at == "link:recover", bg))
-		rows = 3
+	at := j.at
+	if j.req != 0 {
+		at = ""
 	}
+	body.Add(0, 0, j.pw.View("field:pw", win.Inner(), at, ui.P().Window))
 	win.Body = body
-	return rows
+	return 1
 }
 
-func (j *join) actions(*core.State) []core.Action {
-	if j.req != 0 {
-		return nil
-	}
-	enter := core.Action{Key: "enter", Label: "continue"}
-	if j.at == "link:recover" {
-		enter.Label = "use recovery key"
-	}
-	return []core.Action{enter, moveAction, revealAction(j.reveal)}
-}
+// esc is the only key: the arrows and enter work the buttons, which say what they do
+func (j *join) actions(*core.State) []core.Action { return nil }
 
 func (j *join) typing() bool  { return j.at == "field:pw" }
 func (j *join) holding() bool { return j.req != 0 }
 func (j *join) animating(st *core.State) bool {
-	return coolingFor(st) > 0 || j.req != 0 && !ui.Reduced()
+	return j.req != 0 && !ui.Reduced()
 }
 func (j *join) wipe() { j.pw.Wipe() }

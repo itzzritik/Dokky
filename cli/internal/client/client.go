@@ -206,6 +206,11 @@ func (c *Client) LoginResolve(ctx context.Context, kind, name, keep string) ([]a
 	return r.Clashes, err
 }
 
+// LoginCancel drops a sign in waiting on its master password step, changing nothing on this computer
+func (c *Client) LoginCancel(ctx context.Context) error {
+	return c.call(ctx, slow, "login.cancel", nil, nil)
+}
+
 func (c *Client) Logout(ctx context.Context, force bool) (string, error) {
 	r, err := get[struct {
 		Warning string `json:"warning"`

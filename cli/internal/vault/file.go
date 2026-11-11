@@ -19,24 +19,20 @@ const (
 	maxWrap     = 512 // the server refuses bigger wraps too
 )
 
-// how the daemon opens the vault when it starts
-const (
-	UnlockAuto     = "auto"     // the device key, no prompt
-	UnlockSystem   = "system"   // Touch ID, Windows Hello or polkit, then the device key
-	UnlockPassword = "password" // the master password every time
-)
-
-var (
-	PasswordDayChoices = []int{7, 14, 30, 0}
-	IdleLockChoices    = []int{5, 10, 30, 60, 0}
-)
+var PasswordDayChoices = []int{7, 15, 30}
 
 const (
-	defaultPasswordDays = 14
-	defaultIdleLock     = 10
+	defaultPasswordDays = 7
+	// the password is asked for at least this often, however often system auth slides the window
+	passwordCap = 90 * 24 * time.Hour
+	// a time saved while the clock ran ahead would keep the window open until then
+	clockSkew = time.Hour
+	// system auth slides the window by the hour, so vault.json is not written on every unlock
+	systemStampEvery = time.Hour
 )
 
-// File is vault.json: the account key wrapped three ways plus the unlock settings
+// File is vault.json: the account key wrapped three ways plus the password reminder. an older dokky also wrote
+// unlock and idleLockMinutes, which are ignored now: the device key always opens the vault at startup
 type File struct {
 	Version            int       `json:"version"`
 	KeyID              string    `json:"keyId"`
@@ -44,10 +40,10 @@ type File struct {
 	WrappedKey         string    `json:"wrappedKey"`
 	RecoveryWrappedKey string    `json:"recoveryWrappedKey"`
 	DeviceWrappedKey   string    `json:"deviceWrappedKey,omitempty"` // empty when this device has no saved key
-	Unlock             string    `json:"unlock"`
 	PasswordDays       int       `json:"passwordDays"`
-	IdleLockMinutes    int       `json:"idleLockMinutes"`
 	PasswordAt         time.Time `json:"passwordAt"`
+	SystemAt           time.Time `json:"systemAt,omitzero"`      // the last system auth, saved at most once an hour
+	PasswordOnce       bool      `json:"passwordOnce,omitempty"` // the password changed, so the next unlock types it
 	CreatedAt          time.Time `json:"createdAt"`
 	Account            bool      `json:"account"` // these wraps match the signed-in account's server vault
 }
@@ -62,6 +58,7 @@ func Load(stateDir string) (*File, error) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, fmt.Errorf("%s is damaged: %w", FileName, err)
 	}
+	f.upgrade()
 	if err := f.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
@@ -97,25 +94,51 @@ func (f *File) Validate() error {
 			return fmt.Errorf("device key wrap: %w", err)
 		}
 	}
-	if !ValidUnlock(f.Unlock) {
-		return fmt.Errorf("unlock %q should be auto, system or password", f.Unlock)
-	}
 	if !slices.Contains(PasswordDayChoices, f.PasswordDays) {
-		return fmt.Errorf("passwordDays %d should be 0, 7, 14 or 30", f.PasswordDays)
-	}
-	if !slices.Contains(IdleLockChoices, f.IdleLockMinutes) {
-		return fmt.Errorf("idleLockMinutes %d should be 0, 5, 10, 30 or 60", f.IdleLockMinutes)
+		return fmt.Errorf("passwordDays %d should be 7, 15 or 30", f.PasswordDays)
 	}
 	return nil
 }
 
-func ValidUnlock(s string) bool {
-	return s == UnlockAuto || s == UnlockSystem || s == UnlockPassword
+// an older dokky offered 14 days and never, which was 0
+func (f *File) upgrade() {
+	switch f.PasswordDays {
+	case 14:
+		f.PasswordDays = 15
+	case 0:
+		f.PasswordDays = 30
+	}
 }
 
-// PasswordDue says system auth is no longer accepted until the password is typed once
+// PasswordDue says system auth is no longer accepted until the password is typed once: the password changed,
+// the interval passed since the later of the typed password and the last system auth, or 90 days passed since
+// the typed password. a time from the future counts as due
 func (f *File) PasswordDue(now time.Time) bool {
-	return f.PasswordDays > 0 && now.Sub(f.PasswordAt) >= time.Duration(f.PasswordDays)*24*time.Hour
+	ahead := now.Add(clockSkew)
+	if f.PasswordOnce || f.PasswordAt.After(ahead) || f.SystemAt.After(ahead) {
+		return true
+	}
+	interval := time.Duration(f.PasswordDays) * 24 * time.Hour
+	last := f.PasswordAt
+	if f.SystemAt.After(last) {
+		last = f.SystemAt
+	}
+	return now.Sub(f.PasswordAt) >= max(passwordCap, interval) || now.Sub(last) >= interval
+}
+
+// Typed records the master password typed just now, which restarts the window
+func (f *File) Typed(now time.Time) {
+	f.PasswordAt, f.PasswordOnce = now.UTC(), false
+}
+
+// StampSystem slides the window after a system auth; false when the last stamp is under an hour old, so there is
+// nothing to save
+func (f *File) StampSystem(now time.Time) bool {
+	if d := now.Sub(f.SystemAt); !f.SystemAt.IsZero() && d >= 0 && d < systemStampEvery {
+		return false
+	}
+	f.SystemAt = now.UTC()
+	return true
 }
 
 // Clone lets a caller change a copy and swap it in only once it is saved

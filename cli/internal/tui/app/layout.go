@@ -1,13 +1,12 @@
 package app
 
 import (
+	"slices"
 	"strings"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
-	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
@@ -40,26 +39,23 @@ func (a *App) render() string {
 		return strings.Repeat("\n", h/2) + strings.Repeat(" ", max(0, (w-ui.Width(msg))/2)) + ui.Paint(msg, p.Muted, nil, false)
 	}
 	var passes []ui.Pass
-	var left []core.Action
-	right := []core.Action{{Key: "q", Label: "quit"}}
-	var more *core.Action
+	var acts []core.Action
+	keys := footerDash
 	bw, bh := w-2*bodyX, h-bodyY-3
 	switch {
 	case a.updatingNow():
 		passes = append(passes, ui.Pass{Layer: a.updatingLayer(a.updating(), w, h)})
-		right = nil
+		keys = footerNone
 	case !a.st.Connected || a.removedNow():
 		passes = append(passes, ui.Pass{Layer: a.splashLayer(a.splash(), w, h)})
 		if a.failed {
-			left = []core.Action{{Key: "enter", Label: "start dokky"}}
+			acts = []core.Action{{Key: "enter", Label: "start dokky"}}
 		}
+		keys = footerQuit
 	case a.gate != nil:
+		// Forged's gate has no footer: its card carries its own keys
 		passes = append(passes, ui.Pass{Layer: a.gate.View(a.st, w, h)})
-		left, right = a.gate.Actions(a.st), a.globals()
-		// a vault screen takes every key and lists its own way out
-		if a.capturing() && len(a.windows) == 0 {
-			right = nil
-		}
+		keys = footerNone
 	default:
 		base := lipgloss.NewLayer("").AddLayers(
 			ui.Header(w, a.tabNames(), a.active, a.account()),
@@ -67,19 +63,19 @@ func (a *App) render() string {
 		)
 		passes = append(passes, ui.Pass{Layer: base})
 		a.mark = nil
-		left, right, more = a.tabs[a.active].Actions(a.st), a.globals(), &moreKey
-		if lettered(left) {
-			right = append([]core.Action{moreKey}, right...)
-		}
-		if a.capturing() {
-			right, more = nil, nil
-		}
+		acts = a.tabs[a.active].Actions(a.st)
 	}
 	for i, win := range a.windows {
 		if a.updatingNow() {
 			break
 		}
-		// windows stay clear of the footer row
+		if full(win) {
+			passes = append(passes, ui.Pass{Layer: a.blank(w, h), Modal: true}, ui.Pass{Layer: win.View(a.st, w, h), Modal: true})
+			if i == len(a.windows)-1 {
+				acts, keys = nil, footerNone
+			}
+			continue
+		}
 		l := win.View(a.st, w-4, h-4)
 		b := lipgloss.NewCompositor(l).Bounds()
 		x, y := (w-b.Dx())/2, max(1, min(windowY, (h-3-b.Dy())/2))
@@ -90,25 +86,17 @@ func (a *App) render() string {
 		}
 		passes = append(passes, ui.Pass{Layer: lipgloss.NewLayer("").AddLayers(l).X(x).Y(y), Dim: !placed, Modal: true})
 		if i == len(a.windows)-1 {
-			left, right, more = win.Actions(a.st), nil, nil
-			if _, open := win.(*menu); !open && !a.capturing() {
-				more = &moreKey
-				if lettered(left) {
-					right = []core.Action{moreKey}
-				}
-			}
+			acts, keys = win.Actions(a.st), footerWindow
 		}
 	}
-	if a.lock != nil && !a.updatingNow() {
-		passes = append(passes, ui.Pass{Layer: a.blank(w, h), Modal: true}, ui.Pass{Layer: a.lock.View(a.st, w, h), Modal: true})
-		left, right, more = a.lock.Actions(a.st), nil, nil
+	// as in Forged, a window fades everything under it, the footer too
+	foot := ui.Pass{Layer: a.footer(w, acts, keys).Y(h - 2)}
+	at := slices.IndexFunc(passes, func(p ui.Pass) bool { return p.Dim })
+	if at < 0 {
+		at = len(passes)
 	}
-	version := "v" + buildinfo.Version
-	if strings.Contains(buildinfo.Version, "dev") {
-		version = "vDev"
-	}
-	passes = append(passes, ui.Pass{Layer: ui.Footer(w, left, right, more, version).Y(h - 2)})
-	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) && a.lock == nil {
+	passes = slices.Insert(passes, at, foot)
+	if a.toast != nil && a.toast.Live(a.st.Now) && (!a.waiting() || a.toast.Now) {
 		passes = append(passes, ui.Pass{Layer: a.toast.Layer(w, h-4, a.st.Now)})
 	}
 	out, hits, caret := ui.Compose(w, h, passes...)
@@ -116,16 +104,43 @@ func (a *App) render() string {
 	return out
 }
 
-var moreKey = core.Action{Key: "?", Label: "more"}
+var moreKey = core.Action{Key: "m", Label: "More", Icon: ui.G.Icon.Details}
 
-// letter keys are worth a menu, so a screen with any always shows where it is
-func lettered(acts []core.Action) bool {
-	for _, a := range acts {
-		if utf8.RuneCountInString(a.Key) == 1 || strings.HasPrefix(a.Key, "ctrl+") {
-			return true
+func full(s core.Screen) bool {
+	f, ok := s.(core.Full)
+	return ok && f.Full()
+}
+
+// what the footer's right side may hold
+type footerKind int
+
+const (
+	footerDash   footerKind = iota // a tab: More, Update and Quit
+	footerWindow                   // a window: More when its keys don't all fit
+	footerQuit                     // a full screen of its own: Quit
+	footerNone
+)
+
+// at most 4 keys of the screen on top, then More, Update and Quit as Forged has them
+func (a *App) footer(w int, acts []core.Action, kind footerKind) *lipgloss.Layer {
+	left := acts[:min(4, len(acts))]
+	var right []core.Action
+	_, open := a.top().(*menu)
+	free := !a.capturing()
+	switch kind {
+	case footerDash, footerWindow:
+		if !open && free && (kind == footerDash || len(acts) > len(left) || ui.HintsWidth(left, true) > w-6) {
+			right = append(right, moreKey)
+		}
+		if kind == footerDash && free {
+			right = append(right, a.globals()...)
+		}
+	case footerQuit:
+		if free {
+			right = append(right, core.Action{Key: "q", Label: "Quit"})
 		}
 	}
-	return false
+	return ui.Footer(w, left, right)
 }
 
 // the window lock hides everything under it
@@ -134,12 +149,29 @@ func (a *App) blank(w, h int) *lipgloss.Layer {
 	return lipgloss.NewLayer(strings.TrimSuffix(strings.Repeat(row+"\n", h), "\n"))
 }
 
-// actions on every tab, in the footer's right side and the menu
+// actions on every tab, in the footer's right side
 func (a *App) globals() []core.Action {
 	if a.st.UpdateReady() {
-		return []core.Action{{Key: "u", Label: "update", Accent: true}, {Key: "q", Label: "quit"}}
+		return []core.Action{{Key: "u", Label: "Update", Accent: true, Icon: ui.G.Icon.Update}, quitKey}
 	}
-	return []core.Action{{Key: "q", Label: "quit"}}
+	return []core.Action{quitKey}
+}
+
+var (
+	quitKey = core.Action{Key: "q", Label: "Quit", Icon: ui.G.Icon.Quit}
+	lockKey = core.Action{Key: "l", Label: "Lock", Icon: ui.G.Icon.Lock}
+)
+
+// the menu ends with Update, Lock and Quit, as Forged's ends with Lock and Quit
+func (a *App) menuGlobals() []core.Action {
+	var acts []core.Action
+	if a.st.UpdateReady() {
+		acts = append(acts, core.Action{Key: "u", Label: "Update", Accent: true, Icon: ui.G.Icon.Update})
+	}
+	if a.canLock() {
+		acts = append(acts, lockKey)
+	}
+	return append(acts, quitKey)
 }
 
 // the live chip at the top right: what dokky is doing, else whether anything needs you

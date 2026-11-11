@@ -14,19 +14,19 @@ import (
 
 // the master password, for a recovery key that replaces the old one
 type askKey struct {
-	pw     *ui.Secret
-	at     string // the focused stop
-	reveal bool
-	err    string
-	cool   bool
-	req    core.Req
+	pw  *ui.Secret
+	at  string // the focused stop
+	err string
+	req core.Req
 }
 
 func newAskKey() *askKey {
-	return &askKey{pw: ui.NewSecret("Password", "Your master password", vault.MaxPassword), at: "field:pw"}
+	pw := ui.NewSecret("Password", "Your master password", vault.MaxPassword)
+	pw.Eye = true
+	return &askKey{pw: pw, at: "field:pw"}
 }
 
-var askKeyStops = []string{"field:pw", "btn:cancel", "btn:create"}
+var askKeyStops = []string{"field:pw", ui.EyeID("field:pw"), "btn:cancel", "btn:create"}
 
 func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch m := msg.(type) {
@@ -38,7 +38,7 @@ func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		a.req = 0
 		if m.Err != nil {
-			a.err, a.cool = Explain(m.Err, st), code(m.Err) == api.ErrTooManyAttempts
+			a.err = Explain(m.Err, st)
 			if code(m.Err) == api.ErrWrongPassword {
 				a.pw.Wipe()
 				a.at = "field:pw"
@@ -65,10 +65,7 @@ func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		switch {
 		case k == "esc":
-			return f.back()
-		case k == "ctrl+r":
-			a.reveal = !a.reveal
-			a.pw.Reveal = a.reveal
+			return f.back(st)
 		case ui.Pressed(k, a.at):
 			return a.press(a.at, f, st)
 		case k == "enter":
@@ -83,18 +80,17 @@ func (a *askKey) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 
 func (a *askKey) press(id string, f *Flow, st *core.State) tea.Cmd {
 	switch id {
+	case ui.EyeID("field:pw"):
+		a.pw.Reveal = !a.pw.Reveal
 	case "btn:create":
 		return a.submit(st)
 	case "btn:cancel":
-		return f.back()
+		return f.back(st)
 	}
 	return nil
 }
 
 func (a *askKey) submit(st *core.State) tea.Cmd {
-	if coolingFor(st) > 0 {
-		return nil
-	}
 	if a.pw.Len() == 0 {
 		a.at, a.err = "field:pw", "Type your master password."
 		return nil
@@ -107,11 +103,15 @@ func (a *askKey) submit(st *core.State) tea.Cmd {
 func (a *askKey) view(st *core.State, win *ui.Window, _ int) int {
 	p := ui.P()
 	win.Title = "New recovery key"
-	sub(win, "Your current recovery key stops working.", errLine(a.err, a.cool, st))
+	sub(win, "Your current recovery key stops working.", a.err)
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "create", Label: busyLabel(st, a.req != 0, "Create key", "Creating"), Primary: true}}
 	win.Active = lit(win, a.at, "btn:create")
 	body := ui.NewBox()
-	body.Add(0, 0, a.pw.View("field:pw", win.Inner(), a.at == "field:pw" && a.req == 0, p.Surface))
+	at := a.at
+	if a.req != 0 {
+		at = ""
+	}
+	body.Add(0, 0, a.pw.View("field:pw", win.Inner(), at, p.Window))
 	win.Body = body
 	return 1
 }
@@ -124,12 +124,12 @@ func (a *askKey) actions(*core.State) []core.Action {
 	if a.at == "btn:cancel" {
 		enter.Label = "cancel"
 	}
-	return []core.Action{enter, moveAction, revealAction(a.reveal)}
+	return []core.Action{enter, moveAction}
 }
 
 func (a *askKey) typing() bool  { return a.at == "field:pw" }
 func (a *askKey) holding() bool { return a.req != 0 }
 func (a *askKey) animating(st *core.State) bool {
-	return coolingFor(st) > 0 || a.req != 0 && !ui.Reduced()
+	return a.req != 0 && !ui.Reduced()
 }
 func (a *askKey) wipe() { a.pw.Wipe() }

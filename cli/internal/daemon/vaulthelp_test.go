@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/store"
 	"github.com/itzzritik/dokky/cli/internal/sysauth"
 	"github.com/itzzritik/dokky/cli/internal/vault"
@@ -48,6 +49,13 @@ func testKeeper(dir string) *keeper {
 	k.system = func(bool) (string, bool) { return "", false }
 	k.prompt = func(context.Context, string) error { return sysauth.ErrUnavailable }
 	return k
+}
+
+// changes need a live session; tests of the session itself close it first
+func inSession(k *keeper) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.sessionUntil = k.now().Add(api.SessionFor)
 }
 
 // the shared test vault on disk with its device key, unlocked

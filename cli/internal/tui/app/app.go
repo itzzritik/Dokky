@@ -50,7 +50,6 @@ type App struct {
 	active         int
 	gate           core.Screen // the first-run choice or a vault screen, over the tabs
 	covered        coverKind   // which one gate is
-	lock           core.Screen // the window lock, over everything
 	lastInput      time.Time
 	idleArmed      time.Duration // the limit the pending idle check was set for
 	idleGen        int
@@ -217,6 +216,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		if a.canLock() {
 			return a.lockWindow()
 		}
+	case sessionClosed:
+		return nil
 	case idleCheck:
 		return a.onIdle(m)
 	case core.NeedDriver:
@@ -270,7 +271,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 }
 
 func (a *App) setSnap(s api.State) tea.Cmd {
-	was := a.st.Snap.Vault.State
+	was := a.st.Snap.Vault
 	a.st.Snap = s
 	locked := a.onVault(was)
 	cover := a.route()
@@ -294,11 +295,8 @@ func (a *App) hasClashWindow() bool {
 	return false
 }
 
-// the window lock, else the window on top, else the gate, else the tab
+// the window on top, else the gate, else the tab
 func (a *App) top() core.Screen {
-	if a.lock != nil {
-		return a.lock
-	}
 	if n := len(a.windows); n > 0 {
 		return a.windows[n-1]
 	}
@@ -311,8 +309,6 @@ func (a *App) top() core.Screen {
 func (a *App) updateTop(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch n := len(a.windows); {
-	case a.lock != nil:
-		a.lock, cmd = a.lock.Update(msg, a.st)
 	case n > 0:
 		a.windows[n-1], cmd = a.windows[n-1].Update(msg, a.st)
 	case a.gate != nil:
@@ -326,10 +322,6 @@ func (a *App) updateTop(msg tea.Msg) tea.Cmd {
 func (a *App) broadcast(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
-	if a.lock != nil {
-		a.lock, cmd = a.lock.Update(msg, a.st)
-		cmds = append(cmds, cmd)
-	}
 	for i := range a.windows {
 		a.windows[i], cmd = a.windows[i].Update(msg, a.st)
 		cmds = append(cmds, cmd)
@@ -348,7 +340,7 @@ func (a *App) broadcast(msg tea.Msg) tea.Cmd {
 func (a *App) setTab(i int) tea.Cmd { return a.switchTab(core.SwitchTab{Tab: i}) }
 
 func (a *App) switchTab(m core.SwitchTab) tea.Cmd {
-	if m.Tab < 0 || m.Tab >= len(a.tabs) || len(a.windows) > 0 || a.gate != nil || a.lock != nil {
+	if m.Tab < 0 || m.Tab >= len(a.tabs) || len(a.windows) > 0 || a.gate != nil {
 		return nil
 	}
 	a.active = m.Tab
@@ -430,9 +422,8 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 			return a.quit()
 		}
 		return nil
-	case a.lock != nil:
-		return a.updateTop(k)
-	case s == "ctrl+l" && a.canLock():
+	// l locks from every screen and window, but not while a field takes letters: keys are single keys, never combos
+	case s == "l" && !a.capturing() && a.canLock():
 		return a.lockWindow()
 	case a.removedNow():
 		if s == "q" || s == "esc" {
@@ -455,7 +446,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		if s == "q" && len(a.windows) == 0 && !a.capturing() {
 			return a.quit()
 		}
-		if _, open := a.top().(*menu); s == "?" && len(a.windows) > 0 && !open && !a.capturing() {
+		if _, open := a.top().(*menu); (s == "m" || s == "?") && len(a.windows) > 0 && !open && !a.capturing() && !full(a.top()) {
 			return a.openMenu()
 		}
 		return a.updateTop(k)
@@ -463,7 +454,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 	switch s {
 	case "q":
 		return a.quit()
-	case "?":
+	case "m", "?":
 		return a.openMenu()
 	case "1", "2", "3", "4", "5", "6":
 		return a.setTab(int(s[0] - '1'))
@@ -542,9 +533,6 @@ func (a *App) animating() bool {
 	}
 	if a.updatingNow() {
 		return !a.veil && !ui.Reduced()
-	}
-	if a.lock != nil {
-		return a.lock.Animating(a.st)
 	}
 	if !a.st.Connected || a.removedNow() {
 		return !a.veil && !ui.Reduced()

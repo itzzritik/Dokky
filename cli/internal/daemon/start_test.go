@@ -23,5 +23,6 @@ func newTestDaemonOn(t *testing.T, st *store.Store) (*Daemon, *fakeEngine, *stor
 	d := newDaemon(f, st, data, t.TempDir(), t.TempDir(), slog.New(slog.DiscardHandler), unlockedKeeper(t, t.TempDir(), false))
 	d.isMounted, d.forceUnmount = f.isMounted, f.forceUnmount
 	d.upd.paths.State = t.TempDir()
+	inSession(d.vk)
 	return d, f, st
 }

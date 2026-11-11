@@ -516,7 +516,7 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int, at string) int 
 		}
 	}
 	waiting := func(text string) int {
-		body.Put(0, 0, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(text, p.Muted).Pad(cw))
+		body.Put(0, 0, ui.L(p.Window).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T(text, p.Muted).Pad(cw))
 		if s.authURL != "" {
 			body.Put(0, 2, win.Text(s.authURL, p.Faint))
 			return 3
@@ -575,12 +575,12 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int, at string) int 
 		f, y := fields[i], off+(i-top)*2
 		switch {
 		case f.chips != nil && s.question != nil:
-			body.Add(0, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, at == stopID(i, f), p.Surface))
+			body.Add(0, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, at == stopID(i, f), p.Window))
 		case f.chips != nil:
-			body.Put(0, y, ui.L(p.Surface).T(chipLabel(f), p.Muted).Pad(ui.LabelW))
-			body.Add(ui.LabelW, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, at == stopID(i, f), p.Surface))
+			body.Put(0, y, ui.L(p.Window).T(chipLabel(f), p.Muted).Pad(ui.LabelW))
+			body.Add(ui.LabelW, y, ui.Chips("chip:"+strconv.Itoa(i), f.chips, f.sel, at == stopID(i, f), p.Window))
 		default:
-			body.Add(0, y, f.in.View("field:"+strconv.Itoa(i), cw, at == stopID(i, f) && !s.working(), p.Surface))
+			body.Add(0, y, f.in.View("field:"+strconv.Itoa(i), cw, at == stopID(i, f) && !s.working(), p.Window))
 		}
 		rows = y + 1
 	}
@@ -589,7 +589,7 @@ func (a *Add) viewSign(st *core.State, win *ui.Window, maxH int, at string) int 
 		rows += 2
 	}
 	if s.req != 0 {
-		body.Put(0, rows+1, ui.L(p.Surface).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Checking", p.Muted).Pad(cw))
+		body.Put(0, rows+1, ui.L(p.Window).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Checking", p.Muted).Pad(cw))
 		rows += 2
 	}
 	win.Body = body

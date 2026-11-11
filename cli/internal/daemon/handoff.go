@@ -15,10 +15,10 @@ import (
 )
 
 // A restart out of the unlocked phase (an update, daemon.restart, a reinstall) hands the account key to the next
-// start, so a device set to unlock with system auth or the password does not drop every drive until someone
-// unlocks it. The trade-off: between the restart and the next start, normally seconds, the file plus the key in
-// the keychain open the vault, like the device key does in auto mode. The next start deletes both before
-// anything else and honours them only for two minutes; a lock, a stop or a pending removal never writes one.
+// start, so a device whose device key does not open the vault does not drop every drive until someone unlocks
+// it. The trade-off: between the restart and the next start, normally seconds, the file plus the key in the
+// keychain open the vault, like the device key does. The next start deletes both before anything else and
+// honours them only for two minutes; a lock, a stop or a pending removal never writes one.
 const (
 	handoffFile   = "handoff.json"
 	handoffMaxAge = 2 * time.Minute
@@ -36,18 +36,19 @@ func handoffKEK(key []byte) ([]byte, error) {
 	return hkdf.Key(sha256.New, key, nil, infoHandoff, vault.KeySize)
 }
 
-// handOff writes handoff.json for the next start. auto mode opens with the device key anyway, so it gets none
+// handOff writes handoff.json for the next start, unless the device key opens the vault anyway
 func (k *keeper) handOff() error {
 	k.mu.Lock()
 	f, ak := k.file, k.ak
-	var keyID, unlock string
-	if f != nil {
-		keyID, unlock = f.KeyID, f.Unlock
-	}
 	k.mu.Unlock()
-	if f == nil || ak == nil || unlock == vault.UnlockAuto {
+	if f == nil || ak == nil {
 		return nil
 	}
+	if opened, err := k.openWithDevice(f); err == nil {
+		vault.Zero(opened)
+		return nil
+	}
+	keyID := f.KeyID
 	key := make([]byte, vault.KeySize)
 	_, _ = rand.Read(key)
 	defer vault.Zero(key)

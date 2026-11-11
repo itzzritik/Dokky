@@ -35,7 +35,7 @@ func menuSent(cmd tea.Cmd) []tea.Msg {
 func menuLines(m *menu) []string {
 	var out []string
 	for _, it := range m.items {
-		out = append(out, strings.TrimSpace(capital(it.Label)+" "+it.Key))
+		out = append(out, strings.TrimSpace(ui.Capital(it.Label)+" "+it.Key))
 	}
 	return out
 }

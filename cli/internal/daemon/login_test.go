@@ -897,7 +897,13 @@ func requireWiped(t *testing.T, d *Daemon, f *fakeEngine, dir string) {
 	st := d.status()
 	require.False(t, st.LoggedIn)
 	require.Empty(t, st.Mounts)
-	require.NoError(t, call(t, d, "service.put", store.Service{ID: "n1", Name: "fresh", Type: "webdav", Options: map[string]string{"url": "http://x"}}, nil))
+	svc := store.Service{ID: "n1", Name: "fresh", Type: "webdav", Options: map[string]string{"url": "http://x"}}
+	if d.vk.current() == nil {
+		// the vault went too, so like a fresh install nothing changes before a new master password
+		require.Equal(t, errVaultFirst.code, codeOf(t, call(t, d, "service.put", svc, nil)))
+		return
+	}
+	require.NoError(t, call(t, d, "service.put", svc, nil))
 	got := reopen(t, dir)
 	require.Nil(t, got.Account)
 	require.Len(t, got.Services, 1)

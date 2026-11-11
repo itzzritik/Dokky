@@ -3,7 +3,6 @@ package gate
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/client"
@@ -37,18 +36,17 @@ func started(t *testing.T) (*SignIn, *core.State, *[]string) {
 
 var code = client.LoginStart{UserCode: "ABCD-EFGH", VerifyURL: "https://dokky.ritik.me/device", Interval: 5}
 
-func TestSignInFocusesOpenBrowserOnceTheCodeArrives(t *testing.T) {
+func TestSignInOpensTheLinkOnceTheCodeArrives(t *testing.T) {
 	s, st, opened := started(t)
-	require.Equal(t, "btn:cancel", s.at, "only Cancel shows while it waits")
-	require.Equal(t, []string{"enter", "esc"}, keys(s.Actions(st)))
+	require.Equal(t, []string{"enter", "esc"}, keys(s.Actions(st)), "only cancelling while it waits for a code")
 
-	s.View(st, 80, 24) // drawing while only Cancel shows must not move focus
+	s.View(st, 100, 30)
 	s.Update(core.Reply{Req: s.req, Val: code}, st)
-	win := s.window(st, 80, 24)
-	require.Equal(t, "btn:open", s.at)
-	require.Equal(t, 2, win.Active, "Open browser is lit, not Cancel")
-	require.Equal(t, core.Action{Key: "enter", Label: "open browser", Accent: true}, s.Actions(st)[0])
-	require.Equal(t, []string{"enter", "← →", "c", "o", "esc"}, keys(s.Actions(st)))
+	win := s.card(st, 100, 24)
+	require.Equal(t, 0, win.Active, "the one button, Open link, is lit")
+	require.Equal(t, core.Action{Key: "enter", Label: "Open link"}, s.Actions(st)[0])
+	require.Equal(t, []string{"enter", "c", "esc"}, keys(s.Actions(st)))
+	require.Equal(t, []string{"c", "esc"}, keys(win.Hints), "the card shows every key but enter")
 
 	_, cmd := s.Update(core.Press("enter"), st)
 	require.NotNil(t, cmd)
@@ -57,55 +55,43 @@ func TestSignInFocusesOpenBrowserOnceTheCodeArrives(t *testing.T) {
 	require.NotZero(t, s.req, "and the sign in goes on")
 }
 
-func TestSignInRetryFocus(t *testing.T) {
+func TestSignInRetry(t *testing.T) {
 	s, st, _ := started(t)
 	s.Update(core.Reply{Req: s.req, Err: errors.New("no network")}, st)
-	require.Equal(t, "btn:retry", s.at, "Press enter to try again means Try again is lit")
-	require.Equal(t, 1, s.window(st, 80, 24).Active)
+	require.Equal(t, "Try again", s.Actions(st)[0].Label)
 
 	s.Update(core.Press("enter"), st)
 	require.Equal(t, "waiting", s.status)
-	require.Equal(t, "btn:cancel", s.at)
 	s.Update(core.Reply{Req: s.req, Val: code}, st)
-	require.Equal(t, "btn:open", s.at)
 
 	s.Update(core.Reply{Req: s.req, Val: polled{LoginPoll: client.LoginPoll{Status: "expired"}}}, st)
-	require.Equal(t, "btn:retry", s.at)
 	_, cmd := s.Update(core.Press("enter"), st)
 	require.NotNil(t, cmd)
 	require.NotZero(t, s.req, "enter asked for a new code instead of cancelling")
 }
 
-func TestSignInTabAndClicks(t *testing.T) {
-	s, st, _ := started(t)
+func TestSignInKeysAndClicks(t *testing.T) {
+	s, st, opened := started(t)
 	s.Update(core.Reply{Req: s.req, Val: code}, st)
-	var seen []string
-	for range 3 {
-		s.Update(core.Press("tab"), st)
-		seen = append(seen, s.at)
-	}
-	require.Equal(t, []string{"btn:cancel", "btn:copy", "btn:open"}, seen)
-	s.Update(core.Press("shift+tab"), st)
-	require.Equal(t, "btn:copy", s.at)
-
-	s.Update(core.Click{ID: "btn:open"}, st)
-	require.Equal(t, "btn:open", s.at, "a click moves focus to what it hit")
 	_, cmd := s.Update(core.Press("c"), st)
-	require.Equal(t, "btn:copy", s.at)
-	require.NotNil(t, cmd)
+	require.NotNil(t, cmd, "c copies the link")
+	_, cmd = s.Update(core.Click{ID: "btn:open"}, st)
+	require.Nil(t, cmd())
+	require.Len(t, *opened, 1, "a click on the button opens the link")
+	require.True(t, s.Full(), "the card covers the screen, as Forged's gate")
 
-	_, cmd = s.Update(core.Press("esc"), st)
+	_, cmd = s.Update(core.Click{ID: "key:esc"}, st)
 	require.Equal(t, core.CloseWindow{Screen: s}, cmd())
 }
 
 func TestGateTabFlips(t *testing.T) {
 	st := &core.State{}
-	g := New(time.Now())
-	g.Update(core.Press("tab"), st)
+	g := New(st)
+	g.Update(core.Press("down"), st)
 	require.Equal(t, 1, g.sel)
-	g.Update(core.Press("shift+tab"), st)
+	g.Update(core.Press("up"), st)
 	require.Equal(t, 0, g.sel)
-	g.Update(core.Press("shift+tab"), st)
+	g.Update(core.Press("up"), st)
 	require.Equal(t, 1, g.sel)
 }
 
@@ -125,7 +111,7 @@ func TestClashesOneThingLit(t *testing.T) {
 
 	var seen []string
 	for range 3 {
-		c.Update(core.Press("tab"), st)
+		c.Update(core.Press("down"), st)
 		seen = append(seen, c.at)
 	}
 	require.Equal(t, []string{"chip:1", "btn:continue", "chip:0"}, seen)

@@ -3,6 +3,7 @@ package vault
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -138,7 +139,7 @@ func TestCreateThenKey(t *testing.T) {
 func TestKeyContinueTwiceSkipsTheDownload(t *testing.T) {
 	st := newState()
 	f := newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay)
-	key(f, st, "tab")
+	key(f, st, "down")
 	key(f, st, "enter")
 	require.True(t, f.Holding())
 	sent(key(f, st, "space"))
@@ -154,29 +155,46 @@ func TestKeyButtonsByMouse(t *testing.T) {
 	require.NotEmpty(t, k.err)
 }
 
-func TestRevealShowsBothFields(t *testing.T) {
+func TestShowToggleRevealsBothFields(t *testing.T) {
 	st := newState()
 	f := Setup(st)
 	c := f.top().(*create)
 	key(f, st, "ctrl+r")
+	require.False(t, c.np.pw.Reveal, "no combos")
+	key(f, st, "right")
+	require.Equal(t, ui.EyeID("field:0"), c.at, "right reaches the field's Show toggle")
+	key(f, st, "enter")
 	require.True(t, c.np.pw.Reveal)
 	require.True(t, c.np.again.Reveal)
-	key(f, st, "ctrl+r")
+	key(f, st, "space")
 	require.False(t, c.np.pw.Reveal)
+	key(f, st, "left")
+	require.Equal(t, "field:0", c.at)
+	key(f, st, "right")
+	key(f, st, "down")
+	require.Equal(t, "field:1", c.at, "down moves on as from the field")
+	f.Update(core.Click{ID: ui.EyeID("field:0")}, st)
+	require.True(t, c.np.again.Reveal, "a click flips it too")
 }
 
-func TestUnlockEnter(t *testing.T) {
+func TestUnlockStartsSystemAuth(t *testing.T) {
 	st := newState()
-	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st)
+	st.Snap.Vault.State = api.VaultUnlocked
+	f := Unlock(st, false)
 	u := f.top().(*unlock)
+	require.NotNil(t, f.Start(st), "the lock screen asks for Touch ID at once")
+	require.True(t, u.system)
+	require.Equal(t, []core.Action{{Key: "esc", Label: "Use password"}}, f.top().actions(st))
+	out, _, _ := ui.Compose(100, 30, ui.Pass{Layer: f.View(st, 100, 30)})
+	require.Contains(t, out, "Use password", "the card says what esc does while Touch ID waits")
 
-	key(f, st, "enter")
-	require.True(t, u.system, "enter on an empty field asks Touch ID")
-	require.NotZero(t, u.req)
 	key(f, st, "esc")
 	require.Zero(t, u.req, "esc stops waiting")
-	require.False(t, u.system)
+	require.True(t, u.typing(), "and the password field takes over")
+
+	key(f, st, "enter")
+	require.True(t, u.system, "enter on the empty field asks for Touch ID again")
+	key(f, st, "esc")
 
 	typed(f, st, "secret")
 	key(f, st, "enter")
@@ -185,18 +203,19 @@ func TestUnlockEnter(t *testing.T) {
 	require.Equal(t, "That password is not right.", u.err)
 	require.Zero(t, u.pw.Len(), "a wrong password is cleared")
 
-	st.Snap.Vault.CooldownUntil = st.Now.Add(time.Minute)
-	typed(f, st, "secret")
 	key(f, st, "enter")
-	require.Zero(t, u.req, "nothing is tried during a cooldown")
+	require.True(t, u.system, "enter on an empty field asks Touch ID")
+	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrCancelled, "cancelled")}, st)
+	require.Empty(t, u.err, "a dismissed prompt is no error")
 }
 
 func TestUnlockOverSSHNeverAsksSystem(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
 	st.Deps.Remote = true
-	f := Unlock(st)
+	f := Unlock(st, false)
 	u := f.top().(*unlock)
+	require.Nil(t, f.Start(st))
 	key(f, st, "enter")
 	require.Zero(t, u.req)
 	require.Equal(t, "Type your master password.", u.err)
@@ -205,11 +224,12 @@ func TestUnlockOverSSHNeverAsksSystem(t *testing.T) {
 func TestUnlockSucceeds(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultUnlocked
-	f := WindowLock(st)
+	f := Unlock(st, true)
 	u := f.top().(*unlock)
+	require.True(t, u.force, "after a lock a live session is not enough")
 	typed(f, st, "secret")
 	key(f, st, "enter")
-	_, cmd := f.Update(core.Reply{Req: u.req, Val: "grant"}, st)
+	_, cmd := f.Update(core.Reply{Req: u.req}, st)
 	require.Contains(t, sent(cmd), tea.Msg(Released{}))
 	require.Zero(t, u.pw.Len())
 }
@@ -217,8 +237,8 @@ func TestUnlockSucceeds(t *testing.T) {
 func TestForgotPassword(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st)
-	key(f, st, "tab")
+	f := Unlock(st, false)
+	key(f, st, "down")
 	require.False(t, f.top().typing(), "the link has focus")
 	key(f, st, "enter")
 	r, ok := f.top().(*recoverForm)
@@ -227,10 +247,6 @@ func TestForgotPassword(t *testing.T) {
 	key(f, st, "esc")
 	_, ok = f.top().(*unlock)
 	require.True(t, ok, "esc goes back")
-
-	w := WindowLock(st)
-	key(w, st, "tab")
-	require.Equal(t, "btn:unlock", w.top().(*unlock).at, "the window lock has no forgot link")
 }
 
 func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
@@ -241,13 +257,19 @@ func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
 	j := f.top().(*join)
 	key(f, st, "enter")
 	require.Equal(t, "Type your master password.", j.err)
-	key(f, st, "tab")
+	key(f, st, "down")
+	require.Same(t, j, f.top(), "an arrow only moves focus")
+	require.Equal(t, "btn:recover", j.at)
 	key(f, st, "enter")
 	r, ok := f.top().(*recoverForm)
-	require.True(t, ok)
+	require.True(t, ok, "the Recovery key button opens it")
 	require.True(t, r.join, "the account's vault is joined with its recovery key")
 	key(f, st, "esc")
-	require.Nil(t, key(f, st, "esc"), "sign in can't skip its master password step")
+	require.Same(t, j, f.top(), "esc goes back a step first")
+	b, ok := key(f, st, "esc")().(tea.BatchMsg)
+	require.True(t, ok, "then esc cancels the sign in")
+	require.Equal(t, core.CloseWindow{Screen: f}, b[0](), "the card closes")
+	require.Len(t, b, 2, "and the daemon drops the sign in")
 }
 
 func TestSignInCreatesWhenTheAccountHasNoVault(t *testing.T) {
@@ -260,10 +282,11 @@ func TestSignInCreatesWhenTheAccountHasNoVault(t *testing.T) {
 func TestFlowExits(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st)
+	st.Deps.Remote = true
+	f := Unlock(st, false)
 	typed(f, st, "q")
 	require.Equal(t, 1, f.top().(*unlock).pw.Len(), "q is a letter in the password field")
-	key(f, st, "tab")
+	key(f, st, "down")
 	require.Equal(t, []tea.Msg{core.Quit{}}, sent(key(f, st, "q")), "q quits off the field")
 
 	w := newFlow(st, newChange(), true, exitClose)
@@ -311,15 +334,22 @@ func TestFormsWalkToEveryButton(t *testing.T) {
 		"join":     {newFlow(st, newJoin(""), true, exitClose), joinStops},
 		"show key": {newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay), keyStops},
 	} {
+		// a field's Show toggle sits right of it; up and down walk the rest
+		line := slices.DeleteFunc(slices.Clone(c.stops), ui.IsEye)
 		var seen []string
-		for range c.stops {
+		for range line {
 			seen = append(seen, focusOf(c.f.top()))
-			key(c.f, st, "tab")
+			if eye := ui.EyeID(focusOf(c.f.top())); slices.Contains(c.stops, eye) {
+				key(c.f, st, "right")
+				require.Equal(t, eye, focusOf(c.f.top()), name)
+				key(c.f, st, "left")
+			}
+			key(c.f, st, "down")
 		}
-		require.ElementsMatch(t, c.stops, seen, name+": tab reaches every stop")
-		require.Equal(t, c.stops[0], focusOf(c.f.top()), name+": and wraps")
-		key(c.f, st, "shift+tab")
-		require.Equal(t, c.stops[len(c.stops)-1], focusOf(c.f.top()), name+": shift+tab goes back")
+		require.ElementsMatch(t, line, seen, name+": down reaches every stop")
+		require.Equal(t, line[0], focusOf(c.f.top()), name+": and wraps")
+		key(c.f, st, "up")
+		require.Equal(t, line[len(line)-1], focusOf(c.f.top()), name+": up goes back")
 	}
 }
 
@@ -329,21 +359,10 @@ func TestCancelButtonsByKeyboard(t *testing.T) {
 	for name, fm := range map[string]form{"change": newChange(), "new key": newAskKey()} {
 		f := newFlow(st, fm, true, exitClose)
 		for focusOf(f.top()) != "btn:cancel" {
-			key(f, st, "tab")
+			key(f, st, "down")
 		}
 		require.Equal(t, []tea.Msg{core.CloseWindow{Screen: f}}, sent(key(f, st, "enter")), name)
 	}
-}
-
-func TestUnlockTileIsAStop(t *testing.T) {
-	st := newState()
-	st.Snap.Vault.State = api.VaultUnlocked
-	f := WindowLock(st)
-	u := f.top().(*unlock)
-	key(f, st, "shift+tab")
-	require.Equal(t, "tile:system", u.at, "Touch ID is reachable by keyboard")
-	require.NotNil(t, key(f, st, "enter"))
-	require.True(t, u.system, "enter on the tile asks Touch ID")
 }
 
 func focusOf(fm form) string {
@@ -364,27 +383,4 @@ func focusOf(fm form) string {
 		return v.at
 	}
 	return ""
-}
-
-func TestPick(t *testing.T) {
-	st := newState()
-	st.Snap.Vault = api.Vault{State: api.VaultUnlocked, Unlock: api.UnlockAuto}
-	cmd := PickUnlock(st)
-	f := sent(cmd)[0].(core.OpenWindow).Screen.(*Flow)
-	pk := f.top().(*pick)
-	require.Equal(t, "Not available on this computer", pk.opts[1].off)
-
-	key(f, st, "down")
-	require.Nil(t, key(f, st, "enter"))
-	require.Equal(t, "Not available on this computer", pk.err)
-
-	key(f, st, "up")
-	require.Equal(t, []tea.Msg{core.CloseWindow{Screen: f}}, sent(key(f, st, "enter")), "the current choice changes nothing")
-}
-
-func TestSetupMarkKeepsMoving(t *testing.T) {
-	st := newState()
-	f := Setup(st)
-	st.Now = st.Now.Add(10 * time.Minute)
-	require.Equal(t, !ui.Reduced(), f.Animating(st), "the mark under a setup or lock screen never freezes mid wave")
 }

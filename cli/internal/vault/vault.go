@@ -15,18 +15,16 @@ var (
 )
 
 // Create makes a new account key and wraps it with the password, a new recovery key and the device key.
-// without a device key the vault opens with the password only
+// without a device key the vault opens with the password only, until a typed password finds a keychain
 func Create(password, deviceKey []byte, now time.Time) (f *File, ak []byte, recoveryText string, err error) {
 	ak = NewAccountKey()
 	f = &File{
-		Version:         FileVersion,
-		KeyID:           KeyID(ak),
-		KDF:             NewKDF(),
-		Unlock:          UnlockAuto,
-		PasswordDays:    defaultPasswordDays,
-		IdleLockMinutes: defaultIdleLock,
-		PasswordAt:      now.UTC(),
-		CreatedAt:       now.UTC(),
+		Version:      FileVersion,
+		KeyID:        KeyID(ak),
+		KDF:          NewKDF(),
+		PasswordDays: defaultPasswordDays,
+		PasswordAt:   now.UTC(),
+		CreatedAt:    now.UTC(),
 	}
 	if err := f.setPassword(ak, password); err != nil {
 		Zero(ak)
@@ -36,11 +34,11 @@ func Create(password, deviceKey []byte, now time.Time) (f *File, ak []byte, reco
 		Zero(ak)
 		return nil, nil, "", err
 	}
-	if len(deviceKey) == 0 {
-		f.Unlock = UnlockPassword
-	} else if err := f.SetDevice(ak, deviceKey); err != nil {
-		Zero(ak)
-		return nil, nil, "", err
+	if len(deviceKey) > 0 {
+		if err := f.SetDevice(ak, deviceKey); err != nil {
+			Zero(ak)
+			return nil, nil, "", err
+		}
 	}
 	return f, ak, recoveryText, nil
 }
@@ -184,7 +182,7 @@ func (f *File) setPassword(ak, password []byte) error {
 
 // AdoptRemote returns local with the server's key, wraps and password settings in place of its own and a fresh
 // device wrap, for a device joining an account. local is not changed and may be nil for a device with no vault yet.
-// a device set to unlock with the password gets no device wrap
+// without a device key it opens with the password only
 func AdoptRemote(local *File, remote Remote, ak, deviceKey []byte, now time.Time) (*File, error) {
 	if err := remote.Validate(); err != nil {
 		return nil, fmt.Errorf("the account's vault: %w", err)
@@ -192,26 +190,16 @@ func AdoptRemote(local *File, remote Remote, ak, deviceKey []byte, now time.Time
 	if KeyID(ak) != remote.KeyID {
 		return nil, errOtherKey
 	}
-	f := &File{
-		Version:         FileVersion,
-		Unlock:          UnlockAuto,
-		PasswordDays:    defaultPasswordDays,
-		IdleLockMinutes: defaultIdleLock,
-		CreatedAt:       now.UTC(),
-	}
+	f := &File{Version: FileVersion, PasswordDays: defaultPasswordDays, CreatedAt: now.UTC()}
 	if local != nil {
 		f = local.Clone()
 	}
 	f.KeyID, f.KDF, f.WrappedKey, f.RecoveryWrappedKey = remote.KeyID, remote.KDF, remote.WrappedKey, remote.RecoveryWrappedKey
 	f.KDF.Salt = slices.Clone(remote.KDF.Salt)
 	f.DeviceWrappedKey = ""
-	f.PasswordAt = now.UTC()
+	f.Typed(now)
 	f.Account = true
-	switch {
-	case f.Unlock == UnlockPassword:
-	case len(deviceKey) == 0:
-		f.Unlock = UnlockPassword
-	default:
+	if len(deviceKey) > 0 {
 		if err := f.SetDevice(ak, deviceKey); err != nil {
 			return nil, err
 		}

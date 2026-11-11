@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,7 +17,7 @@ type coverKind int
 const (
 	noCover     coverKind = iota
 	gateCover             // the first-run choice
-	unlockCover           // the daemon is locked
+	unlockCover           // locked: the daemon's vault, no control session, or the view
 	createCover           // no master password yet
 	joinCover             // the account has one from another device
 )
@@ -28,6 +29,9 @@ func coverFor(st *core.State) coverKind {
 	case !st.Connected || s.Removed != nil:
 		return noCover
 	case s.Vault.State == api.VaultLocked:
+		return unlockCover
+	// changes need a control session, which only system auth or the password opens, as in Forged
+	case s.Vault.State == api.VaultUnlocked && (st.Locked || !s.Vault.Session):
 		return unlockCover
 	case wantGate(st):
 		return gateCover
@@ -59,27 +63,35 @@ func (a *App) route() tea.Cmd {
 		return nil
 	}
 	a.covered = want
+	var start tea.Cmd
 	switch want {
 	case noCover:
 		a.gate = nil
 	case gateCover:
-		a.gate = gate.New(a.st.Now)
+		a.gate = gate.New(a.st)
 	case unlockCover:
-		a.gate = vault.Unlock(a.st)
+		// nothing changes behind a lock screen: every window goes, wiping what was typed
+		a.windows = nil
+		f := vault.Unlock(a.st, a.st.Locked)
+		a.gate, start = f, f.Start(a.st)
 	case createCover:
 		a.gate = vault.Setup(a.st)
 	case joinCover:
 		a.gate = vault.Join(a.st)
 	}
-	return tea.Batch(a.nextToast(), a.armIdle())
+	return tea.Batch(start, a.nextToast(), a.armIdle())
 }
 
-// the daemon locked: windows would only fail now, so they go after wiping what was typed
-func (a *App) onVault(was string) tea.Cmd {
+// the daemon locked, or the control session ended (the screen locked, the computer slept, 4 hours passed):
+// windows would only fail now, so they go after wiping what was typed
+func (a *App) onVault(was api.Vault) tea.Cmd {
+	v := a.st.Snap.Vault
 	var cmd tea.Cmd
-	if a.st.Snap.Vault.State == api.VaultLocked && was != api.VaultLocked {
+	lost := was.State == api.VaultUnlocked && was.Session && v.State == api.VaultUnlocked && !v.Session
+	if v.State == api.VaultLocked && was.State != api.VaultLocked || lost {
 		cmd = a.broadcast(core.Locked{})
-		a.windows, a.lock = nil, nil
+		a.windows = nil
+		a.st.Locked = a.st.Locked || lost
 	}
 	// a state from before the step finished can trail its reply; the resumed sign in asks again itself
 	if signInStep(a.st) && !a.has(signInOpen) && a.st.Now.Sub(a.stepClosed) > stepSettle {
@@ -106,33 +118,45 @@ func (a *App) has(match func(core.Screen) bool) bool {
 	return false
 }
 
-// the window lock needs a vault to answer to, and Updating stays on top while it runs
+// locking needs a vault to answer to, and Updating stays on top while it runs
 func (a *App) canLock() bool {
-	return a.st.Connected && a.st.Snap.Vault.State == api.VaultUnlocked && a.lock == nil && a.gate == nil && !a.updatingNow()
+	return a.st.Connected && a.st.Snap.Vault.State == api.VaultUnlocked && !a.st.Locked && a.gate == nil && !a.updatingNow()
 }
 
-// covers everything until Touch ID or the password; drives and the daemon carry on
+type sessionClosed struct{}
+
+// Forged's lock: every window closes and what was typed is wiped, the control session ends and the lock screen
+// asks for system auth again; drives and the daemon carry on
 func (a *App) lockWindow() tea.Cmd {
 	cmd := a.broadcast(core.Locked{})
-	a.lock = vault.WindowLock(a.st)
+	a.st.Locked = true
 	a.disarmIdle()
-	return cmd
+	c := a.st.C
+	end := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = c.SessionClose(ctx)
+		return sessionClosed{}
+	}
+	return tea.Batch(cmd, end, a.route())
 }
 
 func (a *App) released() tea.Cmd {
-	a.lock, a.lastInput = nil, a.st.Now
-	return tea.Batch(a.nextToast(), a.armIdle())
+	a.st.Locked, a.lastInput = false, a.st.Now
+	return tea.Batch(a.route(), a.nextToast(), a.armIdle())
 }
 
 type idleCheck struct{ gen int }
 
-// how long the window may sit untouched, 0 when it never locks
+// Forged locks after 4 minutes without a key or a click, a fixed time
+const idleAfter = 4 * time.Minute
+
+// how long the window may sit untouched, 0 while nothing is open to lock
 func (a *App) idleLimit() time.Duration {
-	v := a.st.Snap.Vault
-	if !a.st.Connected || v.State != api.VaultUnlocked || v.IdleLockMinutes <= 0 || a.lock != nil || a.gate != nil {
+	if !a.canLock() {
 		return 0
 	}
-	return time.Duration(v.IdleLockMinutes) * time.Minute
+	return idleAfter
 }
 
 // one timer at a time, armed again whenever the limit changes; input only moves lastInput

@@ -96,7 +96,7 @@ func (k *showKey) view(_ *core.State, win *ui.Window, maxH int) int {
 	sub(win, "Use it if you forget your master password.", k.err)
 	win.Buttons = []ui.Btn{{ID: "download", Label: "Download", Primary: k.saved == ""}, {ID: "continue", Label: "Continue", Primary: k.saved != ""}}
 	win.Active = win.Index(k.at)
-	cw, bg := win.Inner(), p.Surface
+	cw, bg := win.Inner(), p.Window
 	body := ui.NewBox()
 	chips := keyChips(string(k.key), cw, bg)
 	body.Lines(0, 0, chips)

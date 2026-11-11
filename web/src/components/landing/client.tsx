@@ -266,7 +266,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
     brightness: 1.1,
     pace: "fast",
     lines: [
-      "> dokky fix",
+      "[TUI] Health > Fix all",
       "[FIX] Finder names repaired",
       "[FIX] Service restarted",
       "[OK] All good",
@@ -290,7 +290,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
     status: "ok",
     brightness: 1.0,
     pace: "normal",
-    lines: ['> dokky mount "Photos S3"', "[MOUNT] Photos S3", "[OK] Mounted"],
+    lines: ["[TUI] Drives > Photos S3", "[MOUNT] Photos S3", "[OK] Mounted"],
   },
   {
     title: "SIGN-IN // EXPIRED",
@@ -322,7 +322,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
     brightness: 0.8,
     pace: "slow",
     lines: [
-      "> dokky login",
+      "[TUI] Sign in",
       "[AUTH] Approve in your browser",
       "[AUTH] mac-mini approved",
       "[SYNC] 4 drives ready",

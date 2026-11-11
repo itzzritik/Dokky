@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -13,6 +12,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/confirm"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/devices"
+	"github.com/itzzritik/dokky/cli/internal/tui/screen/dropdown"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
@@ -22,34 +22,34 @@ type kind int
 const (
 	action kind = iota
 	toggle
+	choice // a value with a caret that opens a dropdown under the row
 	info
 	danger
 	update
 )
-
-const slide = 180 * time.Millisecond
 
 // what s does when the server signed this computer out
 const removeLabel = "remove this device"
 
 type row struct {
 	group, label, value string
+	icon                string
 	note                string // painted on the group's heading line, right side
 	kind                kind
 	tone                color.Color
-	frac                float64 // a switch's knob, 0 off to 1 on
-	apart               bool    // a gap above, no heading
+	on                  bool // a toggle's state
+	apart               bool // a gap above, no heading
 	run                 func(*core.State) tea.Cmd
 }
 
 type Settings struct {
 	sel, top, page int
 	selLabel       string // rows come and go live, so the selection follows the label
+	anchor         int    // the body row the selection was last drawn on, where a dropdown opens
 	pending        *api.Settings
-	flipped        map[string]time.Time
 }
 
-func New() *Settings { return &Settings{flipped: map[string]time.Time{}} }
+func New() *Settings { return &Settings{} }
 
 // presses faster than the daemon's echo build on the last change
 func (s *Settings) current(st *core.State) api.Settings {
@@ -75,38 +75,41 @@ func (s *Settings) rows(st *core.State) []row {
 	p := ui.P()
 	set, acct := s.current(st), st.Snap.Account
 	rows := []row{
-		s.toggle(st, "General", "Notify when a drive is ejected", set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
-		// between the switches, so their pills don't touch
-		{label: "Cached files", value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
-		s.toggle(st, "", "Automatic updates", set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
+		s.toggle("General", "Notify when a drive is ejected", ui.G.Icon.Notify, set.NotifyDisconnect, func(v *api.Settings, on bool) { v.NotifyDisconnect = on }),
+		{label: "Cached files", icon: ui.G.Icon.Cache, value: core.Size(st.Snap.CacheBytes), kind: action, tone: p.Muted, run: openStorage},
+		s.toggle("", "Automatic updates", ui.G.Icon.Update, set.AutoUpdate, func(v *api.Settings, on bool) { v.AutoUpdate = on }),
 	}
 	if st.UpdateReady() {
-		rows = append([]row{{label: "Update dokky", value: st.Snap.Version + " " + ui.G.Arrow + " " + st.Latest, kind: update, tone: p.Accent,
+		rows = append([]row{{label: "Update dokky", icon: ui.G.Icon.Update, value: st.Snap.Version + " " + ui.G.Arrow + " " + st.Latest, kind: update, tone: p.Accent,
 			run: func(*core.State) tea.Cmd { return core.Send(core.OfferUpdate{}) }}}, rows...)
 	}
 	rows = append(rows, s.security(st)...)
 	if acct.LoggedIn {
 		rows = append(rows,
-			row{group: "Account", label: "Your devices", kind: action, run: devices.Open},
-			row{label: "Remove this device", kind: action, run: func(*core.State) tea.Cmd { return devices.RemoveSelf() }})
+			row{group: "Account", label: "Your devices", icon: ui.G.Icon.Devices, kind: action, run: devices.Open},
+			row{label: "Remove this device", icon: ui.G.Icon.SignOut, kind: action, run: func(*core.State) tea.Cmd { return devices.RemoveSelf() }})
 	} else {
-		rows = append(rows, row{group: "Account", label: "Sign in", kind: action, run: gate.Open})
+		rows = append(rows, row{group: "Account", label: "Sign in", icon: ui.G.Icon.SignIn, kind: action, run: gate.Open})
 	}
-	return append(rows, row{apart: true, label: "Uninstall dokky", kind: danger, run: s.uninstall})
+	return append(rows, row{apart: true, label: "Uninstall dokky", icon: ui.G.Icon.Remove, kind: danger, run: s.uninstall})
 }
 
-// an on/off setting as a switch that slides when flipped
-func (s *Settings) toggle(st *core.State, group, label string, on bool, set func(*api.Settings, bool)) row {
-	frac := 0.0
-	if on {
-		frac = 1
-	}
-	if at, ok := s.flipped[label]; ok {
-		frac = ui.Ease(1-frac, frac, at, st.Now, slide)
-	}
-	return row{group: group, label: label, kind: toggle, frac: frac, run: func(st *core.State) tea.Cmd {
-		s.flipped[label] = st.Now
+// an on/off setting, shown as On or Off as Forged has it
+func (s *Settings) toggle(group, label, icon string, on bool, set func(*api.Settings, bool)) row {
+	return row{group: group, label: label, icon: icon, kind: toggle, on: on, run: func(st *core.State) tea.Cmd {
 		return s.set(st, func(v *api.Settings) { set(v, !on) })
+	}}
+}
+
+// a setting with a few values: the row shows the current one and opens a dropdown under itself
+func (s *Settings) choice(label, icon string, opts []string, cur int, choose func(*core.State, int) tea.Cmd) row {
+	value := ""
+	if cur >= 0 {
+		value = opts[cur]
+	}
+	return row{label: label, icon: icon, value: value, kind: choice, run: func(st *core.State) tea.Cmd {
+		return dropdown.Open(&dropdown.Dropdown{Items: opts, Cur: cur, Anchor: s.anchor,
+			Choose: func(i int) tea.Cmd { return choose(st, i) }})
 	}}
 }
 
@@ -195,10 +198,12 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 	switch r.kind {
 	case toggle:
 		label := "turn on"
-		if r.frac >= .5 {
+		if r.on {
 			label = "turn off"
 		}
 		acts = append(acts, core.Action{Key: "space", Label: label})
+	case choice:
+		acts = append(acts, core.Action{Key: "enter", Label: "change"})
 	case action:
 		acts = append(acts, core.Action{Key: "enter", Label: "run"})
 	case danger:
@@ -209,23 +214,10 @@ func (s *Settings) Actions(st *core.State) []core.Action {
 	if st.Snap.Account.SignedOut {
 		acts = append(acts, core.Action{Key: "s", Label: removeLabel})
 	}
-	if st.Snap.Vault.State == api.VaultUnlocked {
-		acts = append(acts, core.Action{Key: "ctrl+l", Label: "lock"})
-	}
 	return acts
 }
 
-func (s *Settings) Animating(st *core.State) bool {
-	if ui.Reduced() {
-		return false
-	}
-	for _, at := range s.flipped {
-		if ui.Easing(at, st.Now, slide) {
-			return true
-		}
-	}
-	return false
-}
+func (s *Settings) Animating(*core.State) bool { return false }
 
 func initials(name, email string) string {
 	var out []rune
@@ -294,21 +286,31 @@ func (s *Settings) View(st *core.State, w, h int) *lipgloss.Layer {
 		lines = append(lines, ui.ListLine{Text: s.line(r, i == s.sel, cw), Item: i, ID: "row:" + r.label})
 	}
 	ui.List(b, y, h-y, &s.top, s.sel, lines)
+	for i, l := range lines {
+		if l.Item == s.sel {
+			s.anchor = y + i - s.top
+		}
+	}
 	return b.Layer()
 }
 
-// a settings row: label left, value and its glyph right
+// a settings row as Forged draws it: an icon and the label left, the value right
 func (s *Settings) line(r row, on bool, w int) string {
 	p := ui.P()
 	return ui.RowLine(w, on, nil, func(bg color.Color, iw int) string {
-		lc := p.Text
-		switch r.kind {
-		case danger:
-			lc = p.Coral
-		case update:
-			lc = p.Accent
+		lc, ic := p.Text, p.Muted
+		switch {
+		case r.kind == danger:
+			lc, ic = p.Coral, p.Coral
+		case r.kind == update:
+			lc, ic = p.Accent, p.Accent
+		case on:
+			ic = p.Accent
 		}
 		l := ui.L(bg)
+		if r.icon != "" {
+			l.T(r.icon, ic).Sp(2)
+		}
 		if on || r.kind == update {
 			l.B(r.label, lc)
 		} else {
@@ -317,12 +319,13 @@ func (s *Settings) line(r row, on bool, w int) string {
 		right := ui.L(bg)
 		switch r.kind {
 		case toggle:
-			right.Raw(ui.Switch(r.frac, bg))
-		case action, danger:
-			if r.value != "" {
-				right.T(r.value, cmpColor(r.tone, p.Muted)).Sp(2)
+			if r.on {
+				right.T(ui.G.Here+" On", p.Accent)
+			} else {
+				right.T(ui.G.Ring+" Off", p.Muted)
 			}
-			right.T(ui.G.Arrow, p.Faint)
+		case choice:
+			right.T(r.value+" "+ui.G.Caret, p.Text)
 		default:
 			right.T(r.value, cmpColor(r.tone, p.Muted))
 		}

@@ -1,0 +1,112 @@
+# Dokky works like Forged
+
+The user picked, item by item, which parts of Forged's experience Dokky copies. Item numbers below are from the picker. Anything not listed stays as Dokky has it today. Mouse support stays everywhere.
+
+Standing rule: every piece of UI is a self-contained, data-driven component with one implementation per concept. Dokky and Forged will later share one component library.
+
+## 1. The control session (items 1, 3, 4, 5, 10, 11, 12, 13)
+
+Drives and file use never stop. Changes need Dokky open and unlocked.
+
+- The daemon keeps the vault key in memory as today, so drives mount and keep working whether the TUI is open, closed or locked.
+- **Starting a session.** The daemon also keeps one control session, live for 4 hours (`api.SessionFor`). The `session.open` call starts it after proving the user, with system auth (Touch ID, Windows Hello or polkit) or the master password.
+  - If a session is already live and `force` is false, it succeeds with no prompt. That is how reopening Dokky within 4 hours goes straight in, as in Forged.
+- **Ending a session.** A session ends when:
+  - the computer's screen locks or it sleeps;
+  - `session.close` is called (the TUI's `l`, the menu's Lock, or the 4-minute idle lock);
+  - the master password changes;
+  - 4 hours of wall time pass.
+
+  Wall time matters because the monotonic clock stops during sleep.
+- **Gating.** Every daemon method that changes anything refuses with code `session_required` unless a session is live.
+  - Open without a session: methods the lock screen needs, read-only views, and the launch handshake. That means `state`, `status`, `activity`, `events`, `events.seen`, `sync.kick`, `update.check`, `update.restart`, `oauth.status`, `providers` and `catalog`, plus `session.open`, `vault.unlock`, `vault.recover` and `vault.setup` when there is no vault yet.
+  - Anything that returns secrets or changes state needs the session.
+  - The daemon's own work (auto mount at start, sync, auto update) never needs one.
+- **Command line.** `dokky mount`, `unmount`, `login`, `logout`, `update` and `fix` are removed. `dokky` (the TUI), `status`, `doctor`, `daemon` and `selftest` stay.
+- **Startup.** The vault always opens with the device key at daemon start, so drives mount after a reboot with no prompt. The "Unlock at startup" choice is gone.
+  - A vault saved as `password` or `system` opens like `auto` once a device key exists. The next typed password recreates a missing device key, which `mendDevice` already does.
+  - The locked phase stays only for a computer with no keychain or a lost device key.
+- **Password reminder.**
+  - Choices are 7, 15 and 30 days, 7 by default. Old values map 14 → 15 and 0 → 30.
+  - Each successful system auth slides the window. The password is due once the interval has passed since the later of the last typed password and the last system auth, or 90 days after the last typed password, whichever comes first.
+  - System auth stamps are throttled to one save per hour.
+- **After a password change**, the session ends. The next unlock needs the new master password once, which also restarts system-auth trust, like Forged's re-enrolment.
+- **No cooldown.** The wrong-password cooldown is gone.
+- **Idle lock** is fixed at 4 minutes and lives in the TUI. The setting is gone.
+
+## 2. Lock behaviour in the TUI (items 2, 6, 7, 8, 9)
+
+- **Opening Dokky.** If the vault is unlocked and a session is live, Dokky goes straight in. Otherwise it shows the lock screen and starts system auth at once, with `force` set when the view was locked, as Forged's `startStartupUnlock` does.
+- **Locking.** `l` locks from every screen and every window, except while a text field has focus (there it types). Lock also sits in the menu.
+- **What locking does.** Closes every window and overlay, cancels a sign-in in progress, wipes anything typed, calls `session.close` and shows the lock screen with "Please authenticate to continue using Dokky.", or "Enter your master password to continue using Dokky." when system auth can't be used.
+- **Losing the session.** When the polled state shows the session ended (screen lock or sleep), the TUI locks itself the same way.
+- **Idle lock.** 4 minutes with no input locks. A gate mid-flow (a sign-in waiting for the browser) is never locked.
+
+## 3. The lock screen and gate (items 14 to 20)
+
+All of this follows Forged's `screen/gate` layout:
+
+- No footer bar.
+- Dokky's still wordmark at the top.
+- A centred card, `min(52, w-4)` wide.
+- A breathing topographic contour map filling the bottom third, in place of Forged's fire. Picked from more than a hundred options, ahead of water.
+
+The cards:
+
+- **Unlock.** Bold "Unlock Dokky", one muted line, a "Master password" label above a full-width field, and Forgot password (item 22) and Unlock buttons on the right of the card footer, with `esc Quit` on its left.
+  - While system auth waits, the card shows the system name ("Touch ID", "Windows Hello" or "System Auth"), a spinner and "Waiting for confirmation". `esc` switches to the password field, and enter on the empty field asks for system auth again.
+- **Welcome (first run).** Two choices, each with one line under it: "Sign in" (sync drives across devices) and "Use on this device" (create a master password here).
+- **Create.** Labels above both fields, plus the warning "If you lose this password, only your recovery key can open your drives."
+- **Sign in.** Inside the same card: the large spaced code, "Waiting for approval", the link, `c` to copy it and an Open link button. Signing in from the dashboard uses this same full-screen card.
+- **Not changed:** Dokky's connecting and startup screen (item 21), "Forgot password?" (22) and the teal palette (23).
+
+## 4. Chrome (items 24, 25, 26, 34, 37, 40)
+
+- **Icons** on card titles, settings rows and menu items, with plain-text fallbacks where the terminal lacks the glyphs, as Dokky's glyph files do now.
+- **Footer.** At most 4 hints on the left, each starting with a capital ("Mount", "Edit"). On the right: `m More`, `u Update` (only when an update is ready, as now) and `q Quit`. No version number.
+- **Menu.** Opens with `m`, drawn exactly as Forged's: rounded border with the title in it, and rows of icon, label and key. It ends with Lock and Quit.
+  - `?` still opens it.
+  - The Drives page's mount toggle moves from `m` to `space`.
+- **Windows.** Forged's plain rounded box with no shaded outer margin, buttons right-aligned, and everything behind faded, footer included. Window titles keep Dokky's style.
+- **Settings rows.** An icon, a text toggle (`● On` / `○ Off`) and a value with `▾` that opens a small dropdown anchored under its row, in place of a full window.
+- **Wording.** Hints start with a capital. Toasts are short past tense ("Drive removed").
+
+## Calls made while building
+
+- **`l` ends the session.** Locking with `l`, the menu or the idle timer closes the control session too, not only the view. Nothing in Dokky's background needs it, unlike Forged's SSH agent, so a locked Dokky can't be controlled until someone authenticates again. Quitting Dokky keeps the session, so reopening within 4 hours goes straight in, as in Forged.
+- **Sign-in on the gate.** The sign-in card and its master password step are full-screen cards on the gate, opened as windows that cover everything (`core.Full`), whether they start from the welcome card or from Settings.
+- **Keys are single keys.** No action uses tab, a ctrl or alt combination, or an arrow. Arrows only move focus and enter presses what has it. Text fields keep `ctrl+u` (clear) and `ctrl+h` (backspace), and `ctrl+c` quits.
+- **Every window shows its own keys.** A window's footer lists, labelled and clickable, the keys its buttons don't already say, always including `esc`. Arrows and enter are left out. Short on room, the keys before `esc` go first. The faded app footer behind a window is not where keys are read. Popovers that sit on the screen without fading it (the menu and dropdowns) keep the live app footer.
+- **Show and hide passwords.** The first password field of a form has a Show/Hide toggle at its right end, which shows or hides all the form's password fields. Right arrow reaches it from the field, left goes back, and enter, space or a click flips it.
+- **Forgot password and recovery key.** The lock screen has Forgot password and Unlock buttons. The master password card for an account set up on another device has Recovery key and Continue buttons, no subtitle and no field label. The recovery card puts labels above its fields.
+- **Cancelling a sign in.** On the sign-in's master password step, `esc` cancels the sign in. A new daemon call, `login.cancel`, drops only the pending account and tells the server to forget the device. Drives and a master password made before the sign in stay, unlike signing out, which removes the account's drives.
+- **A master password on every path.** Signing in to an account without one creates it on the gate, and signing in to an account with one asks for it or the recovery key. Choosing "Use on this computer only", or opening an older install, asks for one before the dashboard. A local master password becomes the account's when signing in to an account without one. Settings changes it later.
+- **Settings rows removed.** "Unlock at startup", "Lock dokky after" and "Lock dokky now" are gone. The password reminder is a dropdown.
+- **Window colour.** Windows use `Palette.Window`: the screen colour on light and a shade raised on dark, as Forged's `Surface` is. Fields are a tint of it.
+
+## 5. Kept as Dokky
+
+Item numbers in brackets:
+
+- Enter on an item opens Edit (33).
+- One Settings tab (35).
+- The Health page (36).
+- "I understand" only on harmful actions such as unmount (38).
+- Text field look (39).
+- Updates (27).
+- The window-too-small message (28).
+- Toasts for long errors (29).
+- The Overview layout (31).
+- The Drives page layout (32).
+
+## Contract between daemon and TUI
+
+- `api.MSessionOpen = "session.open"` with `api.SessionParams{Method, Password, Force, Remote}`. Errors: `password_required` (its message is the prompt to show), `cancelled`, `wrong_password` and `system_unavailable`.
+- `api.MSessionClose = "session.close"`.
+- `api.Vault.Session bool`: a session is live.
+- `api.ErrSessionRequired = "session_required"`.
+- `client.SessionOpen(ctx, p)` and `client.SessionClose(ctx)`.
+- Removed:
+  - `vault.authorize` and grants: `vault.settings` needs the session instead.
+  - `Vault.CooldownUntil`, `Vault.IdleLockMinutes`, `Vault.Unlock`, `IdleLockChoices`, `ErrTooManyAttempts` and `ErrGrantRequired`.
+  - The `Unlock` and `IdleLockMinutes` params of `vault.settings`.

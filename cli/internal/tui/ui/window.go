@@ -2,14 +2,15 @@ package ui
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 )
 
-// content sits inside a 1 cell margin, the border and 2 cells of padding
-const WindowPad = 4
+// content sits inside the border and 2 cells of padding
+const WindowPad = 3
 
 // a button in a window's action bar
 type Btn struct {
@@ -42,32 +43,49 @@ type Window struct {
 	Body            *Box
 	Buttons         []Btn
 	Active          int
+	Flush           bool          // the body spans border to border with no padding, for rows that draw their own bar
+	Hints           []core.Action // keys drawn left of the buttons, Forged's in-card footer
 }
 
 func (w *Window) Inner() int { return w.W - 2*WindowPad }
 
 func (w *Window) top() int {
-	t := 3
+	if w.Flush {
+		return 1
+	}
+	t := 2
 	if len(w.Steps) > 0 {
 		t += 2
 	}
 	if w.Sub != "" {
-		t += 2
+		t += len(w.subLines()) + 1
 	}
 	return t
 }
 
-func (w *Window) bottom() int {
-	if len(w.Buttons) > 0 {
-		return 5
+// the sub line wraps to two lines at most, the second cut short, as Forged's prompts do
+func (w *Window) subLines() []string {
+	lines := Wrap(w.Sub, w.Inner())
+	if len(lines) > 2 {
+		lines = []string{lines[0], core.Fit(strings.Join(lines[1:], " "), w.Inner())}
 	}
-	return 3
+	return lines
+}
+
+func (w *Window) bottom() int {
+	switch {
+	case len(w.Buttons) > 0 || len(w.Hints) > 0:
+		return 3
+	case w.Flush:
+		return 1
+	}
+	return 2
 }
 
 // sizes the window to its body rows, never taller than maxH; with no body the text's gap is the only one
 func (w *Window) Fit(rows, maxH int) {
 	h := w.top() + rows + w.bottom()
-	if rows == 0 && w.top() > 3 {
+	if rows == 0 && w.top() > 2 {
 		h--
 	}
 	w.H = min(maxH, h)
@@ -76,9 +94,13 @@ func (w *Window) Fit(rows, maxH int) {
 // body rows that fit in maxH
 func (w *Window) Room(maxH int) int { return max(1, maxH-w.top()-w.bottom()) }
 
+// Edge is the width a Flush body gets
+func (w *Window) Edge() int { return w.W - 2 }
+
+// a rounded border on the window colour, its title in the top edge; nothing is drawn outside the border
 func (w *Window) Layer() *lipgloss.Layer {
 	p := P()
-	bg := p.Surface
+	bg := p.Window
 	cw := w.Inner()
 	line := func(s string) string { return Paint(s, p.Line, bg, false) }
 	blank := func(n int) string { return Paint(strings.Repeat(" ", n), nil, bg, false) }
@@ -91,37 +113,31 @@ func (w *Window) Layer() *lipgloss.Layer {
 	case w.Bad:
 		tc = p.Coral
 	}
-	title.B(core.Fit(w.Title, w.W-12), tc)
-	tl := L(bg).Sp(1).Raw(title.String()).Sp(1)
+	title.B(core.Fit(w.Title, w.W-10), tc)
+	tl := L(bg)
+	if w.Title != "" {
+		tl.Sp(1).Raw(title.String()).Sp(1)
+	}
 	rl := L(bg)
 	if w.Corner != "" {
 		rl.Sp(1).Raw(w.Corner).Sp(1)
 	}
-	run := max(0, w.W-6-tl.Width()-rl.Width())
-	top := blank(1) + line(G.TL+G.H) + tl.String() + line(strings.Repeat(G.H, run)) + rl.String() + line(G.H+G.TR) + blank(1)
-
+	run := max(0, w.W-4-tl.Width()-rl.Width())
 	fill := make([]string, w.H)
 	for i := range fill {
 		switch i {
 		case 0:
-			fill[i] = Paint(strings.Repeat(G.Top, w.W), bg, nil, false)
-		case 1:
-			fill[i] = top
-		case w.H - 2:
-			fill[i] = blank(1) + line(G.BL+strings.Repeat(G.H, w.W-4)+G.BR) + blank(1)
+			fill[i] = line(G.TL+G.H) + tl.String() + line(strings.Repeat(G.H, run)) + rl.String() + line(G.H+G.TR)
 		case w.H - 1:
-			fill[i] = Paint(strings.Repeat(G.Bottom, w.W), bg, nil, false)
+			fill[i] = line(G.BL + strings.Repeat(G.H, w.W-2) + G.BR)
 		default:
-			fill[i] = blank(1) + line(G.V) + blank(w.W-4) + line(G.V) + blank(1)
+			fill[i] = line(G.V) + blank(w.W-2) + line(G.V)
 		}
-	}
-	if G.ASCII {
-		fill[0], fill[w.H-1] = blank(w.W), blank(w.W)
 	}
 	root := lipgloss.NewLayer(strings.Join(fill, "\n")).Z(-1)
 
 	b := NewBox()
-	y := 3
+	y := 2
 	if len(w.Steps) > 0 {
 		b.Put(WindowPad, y, stepper(w.Steps, cw, bg))
 		y += 2
@@ -131,13 +147,20 @@ func (w *Window) Layer() *lipgloss.Layer {
 		if w.SubBad {
 			sc = p.Coral
 		}
-		b.Put(WindowPad, y, L(bg).T(w.Sub, sc).Pad(cw))
+		for i, l := range w.subLines() {
+			b.Put(WindowPad, y+i, L(bg).T(l, sc).Pad(cw))
+		}
 	}
 
 	box := lipgloss.NewLayer("").AddLayers(root, b.Layer())
 	if w.Body != nil {
-		box.AddLayers(w.Body.Layer().X(WindowPad).Y(w.top()))
+		x := WindowPad
+		if w.Flush {
+			x = 1
+		}
+		box.AddLayers(w.Body.Layer().X(x).Y(w.top()))
 	}
+	bw := 0
 	if len(w.Buttons) > 0 {
 		bar := NewBox()
 		x := 0
@@ -145,13 +168,62 @@ func (w *Window) Layer() *lipgloss.Layer {
 			bar.Add(x, 0, Button("btn:"+btn.ID, btn.Label, btn.Primary, btn.Danger, i == w.Active))
 			x += ButtonWidth(btn.Label) + 2
 		}
-		box.AddLayers(bar.Layer().X(WindowPad + cw - (x - 2)).Y(w.H - 4))
+		bw = x - 2
+		box.AddLayers(bar.Layer().X(WindowPad + cw - bw).Y(w.H - 2))
+	}
+	if len(w.Hints) > 0 {
+		box.AddLayers(cardHints(w.Hints, cw-bw-2, bg).X(WindowPad).Y(w.H - 2))
 	}
 	return box
 }
 
+// the in-card hints, each saying what it does: short on room, the keys before esc go from the end, and esc stays
+// since it is the way out; else only the last key, bare
+func cardHints(acts []core.Action, room int, bg color.Color) *lipgloss.Layer {
+	rest, out := acts, []core.Action(nil)
+	if last := acts[len(acts)-1]; last.Key == "esc" {
+		rest, out = acts[:len(acts)-1], acts[len(acts)-1:]
+	}
+	for n := len(rest); n >= 0; n-- {
+		hs := append(slices.Clone(rest[:n]), out...)
+		if len(hs) == 0 {
+			break
+		}
+		if l, w := drawHints(hs, len(hs), bg); w <= room {
+			return l
+		}
+	}
+	if l, w := drawHints(acts[len(acts)-1:], 0, bg); w <= room {
+		return l
+	}
+	return NewBox().Layer()
+}
+
+// the keys, the first labelled ones with their labels, and how wide they are; each one clicks as its key
+func drawHints(acts []core.Action, labelled int, bg color.Color) (*lipgloss.Layer, int) {
+	b := NewBox()
+	gap := 2
+	if labelled > 0 {
+		gap = 3
+	}
+	x := 0
+	for i, a := range acts {
+		if i > 0 {
+			x += gap
+		}
+		h := hintOn(a, i < labelled, bg)
+		if core.Press(a.Key).Code == 0 {
+			b.Put(x, 0, h)
+		} else {
+			b.Hit(x, 0, "key:"+a.Key, h)
+		}
+		x += Width(h)
+	}
+	return b.Layer(), x
+}
+
 // a text row inside a window
-func (w *Window) Text(s string, fg color.Color) string { return L(P().Surface).T(s, fg).Pad(w.Inner()) }
+func (w *Window) Text(s string, fg color.Color) string { return L(P().Window).T(s, fg).Pad(w.Inner()) }
 
 // which button a click hit, or -1
 func (w *Window) Index(id string) int {

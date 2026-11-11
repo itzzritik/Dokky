@@ -23,7 +23,8 @@ func newApp(s api.State) *App {
 }
 
 func vaultIn(state string) api.Vault {
-	return api.Vault{State: state, System: "Touch ID", IdleLockMinutes: 5, PasswordDays: 14}
+	// an unlocked dokky that is open has a control session
+	return api.Vault{State: state, System: "Touch ID", PasswordDays: 15, Session: state == api.VaultUnlocked}
 }
 
 func TestCoverFor(t *testing.T) {
@@ -45,6 +46,7 @@ func TestCoverFor(t *testing.T) {
 		"account has a vault":        {api.State{Vault: api.Vault{State: api.VaultSetup, Need: api.NeedJoin}, Account: signedIn}, true, joinCover},
 		"sign in shows its own step": {api.State{Vault: api.Vault{State: api.VaultSetup, Need: api.NeedCreate}, Account: pending}, true, noCover},
 		"unlocked":                   {api.State{Vault: vaultIn(api.VaultUnlocked), Settings: chosen}, true, noCover},
+		"no control session":         {api.State{Vault: api.Vault{State: api.VaultUnlocked}, Settings: chosen}, true, unlockCover},
 		"daemon without a vault":     {api.State{Settings: chosen}, true, noCover},
 		"old daemon, fresh install":  {api.State{}, true, gateCover},
 		"device removed":             {api.State{Vault: vaultIn(api.VaultLocked), Removed: &api.Removed{}}, true, noCover},
@@ -112,43 +114,55 @@ func TestDaemonLockClosesWindows(t *testing.T) {
 	require.Nil(t, a.gate, "unlocked, the tabs are back")
 }
 
-func TestWindowLock(t *testing.T) {
+func TestLockKey(t *testing.T) {
 	a := newApp(api.State{Vault: vaultIn(api.VaultUnlocked), Settings: api.Settings{Chosen: true}})
-	a.press(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
-	require.NotNil(t, a.lock)
+	a.windows = []core.Screen{&held{}}
+	a.press(core.Press("l"))
+	require.True(t, a.st.Locked)
+	require.Empty(t, a.windows, "locking closes every window, as Forged does")
+	require.Equal(t, unlockCover, a.covered)
 	a.press(core.Press("2"))
-	require.Equal(t, 0, a.active, "keys go to the lock")
-	require.Same(t, a.lock, a.top())
+	require.Equal(t, 0, a.active, "keys go to the lock screen")
 
 	a.update(vault.Released{})
-	require.Nil(t, a.lock)
+	require.False(t, a.st.Locked)
+	require.Nil(t, a.gate)
 	a.press(core.Press("2"))
 	require.Equal(t, 1, a.active)
 
+	a.press(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	require.False(t, a.st.Locked, "keys are single keys: ctrl+l does nothing")
+
 	b := newApp(api.State{Vault: vaultIn(api.VaultSetup), Settings: api.Settings{Chosen: true}})
-	b.press(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
-	require.Nil(t, b.lock, "nothing to lock without a master password")
+	b.press(core.Press("l"))
+	require.False(t, b.st.Locked, "nothing to lock without a master password")
+}
+
+func TestSessionLossLocks(t *testing.T) {
+	a := newApp(api.State{Vault: vaultIn(api.VaultUnlocked), Settings: api.Settings{Chosen: true}})
+	a.windows = []core.Screen{&held{}}
+	ended := vaultIn(api.VaultUnlocked)
+	ended.Session = false
+	a.setSnap(api.State{Vault: ended, Settings: api.Settings{Chosen: true}})
+	require.True(t, a.st.Locked, "the screen locked or the computer slept")
+	require.Empty(t, a.windows)
+	require.Equal(t, unlockCover, a.covered)
 }
 
 func TestIdleLock(t *testing.T) {
 	a := newApp(api.State{Vault: vaultIn(api.VaultUnlocked), Settings: api.Settings{Chosen: true}})
-	require.Equal(t, 5*time.Minute, a.idleArmed)
+	require.Equal(t, 4*time.Minute, a.idleArmed, "a fixed 4 minutes, as Forged")
 	gen := a.idleGen
 
-	a.st.Now = a.lastInput.Add(4 * time.Minute)
+	a.st.Now = a.lastInput.Add(3 * time.Minute)
 	require.NotNil(t, a.onIdle(idleCheck{gen}), "touched recently, it waits again")
-	require.Nil(t, a.lock)
+	require.False(t, a.st.Locked)
 
-	a.st.Now = a.lastInput.Add(6 * time.Minute)
+	a.st.Now = a.lastInput.Add(5 * time.Minute)
 	a.onIdle(idleCheck{gen})
-	require.Nil(t, a.lock, "a stale timer does nothing")
+	require.False(t, a.st.Locked, "a stale timer does nothing")
 	a.onIdle(idleCheck{a.idleGen})
-	require.NotNil(t, a.lock)
-
-	never := vaultIn(api.VaultUnlocked)
-	never.IdleLockMinutes = 0
-	b := newApp(api.State{Vault: never, Settings: api.Settings{Chosen: true}})
-	require.Zero(t, b.idleArmed)
+	require.True(t, a.st.Locked)
 }
 
 func TestLockedHidesToasts(t *testing.T) {

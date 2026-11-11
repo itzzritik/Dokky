@@ -40,12 +40,12 @@ func TestConfirmTabWalksTheBar(t *testing.T) {
 	require.Equal(t, 0, c.window(st, 80, 24).Active, "a destructive question starts on Cancel")
 	require.Equal(t, core.Action{Key: "enter", Label: "cancel"}, c.Actions(st)[0])
 
-	c.Update(core.Press("tab"), st)
+	c.Update(core.Press("down"), st)
 	require.Equal(t, 1, c.window(st, 80, 24).Active)
 	require.Equal(t, "remove", c.Actions(st)[0].Label, "enter says what it does now")
-	c.Update(core.Press("shift+tab"), st)
+	c.Update(core.Press("up"), st)
 	require.Equal(t, 0, c.window(st, 80, 24).Active)
-	c.Update(core.Press("shift+tab"), st)
+	c.Update(core.Press("up"), st)
 	require.Equal(t, 1, c.window(st, 80, 24).Active)
 
 	_, cmd := c.Update(core.Press("enter"), st)

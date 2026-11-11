@@ -112,9 +112,12 @@ func realDoctorEnv() doctor.Env {
 	}
 	kr := store.SystemKeyring(state)
 	if f, err := vault.Load(state); err == nil {
-		env.Unlock, kr = f.Unlock, store.DeviceKeyring(state)
+		env.Unlock, kr = "auto", store.DeviceKeyring(state)
+		if f.DeviceWrappedKey == "" {
+			env.Unlock = "password"
+		}
 	}
-	if env.Unlock != vault.UnlockPassword {
+	if env.Unlock != "password" {
 		env.KeyringFallback, env.KeyringErr = keyringState(kr, state, env.Unlock != "")
 	}
 	return env

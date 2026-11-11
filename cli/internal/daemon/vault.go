@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,17 +20,13 @@ import (
 )
 
 const (
-	maxFails      = 5
-	firstCooldown = 30 * time.Second
-	maxCooldown   = 5 * time.Minute
-	grantFor      = 2 * time.Minute
-	systemFor     = 5 * time.Minute
-	unlockReason  = "Unlock dokky to mount your drives"
-	lockedNote    = "dokky is locked. Open dokky to unlock your drives."
+	systemFor    = 5 * time.Minute
+	unlockReason = "Unlock dokky to mount your drives"
+	lockedNote   = "dokky is locked. Open dokky to unlock your drives."
 )
 
-// keeper holds the vault for the whole process. the key, wrong password counts and grants outlive a lock and
-// unlock, each of which starts a new Daemon. lock order: op, then the Daemon's syncMu, opMu and mu, then mu here
+// keeper holds the vault for the whole process. the key and the control session outlive a lock and unlock, each
+// of which starts a new Daemon. lock order: op, then the Daemon's syncMu, opMu and mu, then mu here
 type keeper struct {
 	dir     string
 	log     *slog.Logger
@@ -57,19 +51,20 @@ type keeper struct {
 	serverKeyID   string
 	serverVersion int
 	legacyCount   int
-	fails         int
-	cooldown      time.Duration
-	until         time.Time
-	grants        map[string]time.Time
 	sysName       string
 	sysAt         time.Time
 	sysBusy       bool
+	// the control session: changes need it live, drives never do. gen goes up whenever one ends, so a prompt
+	// answered after a screen lock opens nothing
+	sessionUntil time.Time
+	sessionGen   uint64
+	published    func() // the running phase's publish
 }
 
 func newKeeper(dir string, log *slog.Logger) *keeper {
 	return &keeper{
 		dir: dir, log: log, device: store.DeviceKeyring(dir), legacy: store.SystemKeyring(dir), restart: store.RestartKeyring(dir),
-		prompt: sysauth.Prompt, system: sysauth.Available, now: time.Now, grants: map[string]time.Time{},
+		prompt: sysauth.Prompt, system: sysauth.Available, now: time.Now,
 	}
 }
 
@@ -113,8 +108,7 @@ func (k *keeper) current() *vault.File {
 	return k.file.Clone()
 }
 
-// startPhase decides how the process starts: setup on the old store, unlocked by the device key in auto mode,
-// else locked
+// startPhase decides how the process starts: setup on the old store, unlocked by the device key, else locked
 func (k *keeper) startPhase() (string, []byte) {
 	if ak := k.startKey(); ak != nil {
 		return api.VaultUnlocked, ak
@@ -122,10 +116,11 @@ func (k *keeper) startPhase() (string, []byte) {
 	return k.state(), nil
 }
 
-// the device key opens the vault at startup only in auto mode; anything else waits in the locked phase
+// the device key always opens the vault at startup, so drives mount after a reboot with no prompt. only a
+// computer with no keychain, or a lost device key, waits in the locked phase
 func (k *keeper) startKey() []byte {
 	f := k.current()
-	if f == nil || f.Unlock != vault.UnlockAuto {
+	if f == nil {
 		return nil
 	}
 	ak, err := k.openWithDevice(f)
@@ -173,7 +168,7 @@ func (k *keeper) lock() {
 	defer k.mu.Unlock()
 	vault.Zero(k.ak)
 	k.ak = nil
-	clear(k.grants)
+	k.endLocked()
 }
 
 // swap puts a saved file in place, with its key when that changed
@@ -218,7 +213,7 @@ func (k *keeper) erase() error {
 	vault.Zero(k.ak)
 	k.file, k.ak, k.need, k.paused = nil, nil, "", false
 	k.serverKeyID, k.serverVersion, k.legacyCount = "", 0, 0
-	clear(k.grants)
+	k.endLocked()
 	k.mu.Unlock()
 	err := os.Remove(filepath.Join(k.dir, vault.FileName))
 	if errors.Is(err, os.ErrNotExist) {
@@ -285,15 +280,12 @@ func (k *keeper) view(signedIn bool) api.Vault {
 	now := k.now()
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	v := api.Vault{State: k.stateLocked(), Need: k.need, System: name}
-	if now.Before(k.until) {
-		v.CooldownUntil = k.until
-	}
+	v := api.Vault{State: k.stateLocked(), Need: k.need, System: name, Session: sessionLive(k.sessionUntil, now)}
 	f := k.file
 	if f == nil {
 		return v
 	}
-	v.Unlock, v.PasswordDays, v.IdleLockMinutes, v.KeyID = f.Unlock, f.PasswordDays, f.IdleLockMinutes, f.KeyID
+	v.PasswordDays, v.KeyID = f.PasswordDays, f.KeyID
 	v.PasswordDue = f.PasswordDue(now)
 	v.Synced = signedIn && f.Account && !k.paused && (k.serverKeyID == "" || k.serverKeyID == f.KeyID)
 	if signedIn {
@@ -325,117 +317,95 @@ func (k *keeper) systemName() string {
 	return name
 }
 
-// wrong passwords: five in a row start a cooldown of 30 seconds, doubling each time up to 5 minutes
-func (k *keeper) cooling() error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if wait := k.until.Sub(k.now()); wait > 0 {
-		return &codedError{api.ErrTooManyAttempts, "Too many wrong passwords. Try again in " + plainDuration(wait) + "."}
-	}
-	return nil
-}
-
-func (k *keeper) failed() {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.fails++
-	if k.fails < maxFails {
-		return
-	}
-	k.fails = 0
-	k.cooldown = min(max(k.cooldown*2, firstCooldown), maxCooldown)
-	k.until = k.now().Add(k.cooldown)
-}
-
-func (k *keeper) passed() {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.fails, k.cooldown, k.until = 0, 0, time.Time{}
-}
-
-func plainDuration(d time.Duration) string {
-	if s := int((d + time.Second - 1) / time.Second); s < 60 {
-		return fmt.Sprintf("%d seconds", s)
-	}
-	m := int((d + time.Minute - 1) / time.Minute)
-	if m == 1 {
-		return "1 minute"
-	}
-	return fmt.Sprintf("%d minutes", m)
-}
-
 var (
 	errNoVault   = &codedError{"no_vault", "dokky has no master password yet"}
 	errWrongPass = &codedError{api.ErrWrongPassword, "That master password is not right."}
 )
 
-// checkPassword opens the account key with the master password, counting wrong ones; r is this device's vault
-// or, joining, the account's
+// checkPassword opens the account key with the master password; r is this device's vault or, joining, the
+// account's. argon2 takes about a second a try, which is the only brake on guessing
 func (k *keeper) checkPassword(r vault.Remote, password string) ([]byte, error) {
-	if err := k.cooling(); err != nil {
-		return nil, err
-	}
 	pw := []byte(password)
 	defer vault.Zero(pw)
 	ak, err := vault.OpenRemoteWithPassword(r, pw)
 	if errors.Is(err, vault.ErrWrongPassword) {
-		k.failed()
-		if cerr := k.cooling(); cerr != nil {
-			return nil, cerr
-		}
 		return nil, errWrongPass
 	}
-	if err != nil {
-		return nil, err
-	}
-	k.passed()
-	return ak, nil
+	return ak, err
 }
 
-// systemRefused says why the system prompt may not stand in for the password right now
+// systemRefused says why the system prompt may not stand in for the password right now. the message is the
+// prompt the app shows above the password field
 func (k *keeper) systemRefused(f *vault.File, remote bool) error {
 	why := ""
 	switch {
 	case f == nil:
 		return errNoVault
+	case f.PasswordOnce:
+		why = "Your master password changed. Enter the new one to unlock dokky."
 	case f.PasswordDue(k.now()):
-		why = fmt.Sprintf("It has been %d days: type your master password this time.", f.PasswordDays)
+		why = "It has been a while. Enter your master password to unlock dokky."
 	case remote:
-		why = "Over SSH, type your master password."
+		why = "Over SSH, enter your master password to unlock dokky."
 	case f.DeviceWrappedKey == "":
-		why = "dokky is set to open with the master password only."
+		why = "This computer has no saved key for dokky. Enter your master password to unlock it."
 	}
 	if why != "" {
 		return &codedError{api.ErrPasswordRequired, why}
 	}
 	if _, ok := k.system(remote); !ok {
-		return &codedError{api.ErrPasswordRequired, "No system prompt is available here: type your master password."}
+		return &codedError{api.ErrPasswordRequired, "No system prompt is available here. Enter your master password to unlock dokky."}
 	}
 	return nil
 }
 
-// checkSystem shows the system prompt, then opens the account key with the device key
+// checkSystem opens the account key with the device key once the system prompt confirms the person
 func (k *keeper) checkSystem(ctx context.Context, f *vault.File, remote bool, reason string) ([]byte, error) {
 	if err := k.systemRefused(f, remote); err != nil {
 		return nil, err
 	}
-	switch err := k.prompt(ctx, reason); {
-	case errors.Is(err, sysauth.ErrCancelled):
-		return nil, &codedError{api.ErrCancelled, "The system prompt was cancelled."}
-	case errors.Is(err, sysauth.ErrUnavailable):
-		return nil, &codedError{api.ErrSystemUnavailable, "The system prompt could not open: type your master password."}
-	case err != nil:
-		return nil, &codedError{api.ErrSystemUnavailable, "The system prompt failed: " + err.Error()}
-	}
+	// opened first, so a lost device key asks for the password rather than for a prompt that can't open anything
 	ak, err := k.openWithDevice(f)
 	if err != nil {
-		return nil, &codedError{api.ErrPasswordRequired, "The key saved on this computer no longer opens dokky: type your master password."}
+		return nil, &codedError{api.ErrPasswordRequired, "The key saved on this computer no longer opens dokky. Enter your master password to unlock it."}
 	}
+	if err := k.prompt(ctx, reason); err != nil {
+		vault.Zero(ak)
+		return nil, promptFailed(err)
+	}
+	k.stampSystem()
 	return ak, nil
 }
 
+func promptFailed(err error) error {
+	switch {
+	case errors.Is(err, sysauth.ErrCancelled):
+		return &codedError{api.ErrCancelled, "The system prompt was cancelled."}
+	case errors.Is(err, sysauth.ErrUnavailable):
+		return &codedError{api.ErrSystemUnavailable, "The system prompt could not open. Enter your master password to unlock dokky."}
+	}
+	return &codedError{api.ErrSystemUnavailable, "The system prompt failed: " + err.Error()}
+}
+
+// a system auth slides the password window. best effort: a vault change under way skips the stamp, which only
+// brings the next password a little sooner
+func (k *keeper) stampSystem() {
+	if !k.op.TryLock() {
+		return
+	}
+	defer k.op.Unlock()
+	f := k.current()
+	if f == nil || !f.StampSystem(k.now()) {
+		return
+	}
+	if err := k.save(f); err != nil {
+		k.log.Warn("save vault.json", "err", err)
+	}
+}
+
 // holdFor takes the vault lock for a typed password, which saves vault.json; a system prompt can wait minutes
-// for the person and changes nothing, so it never holds up a password typed meanwhile. returns the release
+// for the person, so it never holds up a password typed meanwhile and stamps vault.json only if the lock is free.
+// returns the release
 func (k *keeper) holdFor(method string) func() {
 	if method == api.AuthSystem {
 		return func() {}
@@ -445,7 +415,7 @@ func (k *keeper) holdFor(method string) func() {
 }
 
 // prove checks the person by password or system prompt and returns the account key. a typed password restarts
-// the password interval, so passwordAt moves forward
+// the password window, a system prompt slides it
 func (k *keeper) prove(ctx context.Context, p api.UnlockParams, reason string) ([]byte, error) {
 	f := k.current()
 	if f == nil {
@@ -457,7 +427,7 @@ func (k *keeper) prove(ctx context.Context, p api.UnlockParams, reason string) (
 		if err != nil {
 			return nil, err
 		}
-		f.PasswordAt = k.now().UTC()
+		f.Typed(k.now())
 		k.mendDevice(f, ak)
 		if err := k.save(f); err != nil {
 			k.log.Warn("save vault.json", "err", err)
@@ -469,11 +439,9 @@ func (k *keeper) prove(ctx context.Context, p api.UnlockParams, reason string) (
 	return nil, fmt.Errorf("method must be %q or %q", api.AuthPassword, api.AuthSystem)
 }
 
-// a device key lost from the keychain is made again once the password is typed, so the next start opens alone
+// a device key lost from the keychain, or never made, is made once the password is typed, so the next start
+// opens alone
 func (k *keeper) mendDevice(f *vault.File, ak []byte) {
-	if f.Unlock == vault.UnlockPassword {
-		return
-	}
 	if opened, err := k.openWithDevice(f); err == nil {
 		vault.Zero(opened)
 		return
@@ -488,34 +456,6 @@ func (k *keeper) mendDevice(f *vault.File, ak []byte) {
 		return
 	}
 	k.log.Info("saved a new device key")
-}
-
-func (k *keeper) grant() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	g := hex.EncodeToString(b)
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	now := k.now()
-	for id, at := range k.grants {
-		if now.After(at) {
-			delete(k.grants, id)
-		}
-	}
-	k.grants[g] = now.Add(grantFor)
-	return g
-}
-
-// a grant works once, within two minutes
-func (k *keeper) useGrant(g string) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	at, ok := k.grants[g]
-	delete(k.grants, g)
-	if g == "" || !ok || k.now().After(at) {
-		return &codedError{api.ErrGrantRequired, "Confirm it is you first."}
-	}
-	return nil
 }
 
 func weak(pw string) error {

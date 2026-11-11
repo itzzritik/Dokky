@@ -240,6 +240,7 @@ func testDaemon(t *testing.T, dir string, k *keeper, st *store.Store, data store
 		return nil
 	}
 	d.upd.paths.State = dir
+	inSession(k)
 	return d, f, st
 }
 

@@ -83,7 +83,7 @@ func rowAt(at string) int {
 }
 
 // letters that press the bar's buttons
-var editKeys = map[string]string{"m": "mount", "v": "view", "s": "signin", "d": "remove"}
+var editKeys = map[string]string{"v": "view", "s": "signin", "d": "remove"}
 
 // a click or button outside drops the open list or the value being typed
 func (e *editForm) close() { e.menu, e.field = false, nil }
@@ -379,7 +379,7 @@ func (a *Add) viewEdit(st *core.State, win *ui.Window, at string) int {
 	e := &a.ed
 	d := a.live(st)
 	cw := win.Inner()
-	bg := p.Surface
+	bg := p.Window
 	win.Title = d.Name
 	switch {
 	case e.req != 0:

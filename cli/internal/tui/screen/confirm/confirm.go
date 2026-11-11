@@ -33,7 +33,7 @@ func (c *Confirm) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		case "esc":
 			return c, core.Close(c)
 		// two buttons, so every move lands on the other one
-		case "left", "right", "tab", "shift+tab":
+		case "left", "right", "up", "down":
 			c.active = 1 - c.active
 		case "enter", "space":
 			return c, c.press(st, c.active)
@@ -64,7 +64,7 @@ func (c *Confirm) Buttons(*core.State) []ui.Btn {
 }
 
 func (c *Confirm) window(st *core.State, maxW, maxH int) *ui.Window {
-	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active, Buttons: c.Buttons(st)}
+	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active, Buttons: c.Buttons(st), Hints: ui.WindowKeys(c.Actions(st))}
 	p, cw := ui.P(), win.Inner()
 	body, y := ui.NewBox(), 0
 	for _, l := range c.Lines {

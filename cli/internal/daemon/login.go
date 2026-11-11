@@ -67,7 +67,7 @@ func (d *Daemon) loginStart(ctx context.Context) (loginStartReply, error) {
 		if acct.Pending {
 			return loginStartReply{Resume: true}, nil
 		}
-		return loginStartReply{}, errors.New("already logged in, run dokky logout first")
+		return loginStartReply{}, errors.New("already logged in, sign out in dokky first")
 	}
 	base := dsync.APIBase()
 	r, err := (&dsync.Client{Base: base}).LoginStart(ctx, deviceInfo())
@@ -98,7 +98,7 @@ func (d *Daemon) loginPoll(ctx context.Context) (loginPollReply, error) {
 	d.mu.Unlock()
 	if acct == nil {
 		if flow == nil {
-			return loginPollReply{}, errors.New("no login in progress, run dokky login")
+			return loginPollReply{}, errors.New("no login in progress, sign in from dokky")
 		}
 		r, err := (&dsync.Client{Base: flow.base}).LoginPoll(ctx, flow.deviceCode)
 		if err != nil {
@@ -368,6 +368,35 @@ func (d *Daemon) busyMount(ms []store.Mount) (string, int, error) {
 		}
 	}
 	return "", 0, nil
+}
+
+// loginCancel drops a sign in still waiting on its master password step. The server forgets this device; nothing
+// here changes, the drives and a master password made before the sign in included, since nothing synced yet
+func (d *Daemon) loginCancel(ctx context.Context) error {
+	d.opMu.Lock()
+	defer d.opMu.Unlock()
+	d.mu.Lock()
+	acct, clashing := d.data.Account, len(d.clashes) > 0
+	d.mu.Unlock()
+	switch {
+	case acct == nil || !acct.Pending:
+		return errors.New("no sign in is waiting")
+	case clashing:
+		return errors.New("choose which copies to keep first")
+	}
+	// a device the server keeps only shows in the account's list until it is removed there
+	if err := d.client(acct).Revoke(ctx, "self", "remove"); err != nil && !errors.Is(err, dsync.ErrRevoked) && !errors.Is(err, dsync.ErrUnauthorized) {
+		d.log.Warn("cancel sign in: the server still lists this device", "err", err)
+	}
+	d.mu.Lock()
+	d.data.Account, d.flow = nil, nil
+	d.setSecrets()
+	err := d.save()
+	d.mu.Unlock()
+	d.vk.setNeed("")
+	d.publish()
+	d.log.Info("sign in cancelled")
+	return err
 }
 
 // caller holds mu

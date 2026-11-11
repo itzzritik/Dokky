@@ -36,9 +36,9 @@ func TestStorageButtons(t *testing.T) {
 	require.Equal(t, core.Action{Key: "enter", Label: "clear", Danger: true}, s.Actions(st)[0])
 	opensConfirm(t, s, "enter", st)
 
-	s.Update(core.Press("tab"), st)
+	s.Update(core.Press("down"), st)
 	require.Equal(t, "btn:close", s.at, "tab wraps along the bar")
-	s.Update(core.Press("shift+tab"), st)
+	s.Update(core.Press("up"), st)
 	require.Equal(t, "btn:clear", s.at)
 	s.Update(core.Press("left"), st)
 	_, cmd := s.Update(core.Press("enter"), st)

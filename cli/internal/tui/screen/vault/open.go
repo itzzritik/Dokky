@@ -8,14 +8,10 @@ import (
 
 const encrypted = "Master password set. dokky is end-to-end encrypted."
 
-// the daemon is locked: drives wait until this unlocks
-func Unlock(st *core.State) *Flow {
-	return newFlow(st, newUnlock(atStart, "Unlock dokky", "Your drives mount once dokky is unlocked."), false, exitQuit)
-}
-
-// covers dokky until the person proves it is them; the daemon and the drives carry on
-func WindowLock(st *core.State) *Flow {
-	f := newFlow(st, newUnlock(onWindow, "Unlock dokky", "dokky is locked. Your drives keep working."), false, exitQuit)
+// Unlock is the lock screen: system auth or the master password opens a control session, and unlocks the daemon
+// when it is locked; force asks again even while a session is live, after the view was locked
+func Unlock(st *core.State, force bool) *Flow {
+	f := newFlow(st, newUnlock(force), false, exitQuit)
 	f.done = func(*core.State) tea.Cmd { return core.Send(Released{}) }
 	return f
 }
@@ -41,7 +37,8 @@ func SignIn(st *core.State, need string, resume func(*core.State) tea.Cmd) *Flow
 	if need == api.NeedJoin {
 		first = newJoin("")
 	}
-	f := newFlow(st, first, true, exitStay)
+	// the whole sign in happens on the gate, as Forged's does; esc cancels it
+	f := newFlow(st, first, false, exitSignIn)
 	f.signin, f.done = true, resume
 	return f
 }
@@ -49,17 +46,6 @@ func SignIn(st *core.State, need string, resume func(*core.State) tea.Cmd) *Flow
 // sync waits because the account's key is not this device's: type the account's password to join it
 func OpenJoin(st *core.State) tea.Cmd {
 	f := newFlow(st, newJoin("Sync is back on"), true, exitClose)
-	return core.Open(f)
-}
-
-// Touch ID or Windows Hello when offered, which starts at once, else the master password; then spends the grant
-func Authorize(st *core.State, reason string, then func(*core.State, string) tea.Cmd) tea.Cmd {
-	u := newUnlock(forGrant, "Confirm it's you", reason)
-	u.then = then
-	f := newFlow(st, u, true, exitClose)
-	if offered(st) {
-		return tea.Sequence(core.Open(f), u.ask(st, api.AuthSystem))
-	}
 	return core.Open(f)
 }
 

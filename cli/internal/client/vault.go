@@ -28,11 +28,6 @@ func (c *Client) VaultLock(ctx context.Context) error {
 	return c.call(ctx, slow, api.MVaultLock, nil, nil)
 }
 
-func (c *Client) VaultAuthorize(ctx context.Context, p api.UnlockParams) (string, error) {
-	r, err := get[api.GrantReply](c, ctx, long, api.MVaultAuthorize, p)
-	return r.Grant, err
-}
-
 func (c *Client) VaultSettings(ctx context.Context, p api.VaultSettingsParams) error {
 	return c.call(ctx, quick, api.MVaultSettings, p, nil)
 }
@@ -52,4 +47,13 @@ func (c *Client) VaultJoin(ctx context.Context, password string) error {
 
 func (c *Client) VaultJoinRecover(ctx context.Context, recoveryKey, newPassword string) error {
 	return c.call(ctx, vaultSlow, api.MVaultJoinRecover, api.RecoverParams{RecoveryKey: recoveryKey, NewPassword: newPassword}, nil)
+}
+
+// SessionOpen proves it is the user, or reuses a live session; system waits for the person, so the long timeout
+func (c *Client) SessionOpen(ctx context.Context, p api.SessionParams) error {
+	return c.call(ctx, long, api.MSessionOpen, p, nil)
+}
+
+func (c *Client) SessionClose(ctx context.Context) error {
+	return c.call(ctx, quick, api.MSessionClose, nil, nil)
 }

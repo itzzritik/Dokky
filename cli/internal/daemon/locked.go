@@ -19,7 +19,7 @@ import (
 	"github.com/rclone/rclone/lib/diskusage"
 )
 
-// the prompt waits for the desktop to settle after login
+// the notification waits for the desktop to settle after login
 var promptDelay = 5 * time.Second
 
 var errLocking = errors.New("dokky is locking")
@@ -67,7 +67,7 @@ type lockedPhase struct {
 }
 
 // runLocked serves until the vault opens and returns its key, or returns nil with the error that ends the
-// process. ask shows the system prompt (or a notification) once, as at login; a manual lock does not
+// process. ask shows a notification once, as at login; a manual lock does not
 func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 	shell := newDaemon(e.eng, nil, store.Fresh(), e.home, e.p.Cache, e.log, e.k)
 	if e.adjust != nil {
@@ -81,6 +81,8 @@ func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 	}
 	restart := make(chan struct{}, 1)
 	l.srv = ipc.NewServer(ln, l.handlers(restart))
+	e.k.onPublish(l.publish)
+	defer e.k.onPublish(nil)
 	srvCtx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- l.srv.Serve(srvCtx) }()
@@ -140,37 +142,52 @@ func runLocked(ctx context.Context, e phaseEnv, ask bool) ([]byte, error) {
 	}
 }
 
-// locked answers state, status, vault.unlock, vault.recover, daemon.restart, update.check and the event stream
+// locked answers state, status, session.open and close, vault.unlock, vault.recover, daemon.restart,
+// update.check and the event stream. opening the session opens the vault, which starts the unlocked phase
 func (l *lockedPhase) handlers(restart chan<- struct{}) map[string]ipc.Handler {
+	k := l.e.k
 	h := map[string]ipc.Handler{}
-	refuse := func(context.Context, json.RawMessage) (any, error) { return nil, errVaultLocked }
-	// every method the unlocked daemon has, so each answers locked rather than unknown
-	for m := range (&Daemon{}).handlers(nil) {
-		h[m] = refuse
-	}
 	h["status"] = func(context.Context, json.RawMessage) (any, error) { return l.status(), nil }
 	h[api.MState] = func(context.Context, json.RawMessage) (any, error) { return l.snapshot(), nil }
-	h[api.MVaultUnlock] = decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
-		ak, err := l.unlock(ctx, p)
-		if err != nil {
-			return struct{}{}, l.told(err)
+	open := func(ctx context.Context, p api.SessionParams) (struct{}, error) {
+		ak, err := k.openSession(ctx, p, unlockReason)
+		// nil with no error: a session opened moments ago, whose key is already on its way
+		if ak != nil {
+			l.hand(ak)
 		}
-		l.hand(ak)
-		return struct{}{}, nil
+		return struct{}{}, err
+	}
+	h[api.MSessionOpen] = decodeCtx(open)
+	h[api.MSessionClose] = func(context.Context, json.RawMessage) (any, error) {
+		k.endSession("closed")
+		return nil, nil
+	}
+	h[api.MVaultUnlock] = decodeCtx(func(ctx context.Context, p api.UnlockParams) (struct{}, error) {
+		return open(ctx, api.SessionParams{Method: p.Method, Password: p.Password, Remote: p.Remote, Force: true})
 	})
-	h[api.MVaultRecover] = decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
+	h[api.MVaultRecover] = proving(k, decodeCtx(func(ctx context.Context, p api.RecoverParams) (struct{}, error) {
 		ak, err := l.recover(ctx, p)
 		if err != nil {
 			return struct{}{}, err
 		}
 		l.hand(ak)
 		return struct{}{}, nil
-	})
+	}))
 	h["daemon.restart"] = func(context.Context, json.RawMessage) (any, error) {
 		requestRestart(restart)
 		return nil, nil
 	}
 	h["update.check"] = decodeCtx(func(ctx context.Context, _ struct{}) (checkReply, error) { return l.shell.updateCheck(ctx) })
+	for m, fn := range h {
+		h[m] = sessionGate(k, m, fn)
+	}
+	// every other method the unlocked daemon has answers locked rather than unknown
+	refuse := func(context.Context, json.RawMessage) (any, error) { return nil, errVaultLocked }
+	for m := range (&Daemon{}).handlers(nil) {
+		if _, ok := h[m]; !ok {
+			h[m] = refuse
+		}
+	}
 	return h
 }
 
@@ -193,14 +210,6 @@ func (l *lockedPhase) publish() {
 	l.srv.Publish(ipc.Event{Event: api.EState, Data: raw})
 }
 
-func (l *lockedPhase) told(err error) error {
-	var ce *codedError
-	if errors.As(err, &ce) && (ce.code == api.ErrWrongPassword || ce.code == api.ErrTooManyAttempts) {
-		l.publish()
-	}
-	return err
-}
-
 // the reply goes out before the locked socket closes
 func (l *lockedPhase) hand(ak []byte) {
 	time.AfterFunc(restartDelay, func() {
@@ -210,12 +219,6 @@ func (l *lockedPhase) hand(ak []byte) {
 			vault.Zero(ak)
 		}
 	})
-}
-
-func (l *lockedPhase) unlock(ctx context.Context, p api.UnlockParams) ([]byte, error) {
-	k := l.e.k
-	defer k.holdFor(p.Method)()
-	return k.prove(ctx, p, unlockReason)
 }
 
 // recover works locked too. a device linked to an account changes the account's password first, reading the
@@ -260,34 +263,15 @@ func (l *lockedPhase) pushAccount(ctx context.Context, nf *vault.File, ak []byte
 	return err
 }
 
-// once, about five seconds after start: the system prompt when dokky unlocks that way, else a notification
+// once, about five seconds after start: only a lost device key gets here, and a system prompt can't open the vault
+// without it, so the person is told to open dokky and type the master password
 func (l *lockedPhase) ask(ctx context.Context) {
-	k := l.e.k
-	f := k.current()
-	if f == nil {
+	if l.e.k.current() == nil {
 		return
 	}
 	select {
 	case <-ctx.Done():
-		return
 	case <-time.After(promptDelay):
-	}
-	if f.Unlock == vault.UnlockSystem && k.systemRefused(f, false) == nil {
-		ak, err := k.checkSystem(ctx, f, false, unlockReason)
-		if err == nil {
-			select {
-			case l.opened <- ak:
-			default:
-				vault.Zero(ak)
-			}
-			return
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		l.e.log.Info("the unlock prompt was dismissed", "err", err)
-	}
-	if ctx.Err() == nil {
 		notifyLocked(l.e.log, l.shell.notify)
 	}
 }

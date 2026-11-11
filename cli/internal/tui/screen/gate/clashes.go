@@ -184,7 +184,7 @@ func (c *Clashes) window(st *core.State, maxW, maxH int) *ui.Window {
 	}
 	// a focused row lights no button, so only one thing looks focused
 	win := &ui.Window{W: min(76, maxW), Title: "Keep which copy?", Sub: "These names are on this computer and in your account.",
-		Buttons: []ui.Btn{btn}, Active: -1}
+		Buttons: []ui.Btn{btn}, Active: -1, Hints: ui.WindowKeys(c.Actions(st))}
 	if c.row() < 0 {
 		win.Active = 0
 	}
@@ -197,7 +197,7 @@ func (c *Clashes) window(st *core.State, maxW, maxH int) *ui.Window {
 	}
 	c.top = max(0, min(c.top, n-room))
 	if room < n {
-		win.Corner = ui.L(p.Surface).T(fmt.Sprintf("%d-%d of %d", c.top+1, c.top+room, n), p.Muted).String()
+		win.Corner = ui.L(p.Window).T(fmt.Sprintf("%d-%d of %d", c.top+1, c.top+room, n), p.Muted).String()
 	}
 	body := ui.NewBox()
 	cw := win.Inner()
@@ -208,9 +208,9 @@ func (c *Clashes) window(st *core.State, maxW, maxH int) *ui.Window {
 		if x.Kind == "service" {
 			kind = "account"
 		}
-		label := ui.L(p.Surface).B(x.Name, p.Text).Sp(1).T(kind, p.Faint).Pad(cw - 34)
+		label := ui.L(p.Window).B(x.Name, p.Text).Sp(1).T(kind, p.Faint).Pad(cw - 34)
 		body.Put(0, y, label)
-		body.Add(cw-33, y, ui.Chips(rowID(i), sides, c.keep[i], c.row() == i, p.Surface))
+		body.Add(cw-33, y, ui.Chips(rowID(i), sides, c.keep[i], c.row() == i, p.Window))
 	}
 	win.Body = body
 	return win
@@ -224,7 +224,7 @@ func (c *Clashes) Actions(*core.State) []core.Action {
 	if c.busy() {
 		return nil
 	}
-	move := core.Action{Key: "tab", Label: "move"}
+	move := core.Action{Key: "↑↓", Label: "move"}
 	if len(c.list) > 1 {
 		move.Key = "↑↓"
 	}

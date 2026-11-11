@@ -10,6 +10,7 @@ import (
 
 type Action struct {
 	Key, Label     string
+	Icon           string // shown in the menu; empty draws nothing
 	Danger, Accent bool
 }
 
@@ -23,6 +24,9 @@ type Screen interface {
 // a screen that is typing into a field gets every key, tabs and quit included
 type Capturer interface{ Capturing() bool }
 
+// a window drawn as a whole screen of its own, like Forged's sign in card: nothing shows under it, no footer
+type Full interface{ Full() bool }
+
 // a window placed in the body (bw by bh) instead of centred, with nothing dimmed under it
 type Placer interface {
 	Place(bw, bh, w, h int) (x, y int)
@@ -31,6 +35,7 @@ type Placer interface {
 var named = map[string]rune{
 	"enter": tea.KeyEnter, "esc": tea.KeyEscape, "space": tea.KeySpace, "tab": tea.KeyTab,
 	"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight, "backspace": tea.KeyBackspace,
+	"↑": tea.KeyUp, "↓": tea.KeyDown,
 	"home": tea.KeyHome, "end": tea.KeyEnd, "pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown, "delete": tea.KeyDelete,
 }
 
