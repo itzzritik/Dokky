@@ -180,7 +180,7 @@ func TestShowToggleRevealsBothFields(t *testing.T) {
 func TestUnlockStartsSystemAuth(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultUnlocked
-	f := Unlock(st, false)
+	f := Unlock(st, false, true)
 	u := f.top().(*unlock)
 	require.NotNil(t, f.Start(st), "the lock screen asks for Touch ID at once")
 	require.True(t, u.system)
@@ -213,7 +213,7 @@ func TestUnlockOverSSHNeverAsksSystem(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
 	st.Deps.Remote = true
-	f := Unlock(st, false)
+	f := Unlock(st, false, true)
 	u := f.top().(*unlock)
 	require.Nil(t, f.Start(st))
 	key(f, st, "enter")
@@ -224,7 +224,7 @@ func TestUnlockOverSSHNeverAsksSystem(t *testing.T) {
 func TestUnlockSucceeds(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultUnlocked
-	f := Unlock(st, true)
+	f := Unlock(st, true, true)
 	u := f.top().(*unlock)
 	require.True(t, u.force, "after a lock a live session is not enough")
 	typed(f, st, "secret")
@@ -237,7 +237,7 @@ func TestUnlockSucceeds(t *testing.T) {
 func TestForgotPassword(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
-	f := Unlock(st, false)
+	f := Unlock(st, false, true)
 	key(f, st, "down")
 	require.False(t, f.top().typing(), "the link has focus")
 	key(f, st, "enter")
@@ -283,7 +283,7 @@ func TestFlowExits(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultLocked
 	st.Deps.Remote = true
-	f := Unlock(st, false)
+	f := Unlock(st, false, true)
 	typed(f, st, "q")
 	require.Equal(t, 1, f.top().(*unlock).pw.Len(), "q is a letter in the password field")
 	key(f, st, "down")
@@ -388,7 +388,7 @@ func focusOf(fm form) string {
 func TestTouchIDAsksAgainWhenThePersonIsBack(t *testing.T) {
 	st := newState()
 	st.Snap.Vault.State = api.VaultUnlocked
-	f := Unlock(st, false)
+	f := Unlock(st, false, true)
 	u := f.top().(*unlock)
 	at := time.Now()
 	now = func() time.Time { return at }
@@ -415,4 +415,36 @@ func TestTouchIDAsksAgainWhenThePersonIsBack(t *testing.T) {
 	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrSystemUnavailable, "the screen is locked")}, st)
 	f.Update(tea.FocusMsg{}, st)
 	require.True(t, u.system, "a prompt the locked screen refused shows once the person is back")
+}
+
+func TestUnlockAsksOnceTheSystemCheckAnswers(t *testing.T) {
+	st := newState()
+	st.Snap.Vault.State, st.Snap.Vault.System = api.VaultLocked, ""
+	f := Unlock(st, false, true)
+	u := f.top().(*unlock)
+	require.Nil(t, f.Start(st), "the daemon's system check has not answered yet")
+	st.Snap.Vault.System = "Touch ID"
+	require.NotNil(t, f.Start(st), "the check answered, so Touch ID shows by itself")
+	require.True(t, u.system)
+	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrCancelled, "cancelled")}, st)
+	require.Nil(t, f.Start(st), "it asks by itself only once")
+
+	st.Snap.Vault.System = ""
+	g := Unlock(st, false, true)
+	g.Start(st)
+	typed(g, st, "se")
+	st.Snap.Vault.System = "Touch ID"
+	require.Nil(t, g.Start(st), "the person is typing the password")
+}
+
+func TestUnlockLockedByHandWaits(t *testing.T) {
+	st := newState()
+	st.Snap.Vault.State = api.VaultUnlocked
+	f := Unlock(st, true, false)
+	u := f.top().(*unlock)
+	require.Nil(t, f.Start(st), "locked with l, nothing pops up")
+	f.Update(tea.FocusMsg{}, st)
+	require.Zero(t, u.req, "nor when the terminal gets focus")
+	key(f, st, "enter")
+	require.True(t, u.system, "enter asks for Touch ID")
 }

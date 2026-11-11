@@ -36,9 +36,9 @@ Drives and file use never stop. Changes need Dokky open and unlocked.
 
 ## 2. Lock behaviour in the TUI (items 2, 6, 7, 8, 9)
 
-- **Opening Dokky.** If the vault is unlocked and a session is live, Dokky goes straight in. Otherwise it shows the lock screen and starts system auth at once, with `force` set when the view was locked, as Forged's `startStartupUnlock` does.
+- **Opening Dokky.** If the vault is unlocked and a session is live, Dokky goes straight in. Otherwise it shows the lock screen and starts system auth at once, with `force` set when the view was locked, as Forged's `startStartupUnlock` does. If the daemon's system check has not answered yet, it asks as soon as it does; the daemon publishes the answer.
 - **Locking.** `l` locks from every screen and every window, except while a text field has focus (there it types). Lock also sits in the menu.
-- **What locking does.** Closes every window and overlay, cancels a sign-in in progress, wipes anything typed, calls `session.close` and shows the lock screen with "Please authenticate to continue using Dokky.", or "Enter your master password to continue using Dokky." when system auth can't be used.
+- **What locking does.** Closes every window and overlay, cancels a sign-in in progress, wipes anything typed, calls `session.close` and shows the lock screen with "Please authenticate to continue using Dokky.", or "Enter your master password to continue using Dokky." when system auth can't be used. Locked by hand (`l` or Lock dokky), the lock screen does not ask for system auth by itself: enter or the Unlock button asks. The idle lock and the screen lock still ask.
 - **Losing the session.** When the polled state shows the session ended (screen lock or sleep), the TUI locks itself the same way.
 - **Idle lock.** 4 minutes with no input locks. A gate mid-flow (a sign-in waiting for the browser) is never locked.
 
