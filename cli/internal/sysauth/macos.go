@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const osascript = "/usr/bin/osascript"
@@ -55,7 +57,15 @@ function run(argv) {
   return result;
 }`
 
+// the helper when this dokky carries one, so the prompt names dokky; else the same answers from a script
 func macCommand(mode, reason string) command {
+	if helper := helperPath(); helper != "" {
+		args := []string{mode}
+		if mode == "prompt" {
+			args = append(args, reason)
+		}
+		return command{path: helper, args: args}
+	}
 	args := []string{"-l", "JavaScript", "-e", macScript, mode}
 	if mode == "prompt" {
 		args = append(args, reason)
@@ -81,7 +91,11 @@ func parseMacCheck(out string) (string, bool) {
 	return "", false
 }
 
+// macOS reads the reason after "dokky is trying to", so it starts lower case there: "unlock dokky"
 func macPrompt(ctx context.Context, reason string) error {
+	if r, n := utf8.DecodeRuneInString(reason); n > 0 {
+		reason = string(unicode.ToLower(r)) + reason[n:]
+	}
 	res, err := run(ctx, macCommand("prompt", reason))
 	return parseMacPrompt(res, err)
 }

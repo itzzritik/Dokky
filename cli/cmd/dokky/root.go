@@ -37,12 +37,14 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// nothing waits before the TUI: it starts the service, updates and fixes problems in the background
+			// a dev build runs on its own background service; the installed dokky takes it back as it opens
 			start := func() error { return startDaemon(io.Discard) }
+			take := useInstalledDaemon
 			if buildinfo.Dev() {
-				start = func() error { return useDevDaemon(io.Discard) }
-				if err := useDevDaemon(os.Stderr); err != nil {
-					fmt.Fprintln(os.Stderr, "dokky:", err)
-				}
+				start, take = func() error { return useDevDaemon(io.Discard) }, useDevDaemon
+			}
+			if err := take(os.Stderr); err != nil {
+				fmt.Fprintln(os.Stderr, "dokky:", err)
 			}
 			// over SSH nobody at this computer can answer Touch ID or Windows Hello, so the TUI never offers it
 			remote := os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != ""

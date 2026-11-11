@@ -100,13 +100,16 @@ func (f *File) Validate() error {
 	return nil
 }
 
-// an older dokky offered 14 days and never, which was 0
+// an older dokky offered 14 days and never, which was 0; a choice this dokky doesn't know, from a newer or a dev
+// build, falls back to 15 days instead of stopping the service
 func (f *File) upgrade() {
-	switch f.PasswordDays {
-	case 14:
+	switch {
+	case f.PasswordDays == 14:
 		f.PasswordDays = 15
-	case 0:
+	case f.PasswordDays == 0:
 		f.PasswordDays = 30
+	case !slices.Contains(PasswordDayChoices, f.PasswordDays):
+		f.PasswordDays = 15
 	}
 }
 
