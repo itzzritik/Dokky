@@ -11,7 +11,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-// the account already has a master password, set on another device: type it to use it here, or ↓ for the recovery key
+// the account already has a master password, set on another device: type it to use it here, or ctrl+o for the recovery key
 type join struct {
 	pw     *ui.Secret
 	reveal bool
@@ -63,7 +63,7 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		case k == "ctrl+r":
 			j.reveal = !j.reveal
 			j.pw.Reveal = j.reveal
-		case k == "down":
+		case k == recoveryKey.Key:
 			f.push(newRecover(true))
 		case k == "enter":
 			return j.submit(st)
@@ -100,8 +100,11 @@ func (j *join) actions(*core.State) []core.Action {
 	if j.req != 0 {
 		return nil
 	}
-	return []core.Action{{Key: "enter", Label: "Continue"}, {Key: "↓", Label: "Recovery key"}}
+	return []core.Action{{Key: "enter", Label: "Continue"}, recoveryKey}
 }
+
+// the field takes every letter and the arrows are for moving, so the recovery key has its own chord
+var recoveryKey = core.Action{Key: "ctrl+o", Label: "Recovery key"}
 
 func (j *join) typing() bool  { return true }
 func (j *join) holding() bool { return j.req != 0 }
