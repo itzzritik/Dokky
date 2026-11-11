@@ -185,6 +185,8 @@ func TestUnlockStartsSystemAuth(t *testing.T) {
 	require.NotNil(t, f.Start(st), "the lock screen asks for Touch ID at once")
 	require.True(t, u.system)
 	require.Equal(t, []core.Action{{Key: "esc", Label: "Use password"}}, f.top().actions(st))
+	out, _, _ := ui.Compose(100, 30, ui.Pass{Layer: f.View(st, 100, 30)})
+	require.Contains(t, out, "Use password", "the card says what esc does while Touch ID waits")
 
 	key(f, st, "esc")
 	require.Zero(t, u.req, "esc stops waiting")

@@ -202,6 +202,10 @@ func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 		label = upper(systemName(st.Snap.Vault))
 	}
 	win.Buttons = []ui.Btn{{ID: "forgot", Label: "Forgot password"}, {ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, label, "Unlocking"), Primary: true}}
+	// while system auth waits, nothing but esc works, so its label gets the room
+	if waiting {
+		win.Buttons = win.Buttons[1:]
+	}
 	win.Active = lit(win, u.at, "btn:unlock")
 	win.Body = body
 	return y
