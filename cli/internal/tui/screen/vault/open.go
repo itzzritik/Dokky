@@ -9,9 +9,10 @@ import (
 const encrypted = "Master password set. dokky is end-to-end encrypted."
 
 // Unlock is the lock screen: system auth or the master password opens a control session, and unlocks the daemon
-// when it is locked; force asks again even while a session is live, after the view was locked
-func Unlock(st *core.State, force bool) *Flow {
-	f := newFlow(st, newUnlock(force), false, exitQuit)
+// when it is locked; force asks again even while a session is live, after the view was locked. auto asks for
+// system auth by itself, as when dokky opens; locked with l, it waits for enter or the Unlock button
+func Unlock(st *core.State, force, auto bool) *Flow {
+	f := newFlow(st, newUnlock(force, auto), false, exitQuit)
 	f.done = func(*core.State) tea.Cmd { return core.Send(Released{}) }
 	return f
 }

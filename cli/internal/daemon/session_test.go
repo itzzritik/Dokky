@@ -56,6 +56,9 @@ func TestSessionOpenAndReuse(t *testing.T) {
 	prompts := 0
 	k.prompt = func(context.Context, string) error { prompts++; return nil }
 	sys := api.SessionParams{Method: api.AuthSystem}
+	// the system check answers once and says so; only the session's own news is counted
+	require.Eventually(t, func() bool { return vaultOf(d).System == "Touch ID" }, 5*time.Second, 10*time.Millisecond)
+	published.Store(0)
 
 	require.False(t, vaultOf(d).Session)
 	require.Equal(t, api.ErrWrongPassword, codeOf(t, call(t, d, api.MSessionOpen, api.SessionParams{Method: api.AuthPassword, Password: "not it at all"}, nil)))

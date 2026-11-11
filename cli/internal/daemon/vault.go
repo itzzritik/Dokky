@@ -310,8 +310,13 @@ func (k *keeper) systemName() string {
 				n = ""
 			}
 			k.mu.Lock()
+			changed := n != k.sysName
 			k.sysName, k.sysAt, k.sysBusy = n, k.now(), false
 			k.mu.Unlock()
+			// the app hears at once, so a lock screen that opened before the check can still ask by itself
+			if changed {
+				k.publish()
+			}
 		}()
 	}
 	return name

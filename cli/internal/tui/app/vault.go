@@ -72,7 +72,7 @@ func (a *App) route() tea.Cmd {
 	case unlockCover:
 		// nothing changes behind a lock screen: every window goes, wiping what was typed
 		a.windows = nil
-		f := vault.Unlock(a.st, a.st.Locked)
+		f := vault.Unlock(a.st, a.st.Locked, !a.byHand)
 		a.gate, start = f, f.Start(a.st)
 	case createCover:
 		a.gate = vault.Setup(a.st)
@@ -98,6 +98,14 @@ func (a *App) onVault(was api.Vault) tea.Cmd {
 		a.windows = append(a.windows, vault.SignIn(a.st, a.st.Snap.Vault.Need, gate.Resume))
 	}
 	return cmd
+}
+
+// the system check can answer after the lock screen showed, so each new state gives it another go
+func (a *App) askOnLock() tea.Cmd {
+	if f, ok := a.gate.(*vault.Flow); ok {
+		return f.Start(a.st)
+	}
+	return nil
 }
 
 // the device code window hands over to the step itself
@@ -126,10 +134,11 @@ func (a *App) canLock() bool {
 type sessionClosed struct{}
 
 // Forged's lock: every window closes and what was typed is wiped, the control session ends and the lock screen
-// asks for system auth again; drives and the daemon carry on
-func (a *App) lockWindow() tea.Cmd {
+// shows; drives and the daemon carry on. locked by hand, with l or Lock dokky, it waits for the person rather than
+// asking for system auth at once; the idle lock asks
+func (a *App) lockWindow(byHand bool) tea.Cmd {
 	cmd := a.broadcast(core.Locked{})
-	a.st.Locked = true
+	a.st.Locked, a.byHand = true, byHand
 	a.disarmIdle()
 	c := a.st.C
 	end := func() tea.Msg {
@@ -142,7 +151,7 @@ func (a *App) lockWindow() tea.Cmd {
 }
 
 func (a *App) released() tea.Cmd {
-	a.st.Locked, a.lastInput = false, a.st.Now
+	a.st.Locked, a.byHand, a.lastInput = false, false, a.st.Now
 	return tea.Batch(a.route(), a.nextToast(), a.armIdle())
 }
 
@@ -187,7 +196,7 @@ func (a *App) onIdle(m idleCheck) tea.Cmd {
 	limit := a.idleLimit()
 	a.disarmIdle()
 	if limit > 0 && a.st.Now.Sub(a.lastInput) >= limit {
-		return a.lockWindow()
+		return a.lockWindow(false)
 	}
 	return a.armIdle()
 }

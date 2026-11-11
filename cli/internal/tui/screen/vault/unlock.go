@@ -26,6 +26,7 @@ type unlock struct {
 	done   bool // unlocked; the screen waits for the app to take it down
 	asked  time.Time
 	again  bool // the system prompt went unanswered, so it shows again when the person is back
+	auto   bool // asks for system auth by itself; locked with l, the screen waits for the person instead
 }
 
 // the system prompt gives up after about two minutes; one that lasted this long went unanswered, not cancelled
@@ -36,19 +37,21 @@ var now = time.Now
 
 var unlockStops = []string{"field:pw", ui.EyeID("field:pw"), "btn:forgot", "btn:unlock"}
 
-func newUnlock(force bool) *unlock {
+func newUnlock(force, auto bool) *unlock {
 	pw := ui.NewSecret("", "", vault.MaxPassword)
 	pw.Eye = true
-	return &unlock{force: force, pw: pw, at: "field:pw"}
+	return &unlock{force: force, auto: auto, pw: pw, at: "field:pw"}
 }
 
 func (u *unlock) busy() bool { return u.req != 0 || u.done }
 
-// start asks for system auth at once when this computer offers it, as Forged's lock screen does
+// start asks for system auth by itself once this computer offers it, as Forged's lock screen does. the check can
+// answer after the screen shows, so the app calls this again on each new state until it asks or the person acts
 func (u *unlock) start(st *core.State) tea.Cmd {
-	if u.busy() || !offered(st) {
+	if !u.auto || u.busy() || u.pw.Len() > 0 || !offered(st) {
 		return nil
 	}
+	u.auto = false
 	return u.ask(st, api.AuthSystem)
 }
 
@@ -91,6 +94,7 @@ func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 }
 
 func (u *unlock) click(id string, f *Flow, st *core.State) tea.Cmd {
+	u.auto = false
 	switch {
 	case id == "key:esc":
 		return u.key(core.Press("esc"), f, st)
@@ -119,6 +123,7 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	if m, ok := msg.(tea.KeyPressMsg); ok {
 		k = m.String()
 	}
+	u.auto = false
 	switch {
 	case k == "esc" && u.system && u.req != 0:
 		u.stop()

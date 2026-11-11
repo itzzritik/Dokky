@@ -817,3 +817,22 @@ func TestLoginCreatesTheAccountVault(t *testing.T) {
 		require.True(t, vf.Account)
 	})
 }
+
+// the first state after a start never waits on the system check, so the answer goes out as soon as it comes,
+// for a lock screen that is already up to ask for Touch ID by itself
+func TestSystemCheckPublishesWhenItAnswers(t *testing.T) {
+	_, k, _ := newLocked(t, nil)
+	offerSystem(k, true)
+	k.mu.Lock()
+	k.sysName, k.sysAt = "", time.Time{}
+	k.mu.Unlock()
+	published := make(chan struct{}, 4)
+	k.onPublish(func() { published <- struct{}{} })
+	require.Empty(t, k.view(false).System, "the first view does not wait")
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the answer was never published")
+	}
+	require.Equal(t, "Touch ID", k.view(false).System)
+}

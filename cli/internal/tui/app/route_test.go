@@ -11,6 +11,7 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/gate"
 	"github.com/itzzritik/dokky/cli/internal/tui/screen/vault"
+	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 	"github.com/stretchr/testify/require"
 )
 
@@ -167,7 +168,7 @@ func TestIdleLock(t *testing.T) {
 
 func TestLockedHidesToasts(t *testing.T) {
 	a := newApp(api.State{Vault: vaultIn(api.VaultUnlocked), Settings: api.Settings{Chosen: true}})
-	a.lockWindow()
+	a.lockWindow(true)
 	a.post(core.Toast{Text: "Home NAS mounted"})
 	require.Nil(t, a.toast, "notices wait behind the lock")
 	a.update(vault.Released{})
@@ -247,4 +248,32 @@ func TestUpdatingThenUnlockOnALockedDaemon(t *testing.T) {
 	require.Nil(t, a.gate)
 	require.Equal(t, "Updated to v0.1.5", a.toast.Text, "in the order they came")
 	require.Equal(t, []core.Toast{{Text: "Fixed 1 problem"}}, a.pending)
+}
+
+func TestLockScreenAsksByItselfUnlessLockedByHand(t *testing.T) {
+	asking := func(a *App) bool {
+		out, _, _ := ui.Compose(100, 30, ui.Pass{Layer: a.gate.(*vault.Flow).View(a.st, 100, 30)})
+		return strings.Contains(out, "Use password")
+	}
+	chosen := api.Settings{Chosen: true}
+	v := vaultIn(api.VaultLocked)
+	v.System = ""
+	a := newApp(api.State{Vault: v, Settings: chosen})
+	require.False(t, asking(a), "dokky opened before the daemon's system check answered")
+	v.System = "Touch ID"
+	a.setSnap(api.State{Vault: v, Settings: chosen})
+	require.True(t, asking(a), "the check answered: Touch ID shows by itself")
+
+	ended := vaultIn(api.VaultUnlocked)
+	ended.Session = false
+	a = newApp(api.State{Vault: vaultIn(api.VaultUnlocked), Settings: chosen})
+	a.lockWindow(true)
+	require.False(t, asking(a), "locked with l, it waits for the person")
+	a.setSnap(api.State{Vault: ended, Settings: chosen})
+	require.False(t, asking(a), "and keeps waiting as the session ends")
+	a.update(vault.Released{})
+	a.setSnap(api.State{Vault: vaultIn(api.VaultUnlocked), Settings: chosen})
+
+	a.lockWindow(false)
+	require.True(t, asking(a), "the idle lock asks, as before")
 }

@@ -51,6 +51,7 @@ type App struct {
 	gate           core.Screen // the first-run choice or a vault screen, over the tabs
 	covered        coverKind   // which one gate is
 	lastInput      time.Time
+	byHand         bool          // locked with l or Lock dokky, so the lock screen waits for the person
 	idleArmed      time.Duration // the limit the pending idle check was set for
 	idleGen        int
 	stepClosed     time.Time // the sign in's master password step just finished
@@ -214,7 +215,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.released()
 	case vault.LockWindow:
 		if a.canLock() {
-			return a.lockWindow()
+			return a.lockWindow(true)
 		}
 	case sessionClosed:
 		return nil
@@ -274,7 +275,7 @@ func (a *App) setSnap(s api.State) tea.Cmd {
 	was := a.st.Snap.Vault
 	a.st.Snap = s
 	locked := a.onVault(was)
-	cover := a.route()
+	cover := tea.Batch(a.route(), a.askOnLock())
 	if len(s.Clashes) > 0 && s.Account.Pending && !a.hasClashWindow() {
 		a.windows = append(a.windows, gate.NewClashes(s.Clashes))
 	}
@@ -424,7 +425,7 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	// l locks from every screen and window, but not while a field takes letters: keys are single keys, never combos
 	case s == "l" && !a.capturing() && a.canLock():
-		return a.lockWindow()
+		return a.lockWindow(true)
 	case a.removedNow():
 		if s == "q" || s == "esc" {
 			return a.quit()
