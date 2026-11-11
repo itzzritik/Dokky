@@ -5,9 +5,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/itzzritik/dokky/cli/internal/tui/contour"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
-	"github.com/itzzritik/dokky/cli/internal/tui/contour"
 )
 
 // one step of a vault screen, drawn into the flow's window

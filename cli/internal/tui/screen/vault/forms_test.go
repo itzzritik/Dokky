@@ -243,9 +243,8 @@ func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
 	key(f, st, "enter")
 	require.Equal(t, "Type your master password.", j.err)
 	key(f, st, "down")
-	key(f, st, "enter")
 	r, ok := f.top().(*recoverForm)
-	require.True(t, ok)
+	require.True(t, ok, "down opens the recovery key, there is no link to focus")
 	require.True(t, r.join, "the account's vault is joined with its recovery key")
 	key(f, st, "esc")
 	require.Nil(t, key(f, st, "esc"), "sign in can't skip its master password step")
@@ -310,7 +309,6 @@ func TestFormsWalkToEveryButton(t *testing.T) {
 		"new key":  {newFlow(st, newAskKey(), true, exitClose), askKeyStops},
 		"create":   {Setup(st), createStops},
 		"recover":  {newFlow(st, newRecover(false), true, exitClose), recoverStops},
-		"join":     {newFlow(st, newJoin(""), true, exitClose), joinStops},
 		"show key": {newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay), keyStops},
 	} {
 		var seen []string
@@ -346,8 +344,6 @@ func focusOf(fm form) string {
 	case *askKey:
 		return v.at
 	case *recoverForm:
-		return v.at
-	case *join:
 		return v.at
 	case *showKey:
 		return v.at
