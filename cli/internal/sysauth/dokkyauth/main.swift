@@ -2,7 +2,7 @@ import Foundation
 import LocalAuthentication
 
 // dokky's Touch ID helper. macOS names the program asking in its prompt, and this one carries an Info.plist
-// saying "dokky", where a script run through osascript reads "osascript". It answers on one line, as the
+// saying "Dokky", where a script run through osascript reads "osascript". It answers on one line, as the
 // script did: check prints touchid, password or none; prompt <reason> prints ok, cancel, unavailable:<why>
 // or error:<why>. The reason is an argument, never part of anything that runs.
 

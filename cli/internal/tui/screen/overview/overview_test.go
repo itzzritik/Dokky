@@ -34,33 +34,27 @@ func selected(o *Overview, st *core.State) string {
 	return it.id
 }
 
-func TestAddADriveIsAnItem(t *testing.T) {
+func TestAddADriveIsAKeyNotAnItem(t *testing.T) {
 	st := state(api.Drive{ID: "d1", Name: "Photos"})
 	o := New()
+	require.Equal(t, []string{"row:d1"}, ids(o.items(st)), "only the drives; adding lives on Drives and the a key")
 	acts := keys(o.Actions(st))
-	require.Equal(t, "move", acts["↑↓"], "one drive and the add item")
 	require.Equal(t, "show", acts["enter"])
-
+	require.Equal(t, "add drive", acts["a"])
 	press(o, st, "down")
-	require.Equal(t, "row:add", selected(o, st))
-	acts = keys(o.Actions(st))
-	require.Equal(t, "add drive", acts["enter"])
-	require.NotContains(t, acts, "a", "enter already says it")
-	_, cmd := o.Update(core.Press("enter"), st)
-	require.NotNil(t, cmd)
+	require.Equal(t, "row:d1", selected(o, st))
+	_, cmd := o.Update(core.Press("a"), st)
+	require.NotNil(t, cmd, "a opens Add a drive")
+	out, _, _ := ui.Compose(94, 26, ui.Pass{Layer: o.View(st, 94, 26)})
+	require.NotContains(t, out, "Add a drive")
+}
 
-	press(o, st, "up")
-	_, cmd = o.Update(core.Click{ID: "row:add"}, st)
-	require.Equal(t, "row:add", selected(o, st), "a click moves the selection")
-	require.NotNil(t, cmd)
-
-	// drawn under the cards, where a click finds it
-	_, hits, _ := ui.Compose(94, 26, ui.Pass{Layer: o.View(st, 94, 26)})
-	found := false
-	for y := range 26 {
-		found = found || hits.At(10, y) == "row:add"
+func ids(items []item) []string {
+	var out []string
+	for _, it := range items {
+		out = append(out, it.id)
 	}
-	require.True(t, found)
+	return out
 }
 
 func TestSelectionFollowsTheDrive(t *testing.T) {

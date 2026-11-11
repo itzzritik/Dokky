@@ -21,7 +21,7 @@ import (
 
 const (
 	systemFor    = 5 * time.Minute
-	unlockReason = "Unlock dokky to mount your drives"
+	unlockReason = "Unlock Dokky to mount your drives"
 	lockedNote   = "dokky is locked. Open dokky to unlock your drives."
 )
 

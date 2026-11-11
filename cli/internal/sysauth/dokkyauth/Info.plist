@@ -7,8 +7,8 @@
   <key>CFBundleIdentifier</key>
   <string>me.ritik.dokky.auth</string>
   <key>CFBundleName</key>
-  <string>dokky</string>
+  <string>Dokky</string>
   <key>CFBundleDisplayName</key>
-  <string>dokky</string>
+  <string>Dokky</string>
 </dict>
 </plist>
