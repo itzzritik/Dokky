@@ -69,3 +69,13 @@ func TestFooterHints(t *testing.T) {
 	require.False(t, ids["key:q"])
 	require.False(t, ids["key:v"])
 }
+
+func TestWindowHintsKeepTheirLabels(t *testing.T) {
+	acts := []core.Action{{Key: "ctrl+o", Label: "Recovery key"}, {Key: "esc", Label: "Quit"}}
+	win := &Window{W: 52, H: 6, Title: "Enter your master password", Buttons: []Btn{{ID: "go", Label: "Continue", Primary: true}}, Hints: acts}
+	out, hits, _ := Compose(52, 6, Pass{Layer: win.Layer()})
+	require.Contains(t, out, "Recovery key", "short on room, the later keys go first")
+	ids := hitsOn(hits, 52, 4)
+	require.True(t, ids["key:ctrl+o"], "the hint clicks as its key")
+	require.False(t, ids["key:esc"], "never a bare key")
+}

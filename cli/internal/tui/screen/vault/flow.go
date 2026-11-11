@@ -144,7 +144,7 @@ func (f *Flow) build(st *core.State, maxW, maxH int, hints []core.Action) *ui.Wi
 
 func (f *Flow) View(st *core.State, w, h int) *lipgloss.Layer {
 	if f.window {
-		return f.build(st, w, h, nil).Layer()
+		return f.build(st, w, h, ownHints(f.Actions(st))).Layer()
 	}
 	return f.cover(st, w, h)
 }
@@ -152,12 +152,13 @@ func (f *Flow) View(st *core.State, w, h int) *lipgloss.Layer {
 // Forged's gate: the card under the wordmark, the contour map below, and the keys inside the card since there is no footer
 func (f *Flow) cover(st *core.State, w, h int) *lipgloss.Layer {
 	return f.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window {
-		return f.build(st, ui.CardWidth(w), maxH, cardHints(f.Actions(st)))
+		return f.build(st, ui.CardWidth(w), maxH, ownHints(f.Actions(st)))
 	})
 }
 
-// what the card's own footer shows: every key but enter, which its button names
-func cardHints(acts []core.Action) []core.Action {
+// what a card's or window's own footer shows, readable and clickable over the faded screen: every key but enter,
+// which its button names
+func ownHints(acts []core.Action) []core.Action {
 	return slices.DeleteFunc(slices.Clone(acts), func(a core.Action) bool { return a.Key == "enter" })
 }
 

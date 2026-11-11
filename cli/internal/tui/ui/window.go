@@ -176,33 +176,41 @@ func (w *Window) Layer() *lipgloss.Layer {
 	return box
 }
 
-// the in-card hints: all of them, else the last, labelled while there is room
+// the in-card hints, each saying what it does: the later ones go first when short on room, since a form lists its
+// own keys before esc; else only the last key, bare
 func cardHints(acts []core.Action, room int, bg color.Color) *lipgloss.Layer {
-	b := NewBox()
-	last := acts[len(acts)-1:]
-	for _, c := range []struct {
-		acts  []core.Action
-		label bool
-	}{{acts, true}, {last, true}, {acts, false}, {last, false}} {
-		if HintsWidth(c.acts, c.label) > room {
-			continue
+	for n := len(acts); n > 0; n-- {
+		if l, w := drawHints(acts[:n], n, bg); w <= room {
+			return l
 		}
-		x, gap := 0, 2
-		if c.label {
-			gap = 3
-		}
-		for _, a := range c.acts {
-			h := hintOn(a, c.label, bg)
-			if core.Press(a.Key).Code == 0 {
-				b.Put(x, 0, h)
-			} else {
-				b.Hit(x, 0, "key:"+a.Key, h)
-			}
-			x += Width(h) + gap
-		}
-		break
 	}
-	return b.Layer()
+	if l, w := drawHints(acts[len(acts)-1:], 0, bg); w <= room {
+		return l
+	}
+	return NewBox().Layer()
+}
+
+// the keys, the first labelled ones with their labels, and how wide they are; each one clicks as its key
+func drawHints(acts []core.Action, labelled int, bg color.Color) (*lipgloss.Layer, int) {
+	b := NewBox()
+	gap := 2
+	if labelled > 0 {
+		gap = 3
+	}
+	x := 0
+	for i, a := range acts {
+		if i > 0 {
+			x += gap
+		}
+		h := hintOn(a, i < labelled, bg)
+		if core.Press(a.Key).Code == 0 {
+			b.Put(x, 0, h)
+		} else {
+			b.Hit(x, 0, "key:"+a.Key, h)
+		}
+		x += Width(h)
+	}
+	return b.Layer(), x
 }
 
 // a text row inside a window
