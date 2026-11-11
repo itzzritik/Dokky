@@ -14,6 +14,7 @@ import (
 type Secret struct {
 	Label, Hint string
 	Reveal      bool
+	Eye         bool                // a Show or Hide toggle at the strip's right end, EyeID of the field
 	Show        func([]rune) string // how a revealed value reads, like a recovery key in groups
 	buf         []rune
 	limit       int
@@ -78,9 +79,24 @@ func (s *Secret) Runes() []rune { return slices.Clone(s.buf) }
 // the value as the daemon takes it; strings can't be wiped, so only the call holds one
 func (s *Secret) String() string { return string(s.buf) }
 
-// label on the window fill, value on its own strip, masked unless revealed; the newest characters stay in view
-func (s *Secret) View(id string, w int, focused bool, bg color.Color) *lipgloss.Layer {
+// EyeID is the Show or Hide toggle at the right end of field id's strip
+func EyeID(id string) string { return "eye:" + id }
+
+func IsEye(id string) bool { return strings.HasPrefix(id, "eye:") }
+
+// how wide the toggle is, so a mark on the strip sits left of it
+func (s *Secret) EyeW() int {
+	if s.Eye {
+		return 6
+	}
+	return 0
+}
+
+// label on the window fill, value on its own strip, masked unless revealed; the newest characters stay in view.
+// at is the focused stop: the field, its toggle, or "" while nothing here takes keys
+func (s *Secret) View(id string, w int, at string, bg color.Color) *lipgloss.Layer {
 	p := P()
+	focused := at == id
 	fb, bar := p.Field, " "
 	if focused {
 		fb, bar = p.Sel, Paint(G.Bar, p.Accent, p.Sel, false)
@@ -89,7 +105,8 @@ func (s *Secret) View(id string, w int, focused bool, bg color.Color) *lipgloss.
 	if s.Label == "" {
 		lw = 0
 	}
-	iw := max(1, w-lw-2)
+	ew := s.EyeW()
+	iw := max(1, w-lw-2-ew)
 	var val []rune
 	switch {
 	case s.Reveal && s.Show != nil:
@@ -114,6 +131,17 @@ func (s *Secret) View(id string, w int, focused bool, bg color.Color) *lipgloss.
 	default:
 		in.T(string(val[max(0, len(val)-iw):]), p.Text)
 	}
-	line := L(bg).T(s.Label, p.Muted).Pad(lw) + in.Pad(w-lw)
-	return lipgloss.NewLayer(line).ID(id)
+	b := NewBox().Hit(0, 0, id, L(bg).T(s.Label, p.Muted).Pad(lw)+in.Pad(w-lw-ew))
+	if s.Eye {
+		word := "Show"
+		if s.Reveal {
+			word = "Hide"
+		}
+		eye := L(fb).Sp(1).T(word, p.Muted).Sp(1).String()
+		if at == EyeID(id) {
+			eye = L(p.Sel).Raw(Paint(G.Bar, p.Accent, p.Sel, false)).B(word, p.Accent).Sp(1).String()
+		}
+		b.Hit(w-ew, 0, EyeID(id), eye)
+	}
+	return b.Layer()
 }

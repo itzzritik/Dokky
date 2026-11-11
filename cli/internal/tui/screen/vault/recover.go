@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"image/color"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,15 +19,14 @@ const keyChars = 34 // after DK1-, 32 for the key and 2 for its check
 
 // the recovery key, typed or pasted any way, and a new master password
 type recoverForm struct {
-	key    *ui.Secret
-	np     newPassword
-	at     string // the focused stop
-	reveal bool
-	err    string
-	req    core.Req
-	join   bool // the account's key: during sign in or while sync waits for it
-	ks     keyState
-	kn     int // the key's characters so far
+	key  *ui.Secret
+	np   newPassword
+	at   string // the focused stop
+	err  string
+	req  core.Req
+	join bool // the account's key: during sign in or while sync waits for it
+	ks   keyState
+	kn   int // the key's characters so far
 }
 
 func newRecover(join bool) *recoverForm {
@@ -34,6 +34,7 @@ func newRecover(join bool) *recoverForm {
 	k.Reveal, k.Show = true, groupKey
 	np := makeNew("", "")
 	np.pw.Hint, np.again.Hint = "", ""
+	np.pw.Eye = true
 	return &recoverForm{key: k, np: np, at: "field:0", join: join}
 }
 
@@ -160,13 +161,10 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		if r.req != 0 {
 			return nil
 		}
-		switch m.ID {
-		case "field:0", "field:1", "field:2":
+		if slices.Contains(recoverStops, m.ID) {
 			r.at = m.ID
-		case "btn:recover":
-			r.at = m.ID
-			return r.submit(st)
 		}
+		return r.press(m.ID, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
 		if r.req != 0 {
 			return nil
@@ -177,12 +175,9 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		switch {
 		case k == "esc":
-			return f.back()
-		case k == "ctrl+r":
-			r.reveal = !r.reveal
-			r.np.reveal(r.reveal)
+			return f.back(st)
 		case ui.Pressed(k, r.at):
-			return r.submit(st)
+			return r.press(r.at, st)
 		case k == "enter" && r.filled(fieldAt(r.at)):
 			r.at = fieldID(fieldAt(r.at) + 1)
 		case k == "enter":
@@ -199,7 +194,17 @@ func (r *recoverForm) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	return nil
 }
 
-var recoverStops = []string{"field:0", "field:1", "field:2", "btn:recover"}
+var recoverStops = []string{"field:0", "field:1", ui.EyeID("field:1"), "field:2", "btn:recover"}
+
+func (r *recoverForm) press(id string, st *core.State) tea.Cmd {
+	switch id {
+	case ui.EyeID("field:1"):
+		r.np.flip()
+	case "btn:recover":
+		return r.submit(st)
+	}
+	return nil
+}
 
 func (r *recoverForm) fields() []*ui.Secret { return []*ui.Secret{r.key, r.np.pw, r.np.again} }
 
@@ -255,17 +260,16 @@ func (r *recoverForm) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Buttons = []ui.Btn{{ID: "recover", Label: busyLabel(st, r.req != 0, "Reset password", "Resetting"), Primary: true}}
 	win.Active = 0
 	cw, bg := win.Inner(), p.Window
-	idle := r.req == 0
-	focus := fieldAt(r.at) - 1
-	if !idle {
-		focus = -1
+	at := r.at
+	if r.req != 0 {
+		at = ""
 	}
 	// labels above the fields, as on the gate's other cards
 	body := ui.NewBox()
 	body.Put(0, 0, ui.L(bg).T("Recovery key", p.Muted).Pad(cw))
-	body.Add(0, 1, r.key.View("field:0", cw, r.at == "field:0" && idle, bg))
+	body.Add(0, 1, r.key.View("field:0", cw, at, bg))
 	body.Put(0, 2, keyLine(r.ks, r.kn, cw, bg))
-	rows := 4 + r.np.labelled(body, 4, cw, [2]string{"New master password", "Confirm new master password"}, [2]string{"field:1", "field:2"}, focus)
+	rows := 4 + r.np.labelled(body, 4, cw, [2]string{"New master password", "Confirm new master password"}, [2]string{"field:1", "field:2"}, at)
 	win.Body = body
 	return rows
 }

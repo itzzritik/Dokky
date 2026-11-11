@@ -22,10 +22,12 @@ type join struct {
 }
 
 func newJoin(toast string) *join {
-	return &join{pw: ui.NewSecret("", "", vault.MaxPassword), at: "field:pw", toast: toast}
+	pw := ui.NewSecret("", "", vault.MaxPassword)
+	pw.Eye = true
+	return &join{pw: pw, at: "field:pw", toast: toast}
 }
 
-var joinStops = []string{"field:pw", "btn:recover", "btn:join"}
+var joinStops = []string{"field:pw", ui.EyeID("field:pw"), "btn:recover", "btn:join"}
 
 func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch m := msg.(type) {
@@ -66,7 +68,7 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		switch {
 		case k == "esc":
-			return f.back()
+			return f.back(st)
 		case ui.Pressed(k, j.at):
 			return j.press(j.at, f, st)
 		case k == "enter":
@@ -81,6 +83,8 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 
 func (j *join) press(id string, f *Flow, st *core.State) tea.Cmd {
 	switch id {
+	case ui.EyeID("field:pw"):
+		j.pw.Reveal = !j.pw.Reveal
 	case "btn:recover":
 		f.push(newRecover(true))
 	case "btn:join":
@@ -106,7 +110,11 @@ func (j *join) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Buttons = []ui.Btn{{ID: "recover", Label: "Recovery key"}, {ID: "join", Label: busyLabel(st, j.req != 0, "Continue", "Checking"), Primary: true}}
 	win.Active = lit(win, j.at, "btn:join")
 	body := ui.NewBox()
-	body.Add(0, 0, j.pw.View("field:pw", win.Inner(), j.at == "field:pw" && j.req == 0, ui.P().Window))
+	at := j.at
+	if j.req != 0 {
+		at = ""
+	}
+	body.Add(0, 0, j.pw.View("field:pw", win.Inner(), at, ui.P().Window))
 	win.Body = body
 	return 1
 }

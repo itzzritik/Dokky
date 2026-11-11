@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -12,12 +13,11 @@ import (
 )
 
 // Forged's unlock card: system auth starts by itself, esc falls back to the master password, enter on the empty
-// field asks again; tab is never used, it moves focus out of a browser terminal
+// field asks again; arrows reach the Show toggle and the Forgot password and Unlock buttons, and esc is the one key
 type unlock struct {
 	force  bool // the view was locked, so a live session is not enough
 	pw     *ui.Secret
-	at     string // field:pw or link:forgot
-	reveal bool
+	at     string // the focused stop
 	err    string
 	req    core.Req
 	system bool // the call in flight waits for Touch ID or Windows Hello
@@ -25,8 +25,12 @@ type unlock struct {
 	done   bool // unlocked; the screen waits for the app to take it down
 }
 
+var unlockStops = []string{"field:pw", ui.EyeID("field:pw"), "btn:forgot", "btn:unlock"}
+
 func newUnlock(force bool) *unlock {
-	return &unlock{force: force, pw: ui.NewSecret("", "", vault.MaxPassword), at: "field:pw"}
+	pw := ui.NewSecret("", "", vault.MaxPassword)
+	pw.Eye = true
+	return &unlock{force: force, pw: pw, at: "field:pw"}
 }
 
 func (u *unlock) busy() bool { return u.req != 0 || u.done }
@@ -77,7 +81,7 @@ func (u *unlock) click(id string, f *Flow, st *core.State) tea.Cmd {
 		return u.key(core.Press("esc"), f, st)
 	case u.busy():
 		return nil
-	case id == "field:pw" || id == "link:forgot":
+	case slices.Contains(unlockStops, id):
 		u.at = id
 	}
 	return u.press(id, f, st)
@@ -85,8 +89,10 @@ func (u *unlock) click(id string, f *Flow, st *core.State) tea.Cmd {
 
 func (u *unlock) press(id string, f *Flow, st *core.State) tea.Cmd {
 	switch id {
-	case "link:forgot":
+	case "btn:forgot":
 		f.push(newRecover(false))
+	case ui.EyeID("field:pw"):
+		u.pw.Reveal = !u.pw.Reveal
 	case "btn:unlock":
 		return u.submit(st)
 	}
@@ -106,18 +112,12 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	case u.busy():
 		return nil
 	case k == "esc":
-		return f.back()
-	case k == "ctrl+r":
-		u.reveal = !u.reveal
-		u.pw.Reveal = u.reveal
-	case k == "down" && u.at == "field:pw":
-		u.at = "link:forgot"
-	case k == "up" && u.at == "link:forgot":
-		u.at = "field:pw"
-	case k == "enter" && u.at == "link:forgot":
+		return f.back(st)
+	case ui.Pressed(k, u.at):
 		return u.press(u.at, f, st)
 	case k == "enter":
 		return u.submit(st)
+	case ui.Walk(unlockStops, &u.at, k):
 	case u.at == "field:pw" && u.pw.Type(msg):
 		u.err = ""
 	}
@@ -184,32 +184,30 @@ func (u *unlock) view(st *core.State, win *ui.Window, maxH int) int {
 		body.Put(0, 0, ui.L(bg).T(upper(systemName(st.Snap.Vault)), p.Muted).Pad(cw))
 		body.Put(0, 1, ui.L(bg).B(ui.Spin(st.T), ui.SpinFg(st.T)).Sp(1).T("Waiting for confirmation", p.Text).Pad(cw))
 	} else {
+		at := u.at
+		if u.busy() {
+			at = ""
+		}
 		body.Put(0, 0, ui.L(bg).T("Master password", p.Muted).Pad(cw))
-		body.Add(0, 1, u.pw.View("field:pw", cw, u.at == "field:pw" && !u.busy(), bg))
+		body.Add(0, 1, u.pw.View("field:pw", cw, at, bg))
 	}
 	y := 2
 	if u.err != "" {
 		body.Put(0, y, ui.L(bg).T(core.Fit(u.err, cw), p.Coral).Pad(cw))
 		y++
 	}
-	if !waiting && y+2 <= win.Room(maxH) {
-		body.Add(0, y+1, link("link:forgot", "Forgot password?", u.at == "link:forgot", bg))
-		y += 2
-	} else if u.at == "link:forgot" {
-		u.at = "field:pw"
-	}
 	// the button says what enter does: system auth on the empty field, else unlock with what was typed
 	label := "Unlock"
 	if u.pw.Len() == 0 && offered(st) && !waiting {
 		label = upper(systemName(st.Snap.Vault))
 	}
-	win.Buttons = []ui.Btn{{ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, label, "Unlocking"), Primary: true}}
-	win.Active = 0
+	win.Buttons = []ui.Btn{{ID: "forgot", Label: "Forgot password"}, {ID: "unlock", Label: busyLabel(st, u.busy() && !u.system, label, "Unlocking"), Primary: true}}
+	win.Active = lit(win, u.at, "btn:unlock")
 	win.Body = body
 	return y
 }
 
-// Forged's hints: system auth on tab, esc quits; while waiting, esc goes to the password
+// esc quits, which the flow adds; while waiting for system auth, esc goes to the password
 func (u *unlock) actions(st *core.State) []core.Action {
 	switch {
 	case u.system && u.req != 0:
@@ -219,12 +217,17 @@ func (u *unlock) actions(st *core.State) []core.Action {
 	}
 	enter := core.Action{Key: "enter", Label: "Unlock"}
 	switch {
-	case u.at == "link:forgot":
-		enter.Label = "Reset password"
+	case u.at == "btn:forgot":
+		enter.Label = "Forgot password"
+	case ui.IsEye(u.at):
+		enter.Label = "Show"
+		if u.pw.Reveal {
+			enter.Label = "Hide"
+		}
 	case u.pw.Len() == 0 && offered(st):
 		enter.Label = upper(systemName(st.Snap.Vault))
 	}
-	return []core.Action{enter, {Key: "↓", Label: "Forgot password"}}
+	return []core.Action{enter}
 }
 
 func (u *unlock) typing() bool  { return u.at == "field:pw" }

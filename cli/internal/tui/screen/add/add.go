@@ -341,7 +341,7 @@ func (a *Add) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 
 func (a *Add) window(st *core.State, maxW, maxH int) *ui.Window {
 	at := a.focused(st)
-	win := &ui.Window{W: min(76, maxW), Buttons: a.bar(st), Active: -1}
+	win := &ui.Window{W: min(76, maxW), Buttons: a.bar(st), Active: -1, Hints: ui.WindowKeys(a.Actions(st))}
 	if a.edit == nil {
 		win.Steps = a.steps()
 	}

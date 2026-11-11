@@ -642,6 +642,7 @@ func (d *Daemon) handlers(restart chan<- struct{}) map[string]ipc.Handler {
 			d.syncNow(ctx)
 			return r, err
 		}),
+		"login.cancel":   decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { return nil, d.loginCancel(ctx) }),
 		"logout":         decodeCtx(d.logout),
 		"sync.now":       decodeCtx(func(ctx context.Context, _ struct{}) (any, error) { _ = d.syncNow(ctx); return nil, nil }),
 		api.MSyncKick:    func(context.Context, json.RawMessage) (any, error) { d.kick(); return nil, nil },

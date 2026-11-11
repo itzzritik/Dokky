@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image/color"
+	"slices"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
@@ -92,4 +94,12 @@ func Footer(w int, left, right []core.Action) *lipgloss.Layer {
 		break
 	}
 	return b.Layer()
+}
+
+// WindowKeys is what a window's own footer shows: the keys that do something its buttons don't say, and esc.
+// Arrows only move focus, and enter presses the lit button, which names what it does
+func WindowKeys(acts []core.Action) []core.Action {
+	return slices.DeleteFunc(slices.Clone(acts), func(a core.Action) bool {
+		return a.Key == "enter" || strings.Trim(a.Key, "↑↓←→ ") == ""
+	})
 }

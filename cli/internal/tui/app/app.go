@@ -422,8 +422,8 @@ func (a *App) press(k tea.KeyPressMsg) tea.Cmd {
 			return a.quit()
 		}
 		return nil
-	// l locks from every screen and window, ctrl+l even while typing
-	case (s == "ctrl+l" || s == "l" && !a.capturing()) && a.canLock():
+	// l locks from every screen and window, but not while a field takes letters: keys are single keys, never combos
+	case s == "l" && !a.capturing() && a.canLock():
 		return a.lockWindow()
 	case a.removedNow():
 		if s == "q" || s == "esc" {

@@ -12,20 +12,21 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-var changeStops = []string{"field:0", "field:1", "field:2", "btn:cancel", "btn:change"}
+var changeStops = []string{"field:0", ui.EyeID("field:0"), "field:1", "field:2", "btn:cancel", "btn:change"}
 
 // the current master password, then a new one typed twice; the key and recovery key stay
 type change struct {
-	cur    *ui.Secret
-	np     newPassword
-	at     string // the focused stop
-	reveal bool
-	err    string
-	req    core.Req
+	cur *ui.Secret
+	np  newPassword
+	at  string // the focused stop
+	err string
+	req core.Req
 }
 
 func newChange() *change {
-	return &change{cur: ui.NewSecret("Current", "", vault.MaxPassword), np: makeNew("New", "Confirm"), at: "field:0"}
+	cur := ui.NewSecret("Current", "", vault.MaxPassword)
+	cur.Eye = true
+	return &change{cur: cur, np: makeNew("New", "Confirm"), at: "field:0"}
 }
 
 func (c *change) fields() []*ui.Secret { return []*ui.Secret{c.cur, c.np.pw, c.np.again} }
@@ -70,11 +71,7 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		fs, i := c.fields(), fieldAt(c.at)
 		switch {
 		case k == "esc":
-			return f.back()
-		case k == "ctrl+r":
-			c.reveal = !c.reveal
-			c.cur.Reveal = c.reveal
-			c.np.reveal(c.reveal)
+			return f.back(st)
 		case ui.Pressed(k, c.at):
 			return c.press(c.at, f, st)
 		case k == "enter" && i >= 0 && i < 2 && fs[i].Len() > 0 && fs[i+1].Len() == 0:
@@ -92,10 +89,13 @@ func (c *change) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 
 func (c *change) press(id string, f *Flow, st *core.State) tea.Cmd {
 	switch id {
+	case ui.EyeID("field:0"):
+		c.cur.Reveal = !c.cur.Reveal
+		c.np.pw.Reveal, c.np.again.Reveal = c.cur.Reveal, c.cur.Reveal
 	case "btn:change":
 		return c.submit(st)
 	case "btn:cancel":
-		return f.back()
+		return f.back(st)
 	}
 	return nil
 }
@@ -135,19 +135,18 @@ func (c *change) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Buttons = []ui.Btn{{ID: "cancel", Label: "Cancel"}, {ID: "change", Label: busyLabel(st, c.req != 0, "Change password", "Changing"), Primary: true}}
 	win.Active = lit(win, c.at, "btn:change")
 	cw, bg := win.Inner(), p.Window
-	idle := c.req == 0
+	at := c.at
+	if c.req != 0 {
+		at = ""
+	}
 	room := win.Room(maxH)
 	g := 1
 	if room >= 5 {
 		g = 2
 	}
-	focus := fieldAt(c.at) - 1
-	if !idle {
-		focus = -1
-	}
 	body := ui.NewBox()
-	body.Add(0, 0, c.cur.View("field:0", cw, c.at == "field:0" && idle, bg))
-	rows := g + c.np.place(body, g, cw, room-g, [2]string{"field:1", "field:2"}, focus)
+	body.Add(0, 0, c.cur.View("field:0", cw, at, bg))
+	rows := g + c.np.place(body, g, cw, room-g, [2]string{"field:1", "field:2"}, at)
 	win.Body = body
 	return rows
 }
@@ -160,7 +159,7 @@ func (c *change) actions(*core.State) []core.Action {
 	if c.at == "btn:cancel" {
 		enter.Label = "cancel"
 	}
-	return []core.Action{enter, moveAction, revealAction(c.reveal)}
+	return []core.Action{enter, moveAction}
 }
 
 func (c *change) typing() bool               { return fieldAt(c.at) >= 0 }

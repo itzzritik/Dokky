@@ -131,7 +131,7 @@ func TestLockKey(t *testing.T) {
 	require.Equal(t, 1, a.active)
 
 	a.press(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
-	require.True(t, a.st.Locked, "ctrl+l locks too")
+	require.False(t, a.st.Locked, "keys are single keys: ctrl+l does nothing")
 
 	b := newApp(api.State{Vault: vaultIn(api.VaultSetup), Settings: api.Settings{Chosen: true}})
 	b.press(core.Press("l"))

@@ -126,7 +126,7 @@ func (m *info) Buttons(*core.State) []ui.Btn {
 // text taller than the window scrolls, with where it is in the top border
 func (m *info) View(st *core.State, maxW, maxH int) *lipgloss.Layer {
 	p := ui.P()
-	win := &ui.Window{W: min(60, maxW), Title: m.title, Bad: m.bad, Buttons: m.Buttons(st)}
+	win := &ui.Window{W: min(60, maxW), Title: m.title, Bad: m.bad, Buttons: m.Buttons(st), Hints: ui.WindowKeys(m.Actions(st))}
 	lines := strings.Split(ansi.Wordwrap(m.text, win.Inner(), ""), "\n")
 	m.total, m.page = len(lines), min(len(lines), win.Room(maxH))
 	m.top = max(0, min(m.top, m.total-m.page))

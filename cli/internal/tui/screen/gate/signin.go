@@ -214,7 +214,7 @@ func (s *SignIn) press(id string, st *core.State) tea.Cmd {
 func (s *SignIn) card(st *core.State, w, maxH int) *ui.Window {
 	p := ui.P()
 	win := &ui.Window{W: ui.CardWidth(w), Title: "Sign in to dokky", Sub: "Approve this code in your browser.", Buttons: s.buttons(), Active: 0,
-		Hints: s.Actions(st)[1:]}
+		Hints: ui.WindowKeys(s.Actions(st))}
 	cw, bg := win.Inner(), p.Window
 	body := ui.NewBox()
 	rows := 0

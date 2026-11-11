@@ -160,7 +160,7 @@ func devices(n int) string {
 func (r *Remove) window(st *core.State, maxW, maxH int) *ui.Window {
 	p := ui.P()
 	// focus on the switch lights no button, so only one thing looks focused
-	win := &ui.Window{W: min(64, maxW), Title: "Remove " + core.Safe(r.d.Name) + "?", Buttons: r.buttons(), Active: -1}
+	win := &ui.Window{W: min(64, maxW), Title: "Remove " + core.Safe(r.d.Name) + "?", Buttons: r.buttons(), Active: -1, Hints: ui.WindowKeys(r.Actions(st))}
 	if r.at != sureID || !r.asks() {
 		win.Active = max(0, win.Index(r.at))
 	}

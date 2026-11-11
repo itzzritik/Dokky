@@ -184,7 +184,7 @@ func (c *Clashes) window(st *core.State, maxW, maxH int) *ui.Window {
 	}
 	// a focused row lights no button, so only one thing looks focused
 	win := &ui.Window{W: min(76, maxW), Title: "Keep which copy?", Sub: "These names are on this computer and in your account.",
-		Buttons: []ui.Btn{btn}, Active: -1}
+		Buttons: []ui.Btn{btn}, Active: -1, Hints: ui.WindowKeys(c.Actions(st))}
 	if c.row() < 0 {
 		win.Active = 0
 	}

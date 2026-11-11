@@ -3,12 +3,14 @@ package vault
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
+	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,15 +155,26 @@ func TestKeyButtonsByMouse(t *testing.T) {
 	require.NotEmpty(t, k.err)
 }
 
-func TestRevealShowsBothFields(t *testing.T) {
+func TestShowToggleRevealsBothFields(t *testing.T) {
 	st := newState()
 	f := Setup(st)
 	c := f.top().(*create)
 	key(f, st, "ctrl+r")
+	require.False(t, c.np.pw.Reveal, "no combos")
+	key(f, st, "right")
+	require.Equal(t, ui.EyeID("field:0"), c.at, "right reaches the field's Show toggle")
+	key(f, st, "enter")
 	require.True(t, c.np.pw.Reveal)
 	require.True(t, c.np.again.Reveal)
-	key(f, st, "ctrl+r")
+	key(f, st, "space")
 	require.False(t, c.np.pw.Reveal)
+	key(f, st, "left")
+	require.Equal(t, "field:0", c.at)
+	key(f, st, "right")
+	key(f, st, "down")
+	require.Equal(t, "field:1", c.at, "down moves on as from the field")
+	f.Update(core.Click{ID: ui.EyeID("field:0")}, st)
+	require.True(t, c.np.again.Reveal, "a click flips it too")
 }
 
 func TestUnlockStartsSystemAuth(t *testing.T) {
@@ -250,7 +263,11 @@ func TestJoinUsesRecoveryKeyForTheAccount(t *testing.T) {
 	require.True(t, ok, "the Recovery key button opens it")
 	require.True(t, r.join, "the account's vault is joined with its recovery key")
 	key(f, st, "esc")
-	require.Nil(t, key(f, st, "esc"), "sign in can't skip its master password step")
+	require.Same(t, j, f.top(), "esc goes back a step first")
+	b, ok := key(f, st, "esc")().(tea.BatchMsg)
+	require.True(t, ok, "then esc cancels the sign in")
+	require.Equal(t, core.CloseWindow{Screen: f}, b[0](), "the card closes")
+	require.Len(t, b, 2, "and the daemon drops the sign in")
 }
 
 func TestSignInCreatesWhenTheAccountHasNoVault(t *testing.T) {
@@ -315,15 +332,22 @@ func TestFormsWalkToEveryButton(t *testing.T) {
 		"join":     {newFlow(st, newJoin(""), true, exitClose), joinStops},
 		"show key": {newFlow(st, newShowKey("DK1-ABCD", ""), true, exitStay), keyStops},
 	} {
+		// a field's Show toggle sits right of it; up and down walk the rest
+		line := slices.DeleteFunc(slices.Clone(c.stops), ui.IsEye)
 		var seen []string
-		for range c.stops {
+		for range line {
 			seen = append(seen, focusOf(c.f.top()))
+			if eye := ui.EyeID(focusOf(c.f.top())); slices.Contains(c.stops, eye) {
+				key(c.f, st, "right")
+				require.Equal(t, eye, focusOf(c.f.top()), name)
+				key(c.f, st, "left")
+			}
 			key(c.f, st, "down")
 		}
-		require.ElementsMatch(t, c.stops, seen, name+": tab reaches every stop")
-		require.Equal(t, c.stops[0], focusOf(c.f.top()), name+": and wraps")
+		require.ElementsMatch(t, line, seen, name+": down reaches every stop")
+		require.Equal(t, line[0], focusOf(c.f.top()), name+": and wraps")
 		key(c.f, st, "up")
-		require.Equal(t, c.stops[len(c.stops)-1], focusOf(c.f.top()), name+": shift+tab goes back")
+		require.Equal(t, line[len(line)-1], focusOf(c.f.top()), name+": up goes back")
 	}
 }
 

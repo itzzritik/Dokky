@@ -37,7 +37,7 @@ Drives and file use never stop. Changes need Dokky open and unlocked.
 ## 2. Lock behaviour in the TUI (items 2, 6, 7, 8, 9)
 
 - **Opening Dokky.** If the vault is unlocked and a session is live, Dokky goes straight in. Otherwise it shows the lock screen and starts system auth at once, with `force` set when the view was locked, as Forged's `startStartupUnlock` does.
-- **Locking.** `l` locks from every screen and every window, except while a text field has focus (there it types). `ctrl+l` locks from anywhere, text fields included. Lock also sits in the menu.
+- **Locking.** `l` locks from every screen and every window, except while a text field has focus (there it types). Lock also sits in the menu.
 - **What locking does.** Closes every window and overlay, cancels a sign-in in progress, wipes anything typed, calls `session.close` and shows the lock screen with "Please authenticate to continue using Dokky.", or "Enter your master password to continue using Dokky." when system auth can't be used.
 - **Losing the session.** When the polled state shows the session ended (screen lock or sleep), the TUI locks itself the same way.
 - **Idle lock.** 4 minutes with no input locks. A gate mid-flow (a sign-in waiting for the browser) is never locked.
@@ -53,8 +53,8 @@ All of this follows Forged's `screen/gate` layout:
 
 The cards:
 
-- **Unlock.** Bold "Unlock Dokky", one muted line, a "Master password" label above a full-width field, and a "Forgot password?" link that stays (item 22). The card footer has key hints on the left and one Unlock button on the right.
-  - While system auth waits, the card shows the system name ("Touch ID", "Windows Hello" or "System Auth"), a spinner and "Waiting for confirmation". `esc` switches to the password field and `tab` asks for system auth again.
+- **Unlock.** Bold "Unlock Dokky", one muted line, a "Master password" label above a full-width field, and Forgot password (item 22) and Unlock buttons on the right of the card footer, with `esc Quit` on its left.
+  - While system auth waits, the card shows the system name ("Touch ID", "Windows Hello" or "System Auth"), a spinner and "Waiting for confirmation". `esc` switches to the password field, and enter on the empty field asks for system auth again.
 - **Welcome (first run).** Two choices, each with one line under it: "Sign in" (sync drives across devices) and "Use on this device" (create a master password here).
 - **Create.** Labels above both fields, plus the warning "If you lose this password, only your recovery key can open your drives."
 - **Sign in.** Inside the same card: the large spaced code, "Waiting for approval", the link, `c` to copy it and an Open link button. Signing in from the dashboard uses this same full-screen card.
@@ -75,7 +75,12 @@ The cards:
 
 - **`l` ends the session.** Locking with `l`, the menu or the idle timer closes the control session too, not only the view. Nothing in Dokky's background needs it, unlike Forged's SSH agent, so a locked Dokky can't be controlled until someone authenticates again. Quitting Dokky keeps the session, so reopening within 4 hours goes straight in, as in Forged.
 - **Sign-in on the gate.** The sign-in card and its master password step are full-screen cards on the gate, opened as windows that cover everything (`core.Full`), whether they start from the welcome card or from Settings.
-- **Forgot password and recovery key.** "Forgot password?" is reached with down from the password field, because tab means system auth as in Forged. The recovery and join cards also put labels above their fields.
+- **Keys are single keys.** No action uses tab, a ctrl or alt combination, or an arrow. Arrows only move focus and enter presses what has it. Text fields keep `ctrl+u` (clear) and `ctrl+h` (backspace), and `ctrl+c` quits.
+- **Every window shows its own keys.** A window's footer lists, labelled and clickable, the keys its buttons don't already say, always including `esc`. Arrows and enter are left out. Short on room, the keys before `esc` go first. The faded app footer behind a window is not where keys are read. Popovers that sit on the screen without fading it (the menu and dropdowns) keep the live app footer.
+- **Show and hide passwords.** The first password field of a form has a Show/Hide toggle at its right end, which shows or hides all the form's password fields. Right arrow reaches it from the field, left goes back, and enter, space or a click flips it.
+- **Forgot password and recovery key.** The lock screen has Forgot password and Unlock buttons. The master password card for an account set up on another device has Recovery key and Continue buttons, no subtitle and no field label. The recovery card puts labels above its fields.
+- **Cancelling a sign in.** On the sign-in's master password step, `esc` cancels the sign in. A new daemon call, `login.cancel`, drops only the pending account and tells the server to forget the device. Drives and a master password made before the sign in stay, unlike signing out, which removes the account's drives.
+- **A master password on every path.** Signing in to an account without one creates it on the gate, and signing in to an account with one asks for it or the recovery key. Choosing "Use on this computer only", or opening an older install, asks for one before the dashboard. A local master password becomes the account's when signing in to an account without one. Settings changes it later.
 - **Settings rows removed.** "Unlock at startup", "Lock dokky after" and "Lock dokky now" are gone. The password reminder is a dropdown.
 - **Window colour.** Windows use `Palette.Window`: the screen colour on light and a shade raised on dark, as Forged's `Surface` is. Fields are a tint of it.
 

@@ -64,7 +64,7 @@ func (c *Confirm) Buttons(*core.State) []ui.Btn {
 }
 
 func (c *Confirm) window(st *core.State, maxW, maxH int) *ui.Window {
-	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active, Buttons: c.Buttons(st)}
+	win := &ui.Window{W: min(64, maxW), Title: c.Question, Sub: c.Line, Active: c.active, Buttons: c.Buttons(st), Hints: ui.WindowKeys(c.Actions(st))}
 	p, cw := ui.P(), win.Inner()
 	body, y := ui.NewBox(), 0
 	for _, l := range c.Lines {

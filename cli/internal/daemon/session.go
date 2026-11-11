@@ -25,7 +25,7 @@ var withoutSession = []string{
 
 // first run has no vault, so no session to give: the welcome choice, signing in and creating or joining the
 // master password work until a vault exists, then they need one like everything else
-var beforeVault = []string{"settings.set", "login.start", "login.poll", "login.resolve", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
+var beforeVault = []string{"settings.set", "login.start", "login.poll", "login.resolve", "login.cancel", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
 
 var (
 	errLockedMeanwhile = &codedError{api.ErrCancelled, "The screen locked before dokky unlocked. Try again."}

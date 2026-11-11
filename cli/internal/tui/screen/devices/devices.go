@@ -334,7 +334,7 @@ func shown(name string) string { return strings.TrimSuffix(name, ".local") }
 
 func (s *Devices) window(st *core.State, maxW, maxH int) *ui.Window {
 	p := ui.P()
-	win := &ui.Window{W: min(76, maxW), Title: "Your devices", Buttons: s.Buttons(st), Active: -1}
+	win := &ui.Window{W: min(76, maxW), Title: "Your devices", Buttons: s.Buttons(st), Active: -1, Hints: ui.WindowKeys(s.Actions(st))}
 	switch {
 	case s.rename != nil:
 		// the name field has focus, so the button enter reaches is lit

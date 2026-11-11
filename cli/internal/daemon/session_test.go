@@ -204,7 +204,7 @@ func TestSessionGate(t *testing.T) {
 	open := []string{"status", api.MState, api.MActivity, api.MEvents, api.MEventsSeen, "oauth.status", "providers", api.MCatalog,
 		api.MSyncKick, "sync.now", "update.check", "update.restart", "daemon.restart",
 		api.MSessionOpen, api.MSessionClose, api.MVaultUnlock, api.MVaultRecover}
-	first := []string{"settings.set", "login.start", "login.poll", "login.resolve", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
+	first := []string{"settings.set", "login.start", "login.poll", "login.resolve", "login.cancel", api.MVaultSetup, api.MVaultJoin, api.MVaultJoinRecover}
 	table := (&Daemon{}).handlers(nil)
 	for _, m := range append(slices.Clone(open), first...) {
 		require.Contains(t, table, m, "a listed method that does not exist")

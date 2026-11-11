@@ -77,7 +77,7 @@ func Choose(st *core.State, req core.Req) tea.Cmd {
 func (g *Gate) View(st *core.State, w, h int) *lipgloss.Layer {
 	return g.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window {
 		p := ui.P()
-		win := &ui.Window{W: ui.CardWidth(w), Title: "Welcome to dokky", Hints: g.Actions(st), Active: 0,
+		win := &ui.Window{W: ui.CardWidth(w), Title: "Welcome to dokky", Hints: ui.WindowKeys(g.Actions(st)), Active: 0,
 			Buttons: []ui.Btn{{ID: "continue", Label: "Continue", Primary: true}}}
 		cw, bg := win.Inner(), p.Window
 		body := ui.NewBox()

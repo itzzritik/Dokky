@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -10,13 +11,12 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
 
-var createStops = []string{"field:0", "field:1", "btn:create"}
+var createStops = []string{"field:0", ui.EyeID("field:0"), "field:1", "btn:create"}
 
 // a new master password typed twice, then its recovery key
 type create struct {
 	np         newPassword
 	at         string // the focused stop
-	reveal     bool
 	err        string
 	req        core.Req
 	title, sub string
@@ -26,6 +26,7 @@ type create struct {
 func newCreate(title, sub, toast string) *create {
 	np := makeNew("", "")
 	np.pw.Hint, np.again.Hint = "", ""
+	np.pw.Eye = true
 	return &create{np: np, at: "field:0", title: title, sub: sub, toast: toast}
 }
 
@@ -53,13 +54,10 @@ func (c *create) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		if c.req != 0 {
 			return nil
 		}
-		switch m.ID {
-		case "field:0", "field:1":
+		if slices.Contains(createStops, m.ID) {
 			c.at = m.ID
-		case "btn:create":
-			c.at = m.ID
-			return c.submit(st)
 		}
+		return c.press(m.ID, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
 		if c.req != 0 {
 			return nil
@@ -76,29 +74,33 @@ func (c *create) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	}
 	switch {
 	case k == "esc":
-		return f.back()
-	case k == "ctrl+r":
-		c.reveal = !c.reveal
-		c.np.reveal(c.reveal)
+		return f.back(st)
 	case ui.Pressed(k, c.at):
-		return c.submit(st)
+		return c.press(c.at, st)
 	case k == "enter" && c.at == "field:0" && c.np.again.Len() == 0:
 		c.at = "field:1"
 	case k == "enter":
 		return c.submit(st)
 	case ui.Walk(createStops, &c.at, k):
-	default:
+	case fieldAt(c.at) >= 0:
 		field := c.np.pw
-		switch c.at {
-		case "field:1":
+		if c.at == "field:1" {
 			field = c.np.again
-		case "btn:create":
-			return nil
 		}
 		if field.Type(msg) {
 			c.err = ""
 			c.np.recheck()
 		}
+	}
+	return nil
+}
+
+func (c *create) press(id string, st *core.State) tea.Cmd {
+	switch id {
+	case ui.EyeID("field:0"):
+		c.np.flip()
+	case "btn:create":
+		return c.submit(st)
 	}
 	return nil
 }
@@ -118,13 +120,13 @@ func (c *create) view(st *core.State, win *ui.Window, maxH int) int {
 	sub(win, c.sub, c.err)
 	win.Buttons = []ui.Btn{{ID: "create", Label: busyLabel(st, c.req != 0, "Create password", "Creating"), Primary: true}}
 	win.Active = 0
-	focus := fieldAt(c.at)
+	at := c.at
 	if c.req != 0 {
-		focus = -1
+		at = ""
 	}
 	p, cw := ui.P(), win.Inner()
 	body := ui.NewBox()
-	rows := c.np.labelled(body, 0, cw, [2]string{"Master password", "Confirm master password"}, [2]string{"field:0", "field:1"}, focus)
+	rows := c.np.labelled(body, 0, cw, [2]string{"Master password", "Confirm master password"}, [2]string{"field:0", "field:1"}, at)
 	if rows+3 <= win.Room(maxH) {
 		for _, l := range ui.Wrap(warning, cw) {
 			rows++

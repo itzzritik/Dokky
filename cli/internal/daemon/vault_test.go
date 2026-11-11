@@ -739,6 +739,32 @@ func TestErrorsNeverCarrySecrets(t *testing.T) {
 	require.NotContains(t, logx.Redact(spaced), spaced[8:])
 }
 
+func TestCancelSignInAtThePasswordStep(t *testing.T) {
+	fa := newFakeAPI(t, "approved")
+	other := otherVault()
+	fa.vault, fa.ak = remoteOf(other.file, 4), other.ak
+	d, _, st := newTestDaemon(t, sample())
+	noOpen(d)
+	keyID := vaultOf(d).KeyID
+
+	require.Error(t, call(t, d, "login.cancel", nil, nil), "nothing to cancel before a sign in")
+	require.NoError(t, call(t, d, "login.start", nil, nil))
+	var r pollReply
+	require.NoError(t, call(t, d, "login.poll", nil, &r))
+	require.Equal(t, statusVault, r.Status)
+
+	require.NoError(t, call(t, d, "login.cancel", nil, nil))
+	s := d.snapshot()
+	require.False(t, s.Account.LoggedIn)
+	require.Empty(t, s.Vault.Need)
+	require.Equal(t, keyID, s.Vault.KeyID, "this computer keeps its own master password")
+	require.True(t, fa.wasRevoked(), "the server forgets the device")
+	saved := load(t, st)
+	require.Nil(t, saved.Account)
+	require.Len(t, saved.Mounts, len(sample().Mounts), "the drives stay")
+	require.Empty(t, fa.putLog(), "nothing synced")
+}
+
 func TestLoginCreatesTheAccountVault(t *testing.T) {
 	t.Run("a device in setup creates the password, then the poll uploads sealed", func(t *testing.T) {
 		fa := newFakeAPI(t, "approved")

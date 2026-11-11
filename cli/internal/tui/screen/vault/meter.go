@@ -28,7 +28,8 @@ func makeNew(label, againLabel string) newPassword {
 // checked on each change, not each frame, so fewer copies of the password are made
 func (n *newPassword) recheck() { n.ok = vault.CheckPassword(n.pw.String()) }
 
-func (n *newPassword) reveal(on bool) { n.pw.Reveal, n.again.Reveal = on, on }
+// the Show toggle on the first field shows or hides both
+func (n *newPassword) flip() { n.pw.Reveal = !n.pw.Reveal; n.again.Reveal = n.pw.Reveal }
 
 func (n *newPassword) wipe() {
 	n.pw.Wipe()
@@ -59,38 +60,40 @@ func (n *newPassword) problem() (int, string) {
 }
 
 // the two fields with a blank row between when there is room; each says how it is doing at its right end
-// labelled puts each field under its label, as Forged's create card does; returns the rows used
-func (n *newPassword) labelled(body *ui.Box, y, w int, labels, ids [2]string, focus int) int {
+// labelled puts each field under its label, as Forged's create card does; at is the focused stop, "" while busy;
+// returns the rows used
+func (n *newPassword) labelled(body *ui.Box, y, w int, labels, ids [2]string, at string) int {
 	p := ui.P()
 	bg := p.Window
 	for i, f := range []*ui.Secret{n.pw, n.again} {
 		body.Put(0, y+3*i, ui.L(bg).T(labels[i], p.Muted).Pad(w))
-		body.Add(0, y+3*i+1, f.View(ids[i], w, focus == i, bg))
-		m := n.count(focus == 0)
-		if i == 1 {
-			m = n.match(focus == 1)
-		}
-		if m != "" {
-			body.Put(w-ui.Width(m)-1, y+3*i+1, m)
-		}
+		body.Add(0, y+3*i+1, f.View(ids[i], w, at, bg))
+		n.mark(body, i, w, y+3*i+1, at == ids[i])
 	}
 	return 5
 }
 
-func (n *newPassword) place(body *ui.Box, y, w, room int, ids [2]string, focus int) int {
+// how the field is doing, at its right end left of a Show toggle
+func (n *newPassword) mark(body *ui.Box, i, w, y int, focused bool) {
+	m, f := n.count(focused), n.pw
+	if i == 1 {
+		m, f = n.match(focused), n.again
+	}
+	if m != "" {
+		body.Put(w-f.EyeW()-ui.Width(m)-1, y, m)
+	}
+}
+
+func (n *newPassword) place(body *ui.Box, y, w, room int, ids [2]string, at string) int {
 	bg := ui.P().Window
 	g := 1
 	if room >= 3 {
 		g = 2
 	}
-	body.Add(0, y, n.pw.View(ids[0], w, focus == 0, bg))
-	if m := n.count(focus == 0); m != "" {
-		body.Put(w-ui.Width(m)-1, y, m)
-	}
-	body.Add(0, y+g, n.again.View(ids[1], w, focus == 1, bg))
-	if m := n.match(focus == 1); m != "" {
-		body.Put(w-ui.Width(m)-1, y+g, m)
-	}
+	body.Add(0, y, n.pw.View(ids[0], w, at, bg))
+	n.mark(body, 0, w, y, at == ids[0])
+	body.Add(0, y+g, n.again.View(ids[1], w, at, bg))
+	n.mark(body, 1, w, y+g, at == ids[1])
 	return 1 + g
 }
 

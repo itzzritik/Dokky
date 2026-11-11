@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,9 +26,10 @@ type form interface {
 type exit int
 
 const (
-	exitQuit  exit = iota // a full screen: esc quits dokky
-	exitClose             // a window that can be put away
-	exitStay              // a step sign in can't finish without
+	exitQuit   exit = iota // a full screen: esc quits dokky
+	exitClose              // a window that can be put away
+	exitStay               // a step that can't be left
+	exitSignIn             // the sign in's master password step: esc cancels the sign in
 )
 
 // a vault screen: forms stacked in one window, as a modal or as a full screen under the dokky mark
@@ -70,7 +72,7 @@ func (f *Flow) swap(fm form) {
 }
 
 // esc: one form back, else what the flow does on its first form
-func (f *Flow) back() tea.Cmd {
+func (f *Flow) back(st *core.State) tea.Cmd {
 	if len(f.forms) > 1 {
 		f.top().wipe()
 		f.forms = f.forms[:len(f.forms)-1]
@@ -83,8 +85,22 @@ func (f *Flow) back() tea.Cmd {
 	case exitClose:
 		f.wipe()
 		return core.Close(f)
+	case exitSignIn:
+		f.wipe()
+		return tea.Batch(core.Close(f), cancelSignIn(st))
 	}
 	return nil
+}
+
+// the daemon drops the waiting sign in, changing nothing on this computer, and the app goes back to where it was
+func cancelSignIn(st *core.State) tea.Cmd {
+	c := st.C
+	return func() tea.Msg {
+		if err := c.LoginCancel(context.Background()); err != nil {
+			return core.Toast{Text: core.Report(err), Bad: true, Now: true}
+		}
+		return core.Toast{Text: "Sign in cancelled", Now: true}
+	}
 }
 
 // the flow's work is done; a window closes itself first
@@ -129,7 +145,7 @@ func (f *Flow) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 		return f, nil
 	case tea.KeyPressMsg:
 		if m.String() == "q" && !f.top().typing() && !f.top().holding() && len(f.forms) == 1 && f.exit == exitQuit {
-			return f, f.back()
+			return f, f.back(st)
 		}
 	}
 	return f, f.top().update(msg, f, st)
@@ -144,7 +160,7 @@ func (f *Flow) build(st *core.State, maxW, maxH int, hints []core.Action) *ui.Wi
 
 func (f *Flow) View(st *core.State, w, h int) *lipgloss.Layer {
 	if f.window {
-		return f.build(st, w, h, ownHints(f.Actions(st))).Layer()
+		return f.build(st, w, h, ui.WindowKeys(f.Actions(st))).Layer()
 	}
 	return f.cover(st, w, h)
 }
@@ -152,14 +168,8 @@ func (f *Flow) View(st *core.State, w, h int) *lipgloss.Layer {
 // Forged's gate: the card under the wordmark, the contour map below, and the keys inside the card since there is no footer
 func (f *Flow) cover(st *core.State, w, h int) *lipgloss.Layer {
 	return f.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window {
-		return f.build(st, ui.CardWidth(w), maxH, ownHints(f.Actions(st)))
+		return f.build(st, ui.CardWidth(w), maxH, ui.WindowKeys(f.Actions(st)))
 	})
-}
-
-// what a card's or window's own footer shows, readable and clickable over the faded screen: every key but enter,
-// which its button names
-func ownHints(acts []core.Action) []core.Action {
-	return slices.DeleteFunc(slices.Clone(acts), func(a core.Action) bool { return a.Key == "enter" })
 }
 
 // NewStage is the gate every full screen shares, the breathing contour map along its bottom
@@ -175,7 +185,7 @@ func (f *Flow) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "esc", Label: "back"})
 	case f.exit == exitQuit:
 		acts = append(acts, core.Action{Key: "esc", Label: "quit"})
-	case f.exit == exitClose:
+	case f.exit == exitClose || f.exit == exitSignIn:
 		acts = append(acts, core.Action{Key: "esc", Label: "cancel"})
 	}
 	return acts
