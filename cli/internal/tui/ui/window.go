@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -176,11 +177,19 @@ func (w *Window) Layer() *lipgloss.Layer {
 	return box
 }
 
-// the in-card hints, each saying what it does: the later ones go first when short on room, since a form lists its
-// own keys before esc; else only the last key, bare
+// the in-card hints, each saying what it does: short on room, the keys before esc go from the end, and esc stays
+// since it is the way out; else only the last key, bare
 func cardHints(acts []core.Action, room int, bg color.Color) *lipgloss.Layer {
-	for n := len(acts); n > 0; n-- {
-		if l, w := drawHints(acts[:n], n, bg); w <= room {
+	rest, out := acts, []core.Action(nil)
+	if last := acts[len(acts)-1]; last.Key == "esc" {
+		rest, out = acts[:len(acts)-1], acts[len(acts)-1:]
+	}
+	for n := len(rest); n >= 0; n-- {
+		hs := append(slices.Clone(rest[:n]), out...)
+		if len(hs) == 0 {
+			break
+		}
+		if l, w := drawHints(hs, len(hs), bg); w <= room {
 			return l
 		}
 	}

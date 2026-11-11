@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -11,18 +12,20 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-// the account already has a master password, set on another device: type it to use it here, or ctrl+o for the recovery key
+// the account already has a master password, set on another device: type it to use it here, or use the recovery key
 type join struct {
-	pw     *ui.Secret
-	reveal bool
-	err    string
-	req    core.Req
-	toast  string
+	pw    *ui.Secret
+	at    string // the focused stop
+	err   string
+	req   core.Req
+	toast string
 }
 
 func newJoin(toast string) *join {
-	return &join{pw: ui.NewSecret("", "", vault.MaxPassword), toast: toast}
+	return &join{pw: ui.NewSecret("", "", vault.MaxPassword), at: "field:pw", toast: toast}
 }
+
+var joinStops = []string{"field:pw", "btn:recover", "btn:join"}
 
 func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch m := msg.(type) {
@@ -34,7 +37,7 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		j.req = 0
 		if m.Err != nil {
-			j.err = Explain(m.Err, st)
+			j.err, j.at = Explain(m.Err, st), "field:pw"
 			if code(m.Err) == api.ErrWrongPassword {
 				j.pw.Wipe()
 			}
@@ -46,9 +49,13 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		}
 		return tea.Batch(said, f.finish(st))
 	case core.Click:
-		if j.req == 0 && m.ID == "btn:join" {
-			return j.submit(st)
+		if j.req != 0 {
+			return nil
 		}
+		if slices.Contains(joinStops, m.ID) {
+			j.at = m.ID
+		}
+		return j.press(m.ID, f, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
 		if j.req != 0 {
 			return nil
@@ -60,23 +67,31 @@ func (j *join) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		switch {
 		case k == "esc":
 			return f.back()
-		case k == "ctrl+r":
-			j.reveal = !j.reveal
-			j.pw.Reveal = j.reveal
-		case k == recoveryKey.Key:
-			f.push(newRecover(true))
+		case ui.Pressed(k, j.at):
+			return j.press(j.at, f, st)
 		case k == "enter":
 			return j.submit(st)
-		case j.pw.Type(msg):
+		case ui.Walk(joinStops, &j.at, k):
+		case j.at == "field:pw" && j.pw.Type(msg):
 			j.err = ""
 		}
 	}
 	return nil
 }
 
+func (j *join) press(id string, f *Flow, st *core.State) tea.Cmd {
+	switch id {
+	case "btn:recover":
+		f.push(newRecover(true))
+	case "btn:join":
+		return j.submit(st)
+	}
+	return nil
+}
+
 func (j *join) submit(st *core.State) tea.Cmd {
 	if j.pw.Len() == 0 {
-		j.err = "Type your master password."
+		j.at, j.err = "field:pw", "Type your master password."
 		return nil
 	}
 	pw := j.pw.String()
@@ -84,29 +99,22 @@ func (j *join) submit(st *core.State) tea.Cmd {
 	return core.Do(st, j.req, func(ctx context.Context, c *client.Client) (any, error) { return nil, c.VaultJoin(ctx, pw) })
 }
 
-// just the title, the field and the button; the line under the title shows only a problem
+// just the title, the field and two buttons; the line under the title shows only a problem
 func (j *join) view(st *core.State, win *ui.Window, maxH int) int {
 	win.Title = "Enter your master password"
 	sub(win, "", j.err)
-	win.Buttons = []ui.Btn{{ID: "join", Label: busyLabel(st, j.req != 0, "Continue", "Checking"), Primary: true}}
-	win.Active = 0
+	win.Buttons = []ui.Btn{{ID: "recover", Label: "Recovery key"}, {ID: "join", Label: busyLabel(st, j.req != 0, "Continue", "Checking"), Primary: true}}
+	win.Active = lit(win, j.at, "btn:join")
 	body := ui.NewBox()
-	body.Add(0, 0, j.pw.View("field:pw", win.Inner(), j.req == 0, ui.P().Window))
+	body.Add(0, 0, j.pw.View("field:pw", win.Inner(), j.at == "field:pw" && j.req == 0, ui.P().Window))
 	win.Body = body
 	return 1
 }
 
-func (j *join) actions(*core.State) []core.Action {
-	if j.req != 0 {
-		return nil
-	}
-	return []core.Action{{Key: "enter", Label: "Continue"}, recoveryKey}
-}
+// esc is the only key: the arrows and enter work the buttons, which say what they do
+func (j *join) actions(*core.State) []core.Action { return nil }
 
-// the field takes every letter and the arrows are for moving, so the recovery key has its own chord
-var recoveryKey = core.Action{Key: "ctrl+o", Label: "Recovery key"}
-
-func (j *join) typing() bool  { return true }
+func (j *join) typing() bool  { return j.at == "field:pw" }
 func (j *join) holding() bool { return j.req != 0 }
 func (j *join) animating(st *core.State) bool {
 	return j.req != 0 && !ui.Reduced()
