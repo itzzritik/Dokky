@@ -7,7 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
-	"github.com/itzzritik/dokky/cli/internal/tui/topography"
+	"github.com/itzzritik/dokky/cli/internal/tui/contour"
 )
 
 // one step of a vault screen, drawn into the flow's window
@@ -43,7 +43,7 @@ type Flow struct {
 func newFlow(st *core.State, first form, window bool, ex exit) *Flow {
 	f := &Flow{forms: []form{first}, window: window, exit: ex}
 	if !window {
-		f.stage = Backdrop()
+		f.stage = NewStage()
 	}
 	return f
 }
@@ -149,7 +149,7 @@ func (f *Flow) View(st *core.State, w, h int) *lipgloss.Layer {
 	return f.cover(st, w, h)
 }
 
-// Forged's gate: the card under the wordmark over the contour map, and the keys inside the card since there is no footer
+// Forged's gate: the card under the wordmark, the contour map below, and the keys inside the card since there is no footer
 func (f *Flow) cover(st *core.State, w, h int) *lipgloss.Layer {
 	return f.stage.Layer(w, h, st.Now, func(maxH int) *ui.Window {
 		return f.build(st, ui.CardWidth(w), maxH, cardHints(f.Actions(st)))
@@ -161,11 +161,8 @@ func cardHints(acts []core.Action) []core.Action {
 	return slices.DeleteFunc(slices.Clone(acts), func(a core.Action) bool { return a.Key == "enter" })
 }
 
-// backdrop is the one gliding contour map behind every full screen, so it carries on as screens change
-var backdrop = &ui.Stage{New: topography.NewBand}
-
-// Backdrop is the stage every full screen shares: the lock screen, its cards, the splash and Updating
-func Backdrop() *ui.Stage { return backdrop }
+// NewStage is the gate every full screen shares, the breathing contour map along its bottom
+func NewStage() *ui.Stage { return &ui.Stage{New: contour.NewBand} }
 
 func (f *Flow) Actions(st *core.State) []core.Action {
 	acts := f.top().actions(st)

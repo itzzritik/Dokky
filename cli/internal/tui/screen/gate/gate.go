@@ -29,7 +29,7 @@ type Gate struct {
 	err   string
 }
 
-func New(*core.State) *Gate { return &Gate{stage: vault.Backdrop()} }
+func New(*core.State) *Gate { return &Gate{stage: vault.NewStage()} }
 
 func (g *Gate) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 	switch m := msg.(type) {
