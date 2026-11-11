@@ -7,6 +7,14 @@ env:
   CGO_ENABLED: "0"
 
 jobs:
+  # the macOS Touch ID helper compiles, carries its Info.plist and answers a check
+  auth:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/build-auth.sh
+      - run: otool -s __TEXT __info_plist cli/internal/sysauth/dokkyauth/dokky-auth | grep -q . && lipo -archs cli/internal/sysauth/dokkyauth/dokky-auth
+
   unit:
     strategy:
       fail-fast: false

@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"slices"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -23,7 +24,15 @@ type unlock struct {
 	system bool // the call in flight waits for Touch ID or Windows Hello
 	cancel context.CancelFunc
 	done   bool // unlocked; the screen waits for the app to take it down
+	asked  time.Time
+	again  bool // the system prompt went unanswered, so it shows again when the person is back
 }
+
+// the system prompt gives up after about two minutes; one that lasted this long went unanswered, not cancelled
+const unanswered = 90 * time.Second
+
+// tests move the clock
+var now = time.Now
 
 var unlockStops = []string{"field:pw", ui.EyeID("field:pw"), "btn:forgot", "btn:unlock"}
 
@@ -56,6 +65,8 @@ func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		u.stop()
 		if m.Err != nil {
 			u.err, u.at = Explain(m.Err, st), "field:pw"
+			// nobody was there, the screen locked say: Touch ID asks again once the terminal has focus back
+			u.again = system && (code(m.Err) == api.ErrSystemUnavailable || code(m.Err) == api.ErrCancelled && now().Sub(u.asked) >= unanswered)
 			if system && code(m.Err) == api.ErrCancelled {
 				u.err = ""
 			}
@@ -67,6 +78,10 @@ func (u *unlock) update(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 		u.pw.Wipe()
 		u.done = true
 		return f.finish(st)
+	case tea.FocusMsg:
+		if u.again && !u.busy() && u.pw.Len() == 0 && offered(st) {
+			return u.ask(st, api.AuthSystem)
+		}
 	case core.Click:
 		return u.click(m.ID, f, st)
 	case tea.KeyPressMsg, tea.PasteMsg:
@@ -107,7 +122,7 @@ func (u *unlock) key(msg tea.Msg, f *Flow, st *core.State) tea.Cmd {
 	switch {
 	case k == "esc" && u.system && u.req != 0:
 		u.stop()
-		u.at = "field:pw"
+		u.at, u.again = "field:pw", false
 		return nil
 	case u.busy():
 		return nil
@@ -141,6 +156,7 @@ func (u *unlock) ask(st *core.State, method string) tea.Cmd {
 	u.stop()
 	ctx, cancel := context.WithCancel(context.Background())
 	u.req, u.cancel, u.system, u.err = core.NextReq(), cancel, method == api.AuthSystem, ""
+	u.asked, u.again = now(), false
 	p := api.SessionParams{Method: method, Force: u.force, Remote: st.Deps.Remote}
 	if method == api.AuthPassword {
 		p.Password = u.pw.String()

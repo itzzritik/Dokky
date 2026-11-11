@@ -23,6 +23,8 @@ func (a *App) View() tea.View {
 		v.Cursor = &tea.Cursor{Position: tea.Position{X: a.caret.X, Y: a.caret.Y}, Shape: tea.CursorBar, Blink: true}
 	}
 	v.AltScreen = true
+	// the lock screen asks Touch ID again when the terminal has focus back after a prompt nobody answered
+	v.ReportFocus = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

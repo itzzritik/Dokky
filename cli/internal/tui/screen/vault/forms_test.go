@@ -384,3 +384,35 @@ func focusOf(fm form) string {
 	}
 	return ""
 }
+
+func TestTouchIDAsksAgainWhenThePersonIsBack(t *testing.T) {
+	st := newState()
+	st.Snap.Vault.State = api.VaultUnlocked
+	f := Unlock(st, false)
+	u := f.top().(*unlock)
+	at := time.Now()
+	now = func() time.Time { return at }
+	t.Cleanup(func() { now = time.Now })
+
+	require.NotNil(t, f.Start(st))
+	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrCancelled, "cancelled")}, st)
+	f.Update(tea.FocusMsg{}, st)
+	require.False(t, u.system, "a prompt the person cancelled stays down")
+
+	key(f, st, "enter")
+	require.True(t, u.system)
+	at = at.Add(2 * time.Minute)
+	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrCancelled, "nobody answered")}, st)
+	require.False(t, u.system)
+	f.Update(tea.FocusMsg{}, st)
+	require.True(t, u.system, "back at the terminal, Touch ID shows again by itself")
+
+	key(f, st, "esc")
+	f.Update(tea.FocusMsg{}, st)
+	require.False(t, u.system, "esc chose the password, so focus never brings Touch ID back")
+
+	key(f, st, "enter")
+	f.Update(core.Reply{Req: u.req, Err: coded(api.ErrSystemUnavailable, "the screen is locked")}, st)
+	f.Update(tea.FocusMsg{}, st)
+	require.True(t, u.system, "a prompt the locked screen refused shows once the person is back")
+}

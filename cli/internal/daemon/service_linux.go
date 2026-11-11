@@ -52,7 +52,12 @@ func ServiceCurrent(binPath string) bool {
 	return err == nil && string(b) == RenderService(binPath)
 }
 
-func StartService() error { return systemctl("start", systemdUnit) }
+// a service that kept failing, say on data a newer dokky wrote, is refused by systemd until reset; the reset
+// fails harmlessly when there is nothing to reset
+func StartService() error {
+	_ = systemctl("reset-failed", systemdUnit)
+	return systemctl("start", systemdUnit)
+}
 
 func StopService() error { return systemctl("stop", systemdUnit) }
 

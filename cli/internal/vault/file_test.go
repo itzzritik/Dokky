@@ -73,7 +73,6 @@ func TestLoadRejectsBadFiles(t *testing.T) {
 		"hostile memory": func(f *File) { f.KDF.M = 1 << 30 },
 		"hostile time":   func(f *File) { f.KDF.T = 1000 },
 		"other kdf":      func(f *File) { f.KDF.Alg = "pbkdf2" },
-		"password days":  func(f *File) { f.PasswordDays = 3 },
 		"no wrapped key": func(f *File) { f.WrappedKey = "" },
 		"no recovery":    func(f *File) { f.RecoveryWrappedKey = "" },
 		"garbage wrap":   func(f *File) { f.WrappedKey = "!!!" },
@@ -177,6 +176,8 @@ func TestOldFilesLoad(t *testing.T) {
 		"fourteen is fifteen": {14, 15},
 		"never is thirty":     {0, 30},
 		"thirty stays":        {30, 30},
+		"a newer choice":      {60, 15},
+		"a broken one":        {-3, 15},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -218,4 +219,10 @@ func TestCloneIsDeep(t *testing.T) {
 // the daemon speaks api's names; vault must agree with them
 func TestNamesMatchAPI(t *testing.T) {
 	require.Equal(t, api.PasswordDayChoices, PasswordDayChoices)
+}
+
+func TestSaveRefusesUnknownPasswordDays(t *testing.T) {
+	f, _ := newFile(t)
+	f.PasswordDays = 3
+	require.Error(t, f.Save(t.TempDir()), "only Load forgives a choice it doesn't know, nothing writes one")
 }

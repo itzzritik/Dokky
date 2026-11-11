@@ -39,8 +39,20 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
+  # the macOS Touch ID helper needs swiftc, so it is built on a Mac and embedded in both darwin builds
+  auth:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/build-auth.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dokky-auth
+          path: cli/internal/sysauth/dokkyauth/dokky-auth
+          if-no-files-found: error
+
   build:
-    needs: version
+    needs: [version, auth]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -67,6 +79,12 @@ jobs:
           key: go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('cli/go.sum') }}
           restore-keys: go-${{ matrix.goos }}-${{ matrix.goarch }}-
 
+      - if: matrix.goos == 'darwin'
+        uses: actions/download-artifact@v7
+        with:
+          name: dokky-auth
+          path: cli/internal/sysauth/dokkyauth
+
       - name: Build
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -74,6 +92,7 @@ jobs:
         run: |
           EXT=""; TAGS=""
           if [ "$GOOS" = windows ]; then EXT=".exe"; TAGS="cmount"; fi
+          if [ "$GOOS" = darwin ] && [ ! -s internal/sysauth/dokkyauth/dokky-auth ]; then echo "::error::the Touch ID helper is missing"; exit 1; fi
           OVERLAY=$(GOOS= GOARCH= GOFLAGS= go run _patches/overlay.go)
           go build -trimpath "$OVERLAY" -tags "$TAGS" \
             -ldflags "-s -w -X github.com/itzzritik/dokky/cli/internal/buildinfo.Version=$VERSION" \
