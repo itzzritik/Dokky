@@ -217,6 +217,7 @@ func TestSystemUnlock(t *testing.T) {
 		k.prompt = func(_ context.Context, r string) error { reason = r; return sysauth.ErrCancelled }
 		require.Equal(t, api.ErrCancelled, codeOf(t, invoke(t, h, api.MVaultUnlock, sys, nil)))
 		require.Equal(t, unlockReason, reason)
+		require.Contains(t, reason, "Dokky", "the system's dialog names Dokky with a capital")
 		k.prompt = func(context.Context, string) error { return nil }
 		require.NoError(t, invoke(t, h, api.MVaultUnlock, sys, nil))
 		require.Equal(t, testVault().ak, <-l.opened)

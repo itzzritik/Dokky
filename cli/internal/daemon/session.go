@@ -11,8 +11,8 @@ import (
 	"github.com/itzzritik/dokky/cli/internal/vault"
 )
 
-// what the system prompt says when the vault is already open
-const sessionReason = "Unlock dokky"
+// what the system prompt says when the vault is already open; the system's own dialog names the app Dokky
+const sessionReason = "Unlock Dokky"
 
 // what works with no session: the lock screen, read-only views that hand out no secret, the launch handshake and
 // the daemon's own work on request, such as installing the newest release, which auto update does anyway. anything

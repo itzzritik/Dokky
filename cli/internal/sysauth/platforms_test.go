@@ -89,8 +89,8 @@ func TestParseMacPrompt(t *testing.T) {
 
 func TestMacPromptPassesReason(t *testing.T) {
 	calls := fakeRun(t, result{out: "ok"}, nil)
-	require.NoError(t, macPrompt(context.Background(), "Unlock dokky"))
-	require.Equal(t, "unlock dokky", (*calls)[0].args[5], "macOS shows it after \"dokky is trying to\"")
+	require.NoError(t, macPrompt(context.Background(), "Unlock Dokky"))
+	require.Equal(t, "unlock Dokky", (*calls)[0].args[5], "macOS shows it after \"Dokky is trying to\", the name keeping its capital")
 }
 
 func decodeCommand(t *testing.T, enc string) string {

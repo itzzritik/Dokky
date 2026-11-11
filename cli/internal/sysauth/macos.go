@@ -91,7 +91,7 @@ func parseMacCheck(out string) (string, bool) {
 	return "", false
 }
 
-// macOS reads the reason after "dokky is trying to", so it starts lower case there: "unlock dokky"
+// macOS reads the reason after "Dokky is trying to", so it starts lower case there: "unlock Dokky"
 func macPrompt(ctx context.Context, reason string) error {
 	if r, n := utf8.DecodeRuneInString(reason); n > 0 {
 		reason = string(unicode.ToLower(r)) + reason[n:]
