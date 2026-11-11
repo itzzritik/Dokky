@@ -29,17 +29,14 @@ type Overview struct {
 
 func New() *Overview { return &Overview{} }
 
-// list items: the drives then a way to add one, or the services when there are none
+// list items: the drives, or the services when there are none; with drives, a adds one, as on Drives
 type item struct {
 	id     string
 	drive  *api.Drive
 	prov   *api.Provider
 	more   bool
-	add    bool
 	signIn bool
 }
-
-const addH = 2 // the add row, a line under the last card
 
 func (o *Overview) items(st *core.State) []item {
 	var out []item
@@ -48,7 +45,7 @@ func (o *Overview) items(st *core.State) []item {
 			d := &st.Snap.Drives[i]
 			out = append(out, item{id: "row:" + d.ID, drive: d})
 		}
-		return append(out, item{id: "row:add", add: true})
+		return out
 	}
 	cloud, own := groups(st)
 	for i := range cloud {
@@ -157,13 +154,10 @@ func (o *Overview) Actions(st *core.State) []core.Action {
 		acts = append(acts, core.Action{Key: "enter", Label: "show"})
 	case it.signIn:
 		acts = append(acts, core.Action{Key: "enter", Label: "sign in"})
-	case it.add:
-		acts = append(acts, core.Action{Key: "enter", Label: "add drive"})
 	default:
 		acts = append(acts, core.Action{Key: "enter", Label: "add"})
 	}
-	// the letter keys too, unless enter already says the same
-	if len(st.Snap.Drives) > 0 && !it.add {
+	if len(st.Snap.Drives) > 0 {
 		acts = append(acts, core.Action{Key: "a", Label: "add drive"})
 	}
 	if !st.Snap.Account.LoggedIn && !it.signIn {
@@ -218,33 +212,14 @@ func (o *Overview) View(st *core.State, w, h int) *lipgloss.Layer {
 	}
 	grow := ui.MeterGrow(o.shown, st.Now)
 	at := y + 1
-	for i := o.top; i < len(items) && at+height(items[i]) <= y+1+room; i++ {
-		if it := items[i]; it.add {
-			b.Add(0, at+addH-1, ui.Row(it.id, w, i == o.sel, nil, func(bg color.Color, iw int) string {
-				return addLine(bg, iw, i == o.sel)
-			}))
-		} else {
-			b.Add(0, at, card(st, it, w, i == o.sel, grow))
-		}
-		at += height(items[i])
+	for i := o.top; i < len(items) && at+cardH <= y+1+room; i++ {
+		b.Add(0, at, card(st, items[i], w, i == o.sel, grow))
+		at += cardH
 	}
 	return b.Layer()
 }
 
-func height(it item) int {
-	if it.add {
-		return addH
-	}
-	return cardH
-}
-
-func span(items []item) int {
-	n := 0
-	for _, it := range items {
-		n += height(it)
-	}
-	return n
-}
+func span(items []item) int { return len(items) * cardH }
 
 // keeps the selected item in view, and no empty room under the last one
 func (o *Overview) scroll(items []item, room int) {
@@ -255,17 +230,6 @@ func (o *Overview) scroll(items []item, room int) {
 	for o.top > 0 && span(items[o.top-1:]) <= room {
 		o.top--
 	}
-}
-
-func addLine(bg color.Color, iw int, sel bool) string {
-	p := ui.P()
-	l := ui.L(bg).B("+", p.Accent).Sp(1)
-	if sel {
-		l.B("Add a drive", p.Text)
-	} else {
-		l.T("Add a drive", p.Text)
-	}
-	return l.Sp(2).T("Cloud accounts or your own storage", p.Muted).Pad(iw)
 }
 
 // a drive as a solid card: name, what it is and its status on the left, its space meter on the right
