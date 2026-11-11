@@ -23,6 +23,8 @@ func (a *App) click(m tea.Mouse) tea.Cmd {
 			return a.key(k)
 		}
 		return nil
+	case id == "btn:"+startID:
+		return a.key(core.Press("enter"))
 	case strings.HasPrefix(id, "tab:"):
 		i, _ := strconv.Atoi(strings.TrimPrefix(id, "tab:"))
 		return a.setTab(i)

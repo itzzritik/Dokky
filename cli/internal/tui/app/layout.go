@@ -50,10 +50,7 @@ func (a *App) render() string {
 		keys = footerNone
 	case !a.st.Connected || a.removedNow():
 		passes = append(passes, ui.Pass{Layer: a.splashLayer(a.splash(), w, h)})
-		if a.failed {
-			acts = []core.Action{{Key: "enter", Label: "start dokky"}}
-		}
-		keys = footerQuit
+		keys = footerNone
 	case a.gate != nil:
 		// Forged's gate has no footer: its card carries its own keys
 		passes = append(passes, ui.Pass{Layer: a.gate.View(a.st, w, h)})
@@ -64,7 +61,6 @@ func (a *App) render() string {
 			a.tabs[a.active].View(a.st, bw, bh).X(bodyX).Y(bodyY),
 		)
 		passes = append(passes, ui.Pass{Layer: base})
-		a.mark = nil
 		acts = a.tabs[a.active].Actions(a.st)
 	}
 	for i, win := range a.windows {
@@ -119,7 +115,6 @@ type footerKind int
 const (
 	footerDash   footerKind = iota // a tab: More, Update and Quit
 	footerWindow                   // a window: More when its keys don't all fit
-	footerQuit                     // a full screen of its own: Quit
 	footerNone
 )
 
@@ -136,10 +131,6 @@ func (a *App) footer(w int, acts []core.Action, kind footerKind) *lipgloss.Layer
 		}
 		if kind == footerDash && free {
 			right = append(right, a.globals()...)
-		}
-	case footerQuit:
-		if free {
-			right = append(right, core.Action{Key: "q", Label: "Quit"})
 		}
 	}
 	return ui.Footer(w, left, right)

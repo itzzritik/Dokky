@@ -29,7 +29,7 @@ func ThinBar(w int, frac, t float64, tone, bg color.Color) string {
 }
 
 // progress that only moves forward: water deepening along the fill with a soft edge and a light running over it; with wait the light runs the whole track, for a step nothing can measure
-func FlowBar(w int, frac, t float64, wait bool) string {
+func FlowBar(w int, frac, t float64, wait bool, bg color.Color) string {
 	p := P()
 	f := float64(w) * math.Max(0, math.Min(1, frac))
 	n := int(f)
@@ -59,7 +59,7 @@ func FlowBar(w int, frac, t float64, wait bool) string {
 		case wait:
 			c = Mix(p.Line, fill, .7*glow)
 		}
-		b.WriteString(Paint(G.Heavy, c, nil, false))
+		b.WriteString(Paint(G.Heavy, c, bg, false))
 	}
 	return b.String()
 }
