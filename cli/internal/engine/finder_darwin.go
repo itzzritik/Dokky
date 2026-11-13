@@ -59,8 +59,10 @@ func mountNFS(VFS *vfs.VFS, mountpoint string, opt *mountlib.Options) (<-chan er
 		return nil, nil, "", err
 	}
 	errs := make(chan error, 2)
+	ih := newIconHandler(h)
+	ih.live = &liveDirs{vfs: VFS, sums: map[string]uint64{}}
 	go func() {
-		err := gonfs.Serve(l, newIconHandler(h))
+		err := gonfs.Serve(l, ih)
 		if errors.Is(err, net.ErrClosed) {
 			err = nil
 		}
@@ -120,6 +122,8 @@ type iconHandler struct {
 	statMu  sync.Mutex
 	stat    *gonfs.FSStat
 	statRun chan struct{}
+
+	live *liveDirs
 }
 
 const statWait = time.Second
@@ -152,7 +156,7 @@ func (h *iconHandler) DataForVerifier(path string, v uint64) []os.FileInfo {
 
 func (h *iconHandler) Mount(ctx context.Context, c net.Conn, r gonfs.MountRequest) (gonfs.MountStatus, billy.Filesystem, []gonfs.AuthFlavor) {
 	s, f, a := h.Handler.Mount(ctx, c, r)
-	return s, wrapFS(f), a
+	return s, wrapFS(f, h.live), a
 }
 
 func (h *iconHandler) Change(f billy.Filesystem) billy.Change { return h.Handler.Change(unwrapFS(f)) }
@@ -197,20 +201,23 @@ func (h *iconHandler) ToHandle(f billy.Filesystem, p []string) []byte {
 
 func (h *iconHandler) FromHandle(b []byte) (billy.Filesystem, []string, error) {
 	f, p, err := h.Handler.FromHandle(b)
-	return wrapFS(f), p, err
+	return wrapFS(f, h.live), p, err
 }
 
 func (h *iconHandler) InvalidateHandle(f billy.Filesystem, b []byte) error {
 	return h.Handler.InvalidateHandle(unwrapFS(f), b)
 }
 
-type iconFS struct{ billy.Filesystem }
+type iconFS struct {
+	billy.Filesystem
+	live *liveDirs
+}
 
-func wrapFS(f billy.Filesystem) billy.Filesystem {
+func wrapFS(f billy.Filesystem, live *liveDirs) billy.Filesystem {
 	if f == nil {
 		return nil
 	}
-	return iconFS{f}
+	return iconFS{f, live}
 }
 
 func unwrapFS(f billy.Filesystem) billy.Filesystem {
@@ -242,6 +249,7 @@ func (f iconFS) Lstat(name string) (os.FileInfo, error) {
 	if b, ok := rootIcon(name); ok {
 		return iconInfo{path.Base(name), int64(len(b))}, nil
 	}
+	f.live.refresh(name)
 	return f.Filesystem.Lstat(name)
 }
 
@@ -268,6 +276,9 @@ func (f iconFS) OpenFile(name string, flag int, perm os.FileMode) (billy.File, e
 
 func (f iconFS) ReadDir(name string) ([]os.FileInfo, error) {
 	entries, err := f.Filesystem.ReadDir(name)
+	if err == nil {
+		f.live.seen(name, entries)
+	}
 	if err != nil || strings.Trim(path.Clean("/"+name), "/") != "" {
 		return entries, err
 	}
@@ -291,6 +302,79 @@ func (f iconFS) Remove(name string) error {
 		return os.ErrPermission
 	}
 	return f.Filesystem.Remove(name)
+}
+
+// macOS re-reads an open folder only when its modified time changes, which S3 folders never report
+type liveDirs struct {
+	vfs   *vfs.VFS
+	mu    sync.Mutex
+	sums  map[string]uint64
+	order []string
+}
+
+func (l *liveDirs) seen(name string, entries []os.FileInfo) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.sums[name]; !ok {
+		l.order = append(l.order, name)
+		if len(l.order) > maxListings {
+			delete(l.sums, l.order[0])
+			l.order = l.order[1:]
+		}
+	}
+	l.sums[name] = listingSum(entries)
+}
+
+// runs on macOS's 5s attribute checks of a folder Finder has listed; the vfs re-reads it at most every 10s
+func (l *liveDirs) refresh(name string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	_, ok := l.sums[name]
+	l.mu.Unlock()
+	if !ok {
+		return
+	}
+	n, err := l.vfs.Stat(name)
+	d, isDir := n.(*vfs.Dir)
+	if err != nil || !isDir {
+		return
+	}
+	nodes, err := d.ReadDirAll()
+	if err != nil {
+		return
+	}
+	entries := make([]os.FileInfo, len(nodes))
+	for i, n := range nodes {
+		entries[i] = n
+	}
+	sum := listingSum(entries)
+	l.mu.Lock()
+	old, ok := l.sums[name]
+	if ok {
+		l.sums[name] = sum
+	}
+	l.mu.Unlock()
+	if ok && sum != old {
+		_ = d.SetModTime(time.Now())
+	}
+}
+
+func listingSum(entries []os.FileInfo) uint64 {
+	keys := make([]string, len(entries))
+	for i, e := range entries {
+		keys[i] = fmt.Sprintf("%s/%t/%d", e.Name(), e.IsDir(), e.Size())
+	}
+	slices.Sort(keys)
+	h := fnv.New64a()
+	for _, k := range keys {
+		_, _ = h.Write([]byte(k + "\n"))
+	}
+	return h.Sum64()
 }
 
 var iconTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
