@@ -12,7 +12,7 @@ import (
 
 func TestIconFSServesRootIconsReadOnly(t *testing.T) {
 	inner := memfs.New()
-	f := wrapFS(inner)
+	f := wrapFS(inner, nil)
 
 	for name, want := range map[string][]byte{"._.": customIconFlag, "/.VolumeIcon.icns": volumeIcon} {
 		info, err := f.Lstat(name)
@@ -51,7 +51,7 @@ func TestIconFSServesRootIconsReadOnly(t *testing.T) {
 
 func TestIconFSRefusesNewJunkButKeepsExisting(t *testing.T) {
 	inner := memfs.New()
-	f := wrapFS(inner)
+	f := wrapFS(inner, nil)
 
 	for _, name := range []string{"Media/._movie.mkv", ".DS_Store", "a/b/.DS_Store", "._x"} {
 		_, err := f.Create(name)
@@ -72,8 +72,8 @@ func TestIconFSRefusesNewJunkButKeepsExisting(t *testing.T) {
 
 func TestIconHandlerUnwrapsForRclone(t *testing.T) {
 	inner := memfs.New()
-	require.Same(t, unwrapFS(wrapFS(inner)), inner)
-	require.Nil(t, wrapFS(nil))
+	require.Same(t, unwrapFS(wrapFS(inner, nil)), inner)
+	require.Nil(t, wrapFS(nil, nil))
 }
 
 func TestReapSignalsEject(t *testing.T) {
