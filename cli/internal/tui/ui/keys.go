@@ -42,9 +42,10 @@ func HintsWidth(acts []core.Action, labels bool) int {
 	return w
 }
 
-// Forged's footer: up to 4 screen keys left, More, Update and Quit right. short on room, the right side keeps
-// More and an accent key, then the last screen keys go, then the labels
-func Footer(w int, left, right []core.Action) *lipgloss.Layer {
+// Forged's footer: up to 4 screen keys left, More, Update and Quit right, and tail, faint, in the corner.
+// short on room, the tail goes first, then the right side keeps More and an accent key, then the last screen
+// keys go, then the labels
+func Footer(w int, left, right []core.Action, tail string) *lipgloss.Layer {
 	avail := w - 6
 	more := right
 	if len(more) > 1 {
@@ -89,8 +90,14 @@ func Footer(w int, left, right []core.Action) *lipgloss.Layer {
 		if used > avail {
 			continue
 		}
+		rx := w - 3 - rw
+		// the tail only takes room no key needs
+		if tw := Width(tail); tw > 0 && c.label && used+3+tw <= avail {
+			b.Put(w-3-tw, 0, Paint(tail, P().Faint, nil, false))
+			rx -= tw + 3
+		}
 		put(3, c.l, c.label)
-		put(w-3-rw, c.r, c.label)
+		put(rx, c.r, c.label)
 		break
 	}
 	return b.Layer()

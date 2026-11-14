@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/itzzritik/dokky/cli/internal/api"
@@ -27,4 +28,19 @@ func TestTabFooterHasMoreAndQuit(t *testing.T) {
 	require.True(t, keys["key:m"], "a tab always shows More")
 	require.True(t, keys["key:q"])
 	require.False(t, keys["key:↑↓"])
+}
+
+func TestTabFooterShowsTheVersion(t *testing.T) {
+	a := newApp(api.State{Settings: api.Settings{Chosen: true}, Vault: vaultIn(api.VaultUnlocked)})
+	foot := strings.TrimRight(screen(a)[a.st.H-2], " ")
+	require.True(t, strings.HasSuffix(foot, "Quit   vDev"), "a dev build says so in the corner: %q", foot)
+
+	// the lock screen's card carries its own keys and no footer
+	a.lockWindow(true)
+	require.NotContains(t, screen(a)[a.st.H-2], "vDev")
+}
+
+func TestVersionLabel(t *testing.T) {
+	require.Equal(t, "vDev", versionLabel("0.0.0-dev"))
+	require.Equal(t, "v0.1.40", versionLabel("0.1.40"))
 }
