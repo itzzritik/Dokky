@@ -63,7 +63,7 @@ The cards:
 ## 4. Chrome (items 24, 25, 26, 34, 37, 40)
 
 - **Icons** on card titles, settings rows and menu items, with plain-text fallbacks where the terminal lacks the glyphs, as Dokky's glyph files do now.
-- **Footer.** At most 4 hints on the left, each starting with a capital ("Mount", "Edit"). On the right: `m More`, `u Update` (only when an update is ready, as now) and `q Quit`. No version number.
+- **Footer.** At most 4 hints on the left, each starting with a capital ("Mount", "Edit"). On the right: `m More`, `u Update` (only when an update is ready, as now) and `q Quit`, then the version, faint, in the corner (`vDev` for a dev build). Short on room, the version goes before any key.
 - **Menu.** Opens with `m`, drawn exactly as Forged's: rounded border with the title in it, and rows of icon, label and key. It ends with Lock and Quit.
   - `?` still opens it.
   - The Drives page's mount toggle moves from `m` to `space`.

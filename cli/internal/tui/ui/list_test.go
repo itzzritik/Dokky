@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +56,7 @@ func TestBannerKeyCanBeClicked(t *testing.T) {
 func TestFooterHints(t *testing.T) {
 	more := core.Action{Key: "m", Label: "More"}
 	left := []core.Action{{Key: "↑↓", Label: "move"}, {Key: "enter", Label: "open"}}
-	out, hits, _ := Compose(100, 1, Pass{Layer: Footer(100, left, []core.Action{more, {Key: "q", Label: "Quit"}})})
+	out, hits, _ := Compose(100, 1, Pass{Layer: Footer(100, left, []core.Action{more, {Key: "q", Label: "Quit"}}, "")})
 	ids := hitsOn(hits, 100, 0)
 	require.False(t, ids["key:↑↓"], "up and down are no one key to press")
 	require.True(t, ids["key:enter"])
@@ -63,11 +65,28 @@ func TestFooterHints(t *testing.T) {
 
 	// short on room, the right side keeps only More, then the last screen keys go
 	many := append(left, core.Action{Key: "space", Label: "unmount"}, core.Action{Key: "v", Label: "view in Files"})
-	_, hits, _ = Compose(60, 1, Pass{Layer: Footer(60, many, []core.Action{more, {Key: "q", Label: "Quit"}})})
+	_, hits, _ = Compose(60, 1, Pass{Layer: Footer(60, many, []core.Action{more, {Key: "q", Label: "Quit"}}, "")})
 	ids = hitsOn(hits, 60, 0)
 	require.True(t, ids["key:m"])
 	require.False(t, ids["key:q"])
 	require.False(t, ids["key:v"])
+}
+
+func TestFooterTailSitsInTheCorner(t *testing.T) {
+	left := []core.Action{{Key: "a", Label: "Add"}, {Key: "e", Label: "Edit"}}
+	right := []core.Action{{Key: "m", Label: "More"}, {Key: "q", Label: "Quit"}}
+	out, hits, _ := Compose(100, 1, Pass{Layer: Footer(100, left, right, "v0.1.40")})
+	line := strings.TrimRight(ansi.Strip(out), " ")
+	require.True(t, strings.HasSuffix(line, "Quit   v0.1.40"), "the version sits right of Quit, in the corner: %q", line)
+	require.True(t, hitsOn(hits, 100, 0)["key:q"])
+
+	// short on room, the version goes before any key does
+	w := HintsWidth(left, true) + HintsWidth(right, true) + 3 + 6
+	out, hits, _ = Compose(w, 1, Pass{Layer: Footer(w, left, right, "v0.1.40")})
+	require.NotContains(t, ansi.Strip(out), "v0.1.40")
+	ids := hitsOn(hits, w, 0)
+	require.True(t, ids["key:e"] && ids["key:q"], "every key and label stays")
+	require.Contains(t, ansi.Strip(out), "Quit")
 }
 
 func TestWindowHintsKeepEsc(t *testing.T) {

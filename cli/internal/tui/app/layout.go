@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/dokky/cli/internal/api"
+	"github.com/itzzritik/dokky/cli/internal/buildinfo"
 	"github.com/itzzritik/dokky/cli/internal/tui/core"
 	"github.com/itzzritik/dokky/cli/internal/tui/ui"
 )
@@ -133,7 +134,19 @@ func (a *App) footer(w int, acts []core.Action, kind footerKind) *lipgloss.Layer
 			right = append(right, a.globals()...)
 		}
 	}
-	return ui.Footer(w, left, right)
+	tail := ""
+	if kind != footerNone {
+		tail = versionLabel(buildinfo.Version)
+	}
+	return ui.Footer(w, left, right, tail)
+}
+
+// the version in the footer's corner, the one `dokky -v` prints; a dev build says so
+func versionLabel(v string) string {
+	if strings.Contains(v, "dev") {
+		return "vDev"
+	}
+	return "v" + v
 }
 
 // the window lock hides everything under it
